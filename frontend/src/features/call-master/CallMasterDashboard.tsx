@@ -24,6 +24,7 @@ interface KPIs {
   customerExperience: number;
   compliance: number;
   salesConversion: number;
+  outboundQuality: number;
   activeClients: number;
   activeProcesses: number;
   activeAgents: number;
@@ -982,6 +983,7 @@ export default function CallMasterDashboard() {
     compliance:      { title: 'Compliance Score', description: 'Measures adherence to mandatory process steps: professionalism, hold procedure, accurate information, address recording, escalation, and call closure. Non-negotiable parameters with regulatory or legal implications. Target: ≥ 90%.' },
     cx_score:        { title: 'Customer Experience (CX) Score', description: 'Composite score of parameters that directly shape how a customer perceives the interaction: concern acknowledgment, assurance, active listening, politeness, pronunciation, and enthusiasm. Target: ≥ 75%.' },
     sales_conv:      { title: 'Sales Conversion Rate', description: 'Percentage of outbound calls where SaleDone = 1 in CallDetails. Calculated as (successful sales / total calls) × 100. Reflects agent effectiveness in converting outbound pitches to sales.' },
+    ob_quality:      { title: 'Outbound Quality Score', description: 'Average quality score across all outbound calls, calculated per-row as (Opening + Offer Presented + Objection Handling + Prepaid Pitch + Upselling Efforts + Offer Urgency + No Sensitive Words) ÷ 7 × 100. A score of 100% means every parameter was met on every call.' },
     active_clients:  { title: 'Active Clients', description: 'Clients currently marked as active in the platform. Super admins see all clients; tenant users see only their assigned client.' },
     active_processes:{ title: 'Active Processes', description: 'Active campaign lines / LOBs configured per client. Each process represents a distinct business workflow (e.g. Bellavita Inbound, GNC Outbound). Processes drive data routing and reporting segmentation.' },
     active_agents:   { title: 'Active Agents — Date Range', description: 'Unique agents (User field) who appear in at least one audited inbound call during the selected period. Shows their call volume, average quality score, and client(s) they handled.' },
@@ -1035,9 +1037,12 @@ export default function CallMasterDashboard() {
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="px-6 pt-6 pb-4 bg-[#0B1120] border-b border-white/5">
         <div className="flex items-center justify-between mb-5">
-          <div>
-            <h1 className="text-xl font-bold text-white tracking-tight">Call Master</h1>
-            <p className="text-xs text-slate-500 mt-0.5">Real-time analytics · {filters.lob === 'All' ? 'All LOBs' : filters.lob}</p>
+          <div className="flex items-center gap-3">
+            <img src="/mas-call-logo.png" alt="MAS Call" className="h-10 w-10 rounded-lg object-contain" />
+            <div>
+              <h1 className="text-xl font-bold text-white tracking-tight">Call Master</h1>
+              <p className="text-xs text-slate-500 mt-0.5">Real-time analytics · {filters.lob === 'All' ? 'All LOBs' : filters.lob}</p>
+            </div>
           </div>
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/20">
             <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
@@ -1070,12 +1075,18 @@ export default function CallMasterDashboard() {
         </div>
 
         {/* ── Row 2: operational KPIs (role-gated) ────────────────────────── */}
-        <div className={`grid gap-3 ${isSuperAdmin ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-2'}`}>
-          <KPICard index={5} label="Sales Conv."    value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={15}/>} color={COLOR_GREEN}  onClick={() => openDrawer('sales_conv')} />
-          {isSuperAdmin && <KPICard index={6} label="Active Clients"   value={kpis?.activeClients   ?? 0} icon={<Users    size={15}/>} color={COLOR_BLUE}   onClick={() => openDrawer('active_clients')} />}
-          {isSuperAdmin && <KPICard index={7} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers   size={15}/>} color={COLOR_PURPLE} onClick={() => openDrawer('active_processes')} />}
-          <KPICard index={8} label="Active Agents"  value={kpis?.activeAgents   ?? 0} icon={<UserCheck size={15}/>} color={COLOR_AMBER} sub="In date range"  onClick={() => openDrawer('active_agents')} />
-        </div>
+        {(() => {
+          const cols = 2 + (isSuperAdmin ? 2 : 0) + (showOutbound ? 1 : 0);
+          return (
+            <div className={`grid gap-3 grid-cols-2 lg:grid-cols-${cols}`}>
+              <KPICard index={5} label="Sales Conv."    value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={15}/>} color={COLOR_GREEN}  onClick={() => openDrawer('sales_conv')} />
+              {showOutbound && <KPICard index={6} label="OB Quality"    value={kpis?.outboundQuality ?? 0} suffix="%" dec={1} icon={<Award size={15}/>} color={COLOR_PURPLE} sub="7-param score" onClick={() => openDrawer('ob_quality')} />}
+              {isSuperAdmin && <KPICard index={7} label="Active Clients"   value={kpis?.activeClients   ?? 0} icon={<Users    size={15}/>} color={COLOR_BLUE}   onClick={() => openDrawer('active_clients')} />}
+              {isSuperAdmin && <KPICard index={8} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers   size={15}/>} color={COLOR_PURPLE} onClick={() => openDrawer('active_processes')} />}
+              <KPICard index={9} label="Active Agents"  value={kpis?.activeAgents   ?? 0} icon={<UserCheck size={15}/>} color={COLOR_AMBER} sub="In date range"  onClick={() => openDrawer('active_agents')} />
+            </div>
+          );
+        })()}
 
         {/* ── Row 3: Quality Trend (3/5) + Hourly Distribution (2/5) ──────── */}
         <div className={`grid gap-5 ${showInbound ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1'}`}>
@@ -1332,6 +1343,7 @@ export default function CallMasterDashboard() {
                   {drawer === 'compliance'        && <><AnimatedNumber value={kpis?.compliance ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
                   {drawer === 'cx_score'          && <><AnimatedNumber value={kpis?.customerExperience ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
                   {drawer === 'sales_conv'        && <><AnimatedNumber value={kpis?.salesConversion ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'ob_quality'        && <><AnimatedNumber value={kpis?.outboundQuality ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
                   {drawer === 'active_clients'    && <AnimatedNumber value={kpis?.activeClients ?? 0} />}
                   {drawer === 'active_processes'  && <AnimatedNumber value={kpis?.activeProcesses ?? 0} />}
                 </p>

@@ -130,17 +130,18 @@ export async function getKPIs(filters: CallMasterFilters) {
   }
 
   // Outbound data from db_external
-  let outboundKPIs = { totalCalls: 0, salesConversion: 0 };
+  let outboundKPIs = { totalCalls: 0, salesConversion: 0, outboundQuality: 0 };
 
   if (lob === 'All' || lob === 'Outbound') {
     const clientFilter = clientIds?.length
       ? `AND client_id IN (${clientIds.map(() => '?').join(',')})` : '';
     const params: (string | number | null)[] =[startDate, endDate, ...(clientIds || [])];
 
-    const [oRow] = await querySource<{ total: number; conversion: number }>(`
+    const [oRow] = await querySource<{ total: number; conversion: number; ob_quality: number }>(`
       SELECT
         COUNT(*) AS total,
-        ROUND(SUM(CASE WHEN SaleDone = '1' THEN 1 ELSE 0 END) / COUNT(*) * 100, 2) AS conversion
+        ROUND(SUM(CASE WHEN SaleDone = '1' THEN 1 ELSE 0 END) / COUNT(*) * 100, 2) AS conversion,
+        ROUND(AVG(${OB_QUALITY_EXPR}), 2) AS ob_quality
       FROM db_external.CallDetails
       WHERE CallDate BETWEEN ? AND ? ${clientFilter}
     `, params);
@@ -149,6 +150,7 @@ export async function getKPIs(filters: CallMasterFilters) {
       outboundKPIs = {
         totalCalls: Number(oRow.total) || 0,
         salesConversion: Number(oRow.conversion) || 0,
+        outboundQuality: Number(oRow.ob_quality) || 0,
       };
     }
   }
@@ -176,6 +178,7 @@ export async function getKPIs(filters: CallMasterFilters) {
     customerExperience: qualityKPIs.customerExperience,
     compliance: qualityKPIs.compliance,
     salesConversion: outboundKPIs.salesConversion,
+    outboundQuality: outboundKPIs.outboundQuality,
     activeClients,
     activeProcesses,
     activeAgents,
@@ -416,7 +419,19 @@ export const OUTBOUND_PARAMS = [
   { key: 'PrepaidPitch',      label: 'Prepaid Pitch' },
   { key: 'UpsellingEfforts',  label: 'Upselling Efforts' },
   { key: 'OfferUrgency',      label: 'Offer Urgency' },
+  { key: 'SensitiveWordUsed', label: 'No Sensitive Words' },
 ] as const;
+
+// Per-row outbound quality: 6 binary params + SensitiveWordUsed (passes when = 'none')
+const OB_QUALITY_EXPR = `(
+  (CASE WHEN Opening=1 OR Opening='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN Offered=1 OR Offered='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN ObjectionHandling=1 OR ObjectionHandling='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN PrepaidPitch=1 OR PrepaidPitch='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN UpsellingEfforts=1 OR UpsellingEfforts='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN OfferUrgency=1 OR OfferUrgency='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN LOWER(COALESCE(SensitiveWordUsed,'none')) = 'none' THEN 1 ELSE 0 END)
+) / 7.0 * 100`;
 
 export async function getCXParameters(filters: CallMasterFilters) {
   const { startDate, endDate, clientIds } = filters;
@@ -442,7 +457,7 @@ export async function getCXParameters(filters: CallMasterFilters) {
     score: ibRow ? (Number(ibRow[p.key]) || 0) : 0,
   }));
 
-  // Outbound: 6 parameters
+  // Outbound: 7 parameters (6 binary + SensitiveWordUsed)
   const [obRow] = await querySource<Record<string, number>>(`
     SELECT
       ROUND(AVG(CASE WHEN Opening=1           OR Opening='1'           THEN 1 ELSE 0 END)*100,1) AS Opening,
@@ -450,7 +465,8 @@ export async function getCXParameters(filters: CallMasterFilters) {
       ROUND(AVG(CASE WHEN ObjectionHandling=1 OR ObjectionHandling='1' THEN 1 ELSE 0 END)*100,1) AS ObjectionHandling,
       ROUND(AVG(CASE WHEN PrepaidPitch=1      OR PrepaidPitch='1'      THEN 1 ELSE 0 END)*100,1) AS PrepaidPitch,
       ROUND(AVG(CASE WHEN UpsellingEfforts=1  OR UpsellingEfforts='1'  THEN 1 ELSE 0 END)*100,1) AS UpsellingEfforts,
-      ROUND(AVG(CASE WHEN OfferUrgency=1      OR OfferUrgency='1'      THEN 1 ELSE 0 END)*100,1) AS OfferUrgency
+      ROUND(AVG(CASE WHEN OfferUrgency=1      OR OfferUrgency='1'      THEN 1 ELSE 0 END)*100,1) AS OfferUrgency,
+      ROUND(AVG(CASE WHEN LOWER(COALESCE(SensitiveWordUsed,'none')) = 'none' THEN 1 ELSE 0 END)*100,1) AS SensitiveWordUsed
     FROM db_external.CallDetails
     WHERE CallDate BETWEEN ? AND ? ${obFilter}
   `, obParams);
