@@ -10,7 +10,7 @@ import {
 import {
   PhoneCall, CheckCircle, Shield, Heart, TrendingUp,
   Users, Layers, UserCheck, AlertCircle, Calendar,
-  RefreshCw, ChevronDown, Award, ThumbsDown, Lock, X, Info,
+  RefreshCw, ChevronDown, Award, ThumbsDown, Lock, X, Info, Download,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/axios';
@@ -51,6 +51,25 @@ const COLOR_BLUE = '#3B82F6';
 const COLOR_PURPLE = '#8B5CF6';
 const COLOR_AMBER = '#F59E0B';
 const COLOR_RED = '#EF4444';
+
+function downloadCSV(filename: string, rows: Record<string, unknown>[]) {
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const escape = (v: unknown) => {
+    const s = String(v ?? '');
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape(r[h])).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${filename}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 function fmt(n: number, dec = 1) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(dec)}M`;
@@ -133,13 +152,14 @@ function KPICard({ label, value, suffix, dec, icon, color, sub, index, onClick }
 
 // ─── Section Card ─────────────────────────────────────────────────────────────
 
-function SectionCard({ title, children, className = '', accent = COLOR_BLUE, description, onInfoClick }: {
+function SectionCard({ title, children, className = '', accent = COLOR_BLUE, description, onInfoClick, downloadData }: {
   title: string;
   children: React.ReactNode;
   className?: string;
   accent?: string;
   description?: string;
   onInfoClick?: () => void;
+  downloadData?: { filename: string; rows: Record<string, unknown>[] };
 }) {
   const [tipOpen, setTipOpen] = useState(false);
   const handleInfo = (e: React.MouseEvent) => {
@@ -157,6 +177,15 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, des
       <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
         <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
         <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
+        {downloadData && downloadData.rows.length > 0 && (
+          <button
+            onClick={() => downloadCSV(downloadData.filename, downloadData.rows)}
+            title="Download CSV"
+            className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded"
+          >
+            <Download size={13} />
+          </button>
+        )}
         {(description || onInfoClick) && (
           <button onClick={handleInfo} className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
             <Info size={13} />
@@ -429,8 +458,14 @@ function CXParametersCard({ cxData, lob }: { cxData: CXData; lob: string }) {
     else setTab('inbound');
   }, [lob]);
 
+  const cxDownload = {
+    filename: `cx_parameters_${tab}`,
+    rows: (tab === 'inbound' ? cxData.inbound : cxData.outbound)
+      .map(r => ({ Parameter: r.parameter, 'Score (%)': r.score })),
+  };
+
   return (
-    <SectionCard title="CX Quality Parameters" accent="#EC4899">
+    <SectionCard title="CX Quality Parameters" accent="#EC4899" downloadData={cxDownload}>
       {(showInbound && showOutbound) && (
         <div className="flex gap-1 mb-4 bg-white/5 rounded-lg p-1 w-fit">
           <button onClick={() => setTab('inbound')}
@@ -481,8 +516,17 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
   if (scenario.length === 0) return null;
   const total = scenario.reduce((s, r) => s + r.value, 0) || 1;
 
+  const scenarioDownload = {
+    filename: 'scenario_distribution_inbound',
+    rows: scenario.map(r => ({
+      Scenario: r.name,
+      Calls: r.value,
+      'Share (%)': ((r.value / total) * 100).toFixed(1),
+    })),
+  };
+
   return (
-    <SectionCard title="Scenario Distribution · Inbound" accent={COLOR_BLUE}>
+    <SectionCard title="Scenario Distribution · Inbound" accent={COLOR_BLUE} downloadData={scenarioDownload}>
       <p className="text-xs text-slate-500 mb-4">Click a slice to drill into sub-scenarios</p>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Main pie */}
@@ -953,6 +997,25 @@ export default function CallMasterDashboard() {
   const showInbound  = filters.lob !== 'Outbound';
   const showOutbound = filters.lob !== 'Inbound';
 
+  // Pre-compute Pareto download rows (sorted desc + cumulative %)
+  const buildParetoRows = (data: CXParamRow[]) => {
+    const sorted = [...data].sort((a, b) => b.score - a.score);
+    const total = sorted.reduce((s, p) => s + p.score, 0) || 1;
+    let cum = 0;
+    return sorted.map(p => {
+      cum += p.score;
+      return { Parameter: p.parameter, 'Score (%)': p.score, 'Cumulative (%)': parseFloat((cum / total * 100).toFixed(1)) };
+    });
+  };
+  const paretoIbRows = buildParetoRows(cxData.inbound);
+  const paretoObRows = buildParetoRows(cxData.outbound);
+
+  // Agent leaderboard combined download rows
+  const agentDownloadRows = [
+    ...agents.top.map(a => ({ Tier: 'Top Performer', Agent: a.agent, Calls: a.calls, 'Quality (%)': a.quality, 'Compliance (%)': a.compliance })),
+    ...agents.bottom.map(a => ({ Tier: 'Needs Coaching', Agent: a.agent, Calls: a.calls, 'Quality (%)': a.quality, 'Compliance (%)': a.compliance })),
+  ];
+
   const TOOLTIP_STYLE = { background: '#0F172A', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
   const AXIS_TICK = { fill: '#64748B', fontSize: 11 };
   const GRID = { strokeDasharray: '3 3', stroke: '#1E293B' };
@@ -1008,7 +1071,8 @@ export default function CallMasterDashboard() {
         <div className={`grid gap-5 ${showInbound ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1'}`}>
           {showInbound && (
             <div className="lg:col-span-3">
-              <SectionCard title={`Quality Trend · Inbound (${filters.period})`} accent={COLOR_GREEN} description={CHART_DESC.quality_trend}>
+              <SectionCard title={`Quality Trend · Inbound (${filters.period})`} accent={COLOR_GREEN} description={CHART_DESC.quality_trend}
+              downloadData={{ filename: `quality_trend_${filters.period}`, rows: trend.map(r => ({ Period: r.period, 'Quality (%)': r.quality, 'Audited Calls': r.calls })) }}>
                 <ResponsiveContainer width="100%" height={270}>
                   <LineChart data={trend} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
                     <defs>
@@ -1031,7 +1095,8 @@ export default function CallMasterDashboard() {
           )}
 
           <div className={showInbound ? 'lg:col-span-2' : ''}>
-            <SectionCard title="Calls by Hour" accent={COLOR_PURPLE} description={CHART_DESC.calls_by_hour}>
+            <SectionCard title="Calls by Hour" accent={COLOR_PURPLE} description={CHART_DESC.calls_by_hour}
+              downloadData={{ filename: 'calls_by_hour', rows: byHour.map(r => ({ Hour: r.hour, Inbound: r.inbound, Outbound: r.outbound, Total: r.total })) }}>
               <ResponsiveContainer width="100%" height={270}>
                 <AreaChart data={byHour} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
                   <defs>
@@ -1059,7 +1124,8 @@ export default function CallMasterDashboard() {
 
         {/* ── Row 4: 3-col volume charts ───────────────────────────────────── */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          <SectionCard title="Calls by Day of Week" accent={COLOR_BLUE} description={CHART_DESC.calls_by_day}>
+          <SectionCard title="Calls by Day of Week" accent={COLOR_BLUE} description={CHART_DESC.calls_by_day}
+            downloadData={{ filename: 'calls_by_day', rows: byDay.map(r => ({ Day: r.day, Inbound: r.inbound, Outbound: r.outbound })) }}>
             <ResponsiveContainer width="100%" height={210}>
               <BarChart data={byDay} margin={{ top: 4, right: 4, bottom: 0, left: -12 }}>
                 <CartesianGrid {...GRID} />
@@ -1074,7 +1140,8 @@ export default function CallMasterDashboard() {
             </ResponsiveContainer>
           </SectionCard>
 
-          <SectionCard title="Monthly Volume" accent={COLOR_AMBER} description={CHART_DESC.monthly_volume}>
+          <SectionCard title="Monthly Volume" accent={COLOR_AMBER} description={CHART_DESC.monthly_volume}
+            downloadData={{ filename: 'monthly_volume', rows: byMonth.map(r => ({ Month: r.month, Inbound: r.inbound, Outbound: r.outbound, Sales: r.sales })) }}>
             <ResponsiveContainer width="100%" height={210}>
               <BarChart data={byMonth} margin={{ top: 4, right: 4, bottom: 0, left: -12 }}>
                 <CartesianGrid {...GRID} />
@@ -1090,7 +1157,8 @@ export default function CallMasterDashboard() {
           </SectionCard>
 
           {showInbound ? (
-            <SectionCard title="Inbound by Client" accent={COLOR_GREEN} description={CHART_DESC.inbound_clients}>
+            <SectionCard title="Inbound by Client" accent={COLOR_GREEN} description={CHART_DESC.inbound_clients}
+              downloadData={{ filename: 'inbound_by_client', rows: byClient.inbound.map(r => ({ Client: r.client_name, 'Audited Calls': r.audited ?? 0, 'Quality (%)': r.quality ?? 0 })) }}>
               <ResponsiveContainer width="100%" height={210}>
                 <BarChart data={byClient.inbound.slice(0, 8)} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
                   <CartesianGrid {...GRID} horizontal={false} />
@@ -1102,7 +1170,8 @@ export default function CallMasterDashboard() {
               </ResponsiveContainer>
             </SectionCard>
           ) : (
-            <SectionCard title="Outbound by Client" accent={COLOR_PURPLE} description={CHART_DESC.outbound_clients}>
+            <SectionCard title="Outbound by Client" accent={COLOR_PURPLE} description={CHART_DESC.outbound_clients}
+              downloadData={{ filename: 'outbound_by_client', rows: byClient.outbound.map(r => ({ Client: r.client_name, Calls: r.calls ?? 0, Sales: r.sales ?? 0 })) }}>
               <ResponsiveContainer width="100%" height={210}>
                 <BarChart data={byClient.outbound.slice(0, 8)} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
                   <CartesianGrid {...GRID} horizontal={false} />
@@ -1121,7 +1190,8 @@ export default function CallMasterDashboard() {
         <div className={`grid gap-5 ${showOutbound ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1'}`}>
           {showOutbound && (
             <div className="lg:col-span-2">
-              <SectionCard title="Sales Funnel · Outbound" accent={COLOR_PURPLE} description={CHART_DESC.sales_funnel}>
+              <SectionCard title="Sales Funnel · Outbound" accent={COLOR_PURPLE} description={CHART_DESC.sales_funnel}
+                downloadData={{ filename: 'sales_funnel_outbound', rows: funnel.map(r => ({ Stage: r.stage, Count: r.value, 'Conversion (%)': r.pct })) }}>
                 <div className="space-y-3 pt-1">
                   {funnel.map((row) => <FunnelBar key={row.stage} row={row} max={maxFunnelValue} />)}
                   {funnel.length === 0 && <p className="text-center text-slate-600 text-sm py-8">No outbound data</p>}
@@ -1138,13 +1208,15 @@ export default function CallMasterDashboard() {
         {(showInbound || showOutbound) && (
           <div className={`grid gap-5 ${showInbound && showOutbound ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
             {showInbound && cxData.inbound.length > 0 && (
-              <SectionCard title="Parameter Pareto · Inbound" accent={COLOR_GREEN} description={CHART_DESC.pareto_ib}>
+              <SectionCard title="Parameter Pareto · Inbound" accent={COLOR_GREEN} description={CHART_DESC.pareto_ib}
+                downloadData={{ filename: 'pareto_inbound', rows: paretoIbRows }}>
                 <p className="text-xs text-slate-500 mb-3">Bars = adherence %, Line = cumulative %</p>
                 <ParetoChart data={cxData.inbound} />
               </SectionCard>
             )}
             {showOutbound && cxData.outbound.length > 0 && (
-              <SectionCard title="Parameter Pareto · Outbound" accent={COLOR_PURPLE} description={CHART_DESC.pareto_ob}>
+              <SectionCard title="Parameter Pareto · Outbound" accent={COLOR_PURPLE} description={CHART_DESC.pareto_ob}
+                downloadData={{ filename: 'pareto_outbound', rows: paretoObRows }}>
                 <p className="text-xs text-slate-500 mb-3">Bars = adherence %, Line = cumulative %</p>
                 <ParetoChart data={cxData.outbound} />
               </SectionCard>
@@ -1157,7 +1229,8 @@ export default function CallMasterDashboard() {
 
         {/* ── Agent Leaderboard ────────────────────────────────────────────── */}
         {showInbound && (
-          <SectionCard title="Agent Leaderboard" accent={COLOR_AMBER} description={CHART_DESC.agent_board}>
+          <SectionCard title="Agent Leaderboard" accent={COLOR_AMBER} description={CHART_DESC.agent_board}
+            downloadData={{ filename: 'agent_leaderboard', rows: agentDownloadRows }}>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <AgentTable agents={agents.top}    type="top"    buildQS={buildParams} />
               <AgentTable agents={agents.bottom} type="bottom" buildQS={buildParams} />
@@ -1167,7 +1240,8 @@ export default function CallMasterDashboard() {
 
         {/* ── Outbound Calls by Client (full width, "All" LOB only) ────────── */}
         {filters.lob === 'All' && byClient.outbound.length > 0 && (
-          <SectionCard title="Outbound Calls by Client" accent={COLOR_PURPLE} description={CHART_DESC.outbound_clients}>
+          <SectionCard title="Outbound Calls by Client" accent={COLOR_PURPLE} description={CHART_DESC.outbound_clients}
+            downloadData={{ filename: 'outbound_calls_by_client', rows: byClient.outbound.map(r => ({ Client: r.client_name, Calls: r.calls ?? 0, Sales: r.sales ?? 0 })) }}>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={byClient.outbound.slice(0, 12)} layout="vertical" margin={{ top: 4, right: 32, bottom: 0, left: 0 }}>
                 <CartesianGrid {...GRID} horizontal={false} />
