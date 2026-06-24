@@ -2,9 +2,12 @@ import { Request, Response } from 'express';
 import * as svc from './call-master.service';
 
 function parseDateRange(req: Request): { startDate: string; endDate: string } {
-  const today = new Date();
-  const startDate = (req.query.startDate as string) || new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
-  const endDate = (req.query.endDate as string) || today.toISOString().slice(0, 10);
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const defaultStart = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01 00:00`;
+  const defaultEnd   = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const startDate = (req.query.startDate as string) || defaultStart;
+  const endDate   = (req.query.endDate   as string) || defaultEnd;
   return { startDate, endDate };
 }
 

@@ -52,6 +52,12 @@ const COLOR_PURPLE = '#8B5CF6';
 const COLOR_AMBER = '#F59E0B';
 const COLOR_RED = '#EF4444';
 
+// Returns YYYY-MM-DDTHH:MM using LOCAL time (needed for datetime-local inputs)
+function toLocalDT(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function downloadCSV(filename: string, rows: Record<string, unknown>[]) {
   if (!rows.length) return;
   const headers = Object.keys(rows[0]);
@@ -238,22 +244,28 @@ function FilterBar({
 
   return (
     <div className="flex flex-wrap gap-3 items-center">
-      {/* Date range */}
-      <div className="flex items-center gap-2 bg-[#1E293B] border border-white/10 rounded-lg px-3 py-2">
-        <Calendar size={14} className="text-slate-400" />
-        <input
-          type="date"
-          value={filters.startDate}
-          onChange={(e) => onChange('startDate', e.target.value)}
-          className="bg-transparent text-sm text-slate-200 outline-none w-32"
-        />
-        <span className="text-slate-600">—</span>
-        <input
-          type="date"
-          value={filters.endDate}
-          onChange={(e) => onChange('endDate', e.target.value)}
-          className="bg-transparent text-sm text-slate-200 outline-none w-32"
-        />
+      {/* Date + time range — two separate labeled inputs */}
+      <div className="flex items-center gap-1.5 bg-[#1E293B] border border-white/10 rounded-lg px-3 py-2">
+        <Calendar size={13} className="text-slate-500 shrink-0" />
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[9px] text-slate-500 uppercase tracking-wider leading-none">From</span>
+          <input
+            type="datetime-local"
+            value={filters.startDate}
+            onChange={(e) => onChange('startDate', e.target.value)}
+            className="bg-transparent text-xs text-slate-200 outline-none [color-scheme:dark]"
+          />
+        </div>
+        <span className="text-slate-600 mx-1 self-center">—</span>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[9px] text-slate-500 uppercase tracking-wider leading-none">To</span>
+          <input
+            type="datetime-local"
+            value={filters.endDate}
+            onChange={(e) => onChange('endDate', e.target.value)}
+            className="bg-transparent text-xs text-slate-200 outline-none [color-scheme:dark]"
+          />
+        </div>
       </div>
 
       {/* Client filter — locked badge for tenant users, dropdown for super admin */}
@@ -845,12 +857,10 @@ export default function CallMasterDashboard() {
   const { user } = useAuthStore();
   const isSuperAdmin = user?.role === 'super_admin';
 
-  const today = new Date().toISOString().slice(0, 10);
-  const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
-
+  const now = new Date();
   const [filters, setFilters] = useState<Filters>({
-    startDate: firstOfMonth,
-    endDate: today,
+    startDate: toLocalDT(new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0)),
+    endDate: toLocalDT(now),
     clientId: '',
     lob: 'All',
     period: 'daily',
@@ -874,8 +884,8 @@ export default function CallMasterDashboard() {
 
   const buildParams = useCallback(() => {
     const p: Record<string, string> = {
-      startDate: filters.startDate,
-      endDate: filters.endDate,
+      startDate: filters.startDate.replace('T', ' '),  // YYYY-MM-DD HH:MM for MySQL
+      endDate: filters.endDate.replace('T', ' '),
       lob: filters.lob,
     };
     if (filters.clientId) p.clientId = filters.clientId;
