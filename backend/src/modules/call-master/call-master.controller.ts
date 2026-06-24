@@ -130,6 +130,19 @@ export async function getClientList(req: Request, res: Response) {
   }
 }
 
+export async function getAgentParams(req: Request, res: Response) {
+  try {
+    const agent = req.query.agent as string;
+    if (!agent) { res.status(400).json({ success: false, message: 'agent query param required' }); return; }
+    const filters = await buildFilters(req);
+    const data = await svc.getAgentParams(agent, filters);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('getAgentParams error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch agent parameters' });
+  }
+}
+
 export async function getCallsByMonth(req: Request, res: Response) {
   try {
     const filters = await buildFilters(req);

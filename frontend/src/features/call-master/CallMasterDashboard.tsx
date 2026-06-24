@@ -3,13 +3,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
+  PieChart, Pie, Cell,
   ResponsiveContainer,
 } from 'recharts';
 import {
   PhoneCall, CheckCircle, Shield, Heart, TrendingUp,
   Users, Layers, UserCheck, AlertCircle, Calendar,
-  RefreshCw, ChevronDown, Award, ThumbsDown, Lock,
+  RefreshCw, ChevronDown, Award, ThumbsDown, Lock, X,
 } from 'lucide-react';
 import api from '@/lib/axios';
 
@@ -30,8 +30,11 @@ interface KPIs {
 interface ClientItem { id: number; name: string; dialdesk_client_id: number }
 interface TrendRow { period: string; quality: number; calls: number }
 interface FunnelRow { stage: string; value: number; pct: number }
-interface CXRow { parameter: string; score: number }
+interface CXParamRow { parameter: string; key: string; score: number }
+interface ScenarioRow { name: string; value: number }
+interface CXData { inbound: CXParamRow[]; outbound: CXParamRow[]; scenario: ScenarioRow[] }
 interface AgentRow { agent: string; calls: number; quality: number; compliance: number }
+interface AgentParamRow { parameter: string; key: string; score: number }
 interface HourRow { hour: string; inbound: number; outbound: number; total: number }
 interface DayRow { day: string; inbound: number; outbound: number }
 interface ClientRow { client_name: string; audited?: number; quality?: number; calls?: number; sales?: number }
@@ -266,10 +269,287 @@ function FunnelBar({ row, max }: { row: FunnelRow; max: number }) {
   );
 }
 
+// ─── CX Quality Parameters (tabbed) ─────────────────────────────────────────
+
+const SCENARIO_COLORS = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#06B6D4'];
+
+function CXParametersCard({ cxData }: { cxData: CXData }) {
+  const [tab, setTab] = useState<'inbound' | 'outbound' | 'scenario'>('inbound');
+
+  const tabs: { id: typeof tab; label: string }[] = [
+    { id: 'inbound', label: 'Inbound' },
+    { id: 'outbound', label: 'Outbound' },
+    { id: 'scenario', label: 'Scenario' },
+  ];
+
+  return (
+    <SectionCard title="CX Quality Parameters">
+      {/* Tab switcher */}
+      <div className="flex gap-1 mb-4 bg-white/5 rounded-lg p-1 w-fit">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+              tab === t.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Inbound — 19 params horizontal bars */}
+      {tab === 'inbound' && (
+        <div className="space-y-1.5 max-h-[340px] overflow-y-auto pr-1">
+          {cxData.inbound.length === 0 && (
+            <p className="text-slate-600 text-sm text-center py-8">No inbound data</p>
+          )}
+          {[...cxData.inbound].sort((a, b) => b.score - a.score).map(p => (
+            <div key={p.key} className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 w-40 shrink-0 truncate" title={p.parameter}>{p.parameter}</span>
+              <div className="flex-1 bg-white/5 rounded-full h-5 overflow-hidden">
+                <motion.div
+                  className="h-5 rounded-full flex items-center justify-end pr-2"
+                  style={{ backgroundColor: pctColor(p.score), minWidth: 4 }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${p.score}%` }}
+                  transition={{ duration: 0.7 }}
+                >
+                  {p.score > 12 && (
+                    <span className="text-[10px] text-white font-bold">{p.score.toFixed(0)}%</span>
+                  )}
+                </motion.div>
+              </div>
+              {p.score <= 12 && (
+                <span className="text-[10px] w-8 text-right shrink-0" style={{ color: pctColor(p.score) }}>
+                  {p.score.toFixed(0)}%
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Outbound — 6 params */}
+      {tab === 'outbound' && (
+        <div className="space-y-2.5">
+          {cxData.outbound.length === 0 && (
+            <p className="text-slate-600 text-sm text-center py-8">No outbound data</p>
+          )}
+          {[...cxData.outbound].sort((a, b) => b.score - a.score).map(p => (
+            <div key={p.key} className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 w-40 shrink-0">{p.parameter}</span>
+              <div className="flex-1 bg-white/5 rounded-full h-6 overflow-hidden">
+                <motion.div
+                  className="h-6 rounded-full flex items-center justify-end pr-2"
+                  style={{ backgroundColor: pctColor(p.score), minWidth: 4 }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${p.score}%` }}
+                  transition={{ duration: 0.7 }}
+                >
+                  {p.score > 10 && (
+                    <span className="text-xs text-white font-bold">{p.score.toFixed(0)}%</span>
+                  )}
+                </motion.div>
+              </div>
+              {p.score <= 10 && (
+                <span className="text-xs w-8 text-right shrink-0" style={{ color: pctColor(p.score) }}>
+                  {p.score.toFixed(0)}%
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Scenario — pie chart */}
+      {tab === 'scenario' && (
+        cxData.scenario.length === 0 ? (
+          <p className="text-slate-600 text-sm text-center py-16">No scenario data</p>
+        ) : (
+          <div className="flex items-center gap-4">
+            <ResponsiveContainer width="55%" height={220}>
+              <PieChart>
+                <Pie
+                  data={cxData.scenario}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={85}
+                  strokeWidth={2}
+                  stroke="#0F172A"
+                >
+                  {cxData.scenario.map((_, i) => (
+                    <Cell key={i} fill={SCENARIO_COLORS[i % SCENARIO_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }}
+                  formatter={(v) => [Number(v).toLocaleString(), 'Calls']}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="flex-1 space-y-2">
+              {(() => {
+                const total = cxData.scenario.reduce((s, r) => s + r.value, 0) || 1;
+                return cxData.scenario.map((r, i) => (
+                  <div key={r.name} className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: SCENARIO_COLORS[i % SCENARIO_COLORS.length] }} />
+                    <span className="text-xs text-slate-300 flex-1">{r.name}</span>
+                    <span className="text-xs text-slate-400">{r.value.toLocaleString()}</span>
+                    <span className="text-xs font-medium text-slate-300 w-10 text-right">
+                      {((r.value / total) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        )
+      )}
+    </SectionCard>
+  );
+}
+
+// ─── Agent Drill-down Panel ──────────────────────────────────────────────────
+
+function AgentParamsPanel({
+  agent, type, params, onClose,
+}: {
+  agent: AgentRow; type: 'top' | 'bottom'; params: AgentParamRow[]; onClose: () => void;
+}) {
+  const sorted = [...params].sort((a, b) => b.score - a.score);
+  const weak = sorted.filter(p => p.score < 60);
+  const strong = sorted.filter(p => p.score >= 80);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 12 }}
+      className="mt-4 bg-[#0F172A] border border-white/10 rounded-xl p-4"
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <span className="text-sm font-semibold text-white">{agent.agent}</span>
+          <span className="ml-2 text-xs text-slate-400">
+            {type === 'top' ? '— Why Top Performer' : '— Coaching Areas'}
+          </span>
+        </div>
+        <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+          <X size={14} />
+        </button>
+      </div>
+
+      {type === 'bottom' && weak.length > 0 && (
+        <div className="mb-3">
+          <p className="text-xs text-red-400 font-medium mb-2 uppercase tracking-wider">Needs Improvement</p>
+          <div className="space-y-1.5">
+            {weak.map(p => (
+              <div key={p.key} className="flex items-center gap-2">
+                <span className="text-xs text-slate-400 w-44 shrink-0">{p.parameter}</span>
+                <div className="flex-1 bg-white/5 rounded-full h-4 overflow-hidden">
+                  <motion.div
+                    className="h-4 rounded-full flex items-center justify-end pr-1.5"
+                    style={{ backgroundColor: COLOR_RED }}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${p.score}%` }}
+                    transition={{ duration: 0.6 }}
+                  >
+                    <span className="text-[10px] text-white font-bold">{p.score.toFixed(0)}%</span>
+                  </motion.div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {type === 'top' && strong.length > 0 && (
+        <div className="mb-3">
+          <p className="text-xs text-green-400 font-medium mb-2 uppercase tracking-wider">Strengths</p>
+          <div className="space-y-1.5">
+            {strong.map(p => (
+              <div key={p.key} className="flex items-center gap-2">
+                <span className="text-xs text-slate-400 w-44 shrink-0">{p.parameter}</span>
+                <div className="flex-1 bg-white/5 rounded-full h-4 overflow-hidden">
+                  <motion.div
+                    className="h-4 rounded-full flex items-center justify-end pr-1.5"
+                    style={{ backgroundColor: COLOR_GREEN }}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${p.score}%` }}
+                    transition={{ duration: 0.6 }}
+                  >
+                    <span className="text-[10px] text-white font-bold">{p.score.toFixed(0)}%</span>
+                  </motion.div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* All params compact */}
+      <details className="group">
+        <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300 transition-colors">
+          All parameters ({params.length})
+        </summary>
+        <div className="mt-2 space-y-1">
+          {sorted.map(p => (
+            <div key={p.key} className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 w-44 shrink-0">{p.parameter}</span>
+              <div className="flex-1 bg-white/5 rounded-full h-3 overflow-hidden">
+                <div
+                  className="h-3 rounded-full"
+                  style={{ width: `${p.score}%`, backgroundColor: pctColor(p.score) }}
+                />
+              </div>
+              <span className="text-xs w-10 text-right" style={{ color: pctColor(p.score) }}>
+                {p.score.toFixed(0)}%
+              </span>
+            </div>
+          ))}
+        </div>
+      </details>
+    </motion.div>
+  );
+}
+
 // ─── Agent Table ─────────────────────────────────────────────────────────────
 
-function AgentTable({ agents, type }: { agents: AgentRow[]; type: 'top' | 'bottom' }) {
-  const icon = type === 'top' ? <Award size={12} className="text-amber-400" /> : <ThumbsDown size={12} className="text-red-400" />;
+function AgentTable({
+  agents, type, buildQS,
+}: {
+  agents: AgentRow[];
+  type: 'top' | 'bottom';
+  buildQS: () => string;
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [params, setParams] = useState<AgentParamRow[]>([]);
+  const [loadingAgent, setLoadingAgent] = useState(false);
+
+  const handleClick = async (agentName: string) => {
+    if (selected === agentName) { setSelected(null); return; }
+    setSelected(agentName);
+    setLoadingAgent(true);
+    try {
+      const qs = buildQS();
+      const r = await api.get(`/call-master/agent-params?agent=${encodeURIComponent(agentName)}&${qs}`);
+      setParams((r.data.data || []).map((p: AgentParamRow) => ({
+        ...p, score: parseFloat(String(p.score)) || 0,
+      })));
+    } catch { setParams([]); }
+    finally { setLoadingAgent(false); }
+  };
+
+  const icon = type === 'top'
+    ? <Award size={12} className="text-amber-400" />
+    : <ThumbsDown size={12} className="text-red-400" />;
+
+  const selectedAgent = agents.find(a => a.agent === selected);
+
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
@@ -277,6 +557,7 @@ function AgentTable({ agents, type }: { agents: AgentRow[]; type: 'top' | 'botto
         <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
           {type === 'top' ? 'Top Performers' : 'Needs Coaching'}
         </span>
+        <span className="text-xs text-slate-600 ml-1">(click agent to drill down)</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -296,10 +577,13 @@ function AgentTable({ agents, type }: { agents: AgentRow[]; type: 'top' | 'botto
                 initial={{ opacity: 0, x: -8 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.04 }}
-                className="border-b border-white/5 hover:bg-white/5"
+                onClick={() => handleClick(a.agent)}
+                className={`border-b border-white/5 cursor-pointer transition-colors ${
+                  selected === a.agent ? 'bg-blue-500/10' : 'hover:bg-white/5'
+                }`}
               >
                 <td className="py-2 pr-3 text-slate-600">{i + 1}</td>
-                <td className="py-2 pr-3 font-medium text-slate-200">{a.agent}</td>
+                <td className="py-2 pr-3 font-medium text-blue-300 underline decoration-dotted">{a.agent}</td>
                 <td className="py-2 pr-3 text-right text-slate-400">{fmt(a.calls)}</td>
                 <td className="py-2 pr-3 text-right font-semibold" style={{ color: pctColor(a.quality) }}>
                   {a.quality.toFixed(1)}%
@@ -317,6 +601,26 @@ function AgentTable({ agents, type }: { agents: AgentRow[]; type: 'top' | 'botto
           </tbody>
         </table>
       </div>
+      <AnimatePresence>
+        {selected && selectedAgent && !loadingAgent && (
+          <AgentParamsPanel
+            agent={selectedAgent}
+            type={type}
+            params={params}
+            onClose={() => setSelected(null)}
+          />
+        )}
+        {loadingAgent && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="mt-3 text-xs text-slate-500 text-center py-3"
+          >
+            Loading parameters…
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -342,7 +646,7 @@ export default function CallMasterDashboard() {
   const [byDay, setByDay] = useState<DayRow[]>([]);
   const [byClient, setByClient] = useState<{ inbound: ClientRow[]; outbound: ClientRow[] }>({ inbound: [], outbound: [] });
   const [funnel, setFunnel] = useState<FunnelRow[]>([]);
-  const [cxParams, setCXParams] = useState<CXRow[]>([]);
+  const [cxData, setCXData] = useState<CXData>({ inbound: [], outbound: [], scenario: [] });
   const [agents, setAgents] = useState<{ top: AgentRow[]; bottom: AgentRow[] }>({ top: [], bottom: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -382,9 +686,12 @@ export default function CallMasterDashboard() {
       setByDay(dRes.data.data || []);
       setByClient(cRes.data.data || { inbound: [], outbound: [] });
       setFunnel(fRes.data.data || []);
-      setCXParams((xRes.data.data || []).map((r: CXRow) => ({
-        ...r, score: parseFloat(String(r.score)) || 0,
-      })));
+      const rawCX = xRes.data.data || { inbound: [], outbound: [], scenario: [] };
+      setCXData({
+        inbound: (rawCX.inbound || []).map((r: CXParamRow) => ({ ...r, score: parseFloat(String(r.score)) || 0 })),
+        outbound: (rawCX.outbound || []).map((r: CXParamRow) => ({ ...r, score: parseFloat(String(r.score)) || 0 })),
+        scenario: rawCX.scenario || [],
+      });
       const agentData = aRes.data.data || { top: [], bottom: [] };
       const parseAgent = (a: AgentRow) => ({
         ...a,
@@ -550,7 +857,7 @@ export default function CallMasterDashboard() {
           </SectionCard>
         </div>
 
-        {/* Sales Funnel + CX Radar */}
+        {/* Sales Funnel + CX Parameters */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <SectionCard title="Sales Funnel (Outbound)">
             <div className="space-y-3 mt-2">
@@ -563,35 +870,14 @@ export default function CallMasterDashboard() {
             </div>
           </SectionCard>
 
-          <SectionCard title="CX Quality Parameters">
-            {cxParams.length > 0 ? (
-              <ResponsiveContainer width="100%" height={260}>
-                <RadarChart data={cxParams}>
-                  <PolarGrid stroke="#334155" />
-                  <PolarAngleAxis dataKey="parameter" tick={{ fill: '#94A3B8', fontSize: 10 }} />
-                  <PolarRadiusAxis domain={[0, 100]} tick={{ fill: '#64748B', fontSize: 10 }} />
-                  <Radar
-                    name="CX Score"
-                    dataKey="score"
-                    stroke="#EC4899"
-                    fill="#EC4899"
-                    fillOpacity={0.25}
-                    strokeWidth={2}
-                  />
-                  <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
-                </RadarChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-center text-slate-600 text-sm py-16">No quality data for this period</p>
-            )}
-          </SectionCard>
+          <CXParametersCard cxData={cxData} />
         </div>
 
         {/* Agent Leaderboard */}
         <SectionCard title="Agent Leaderboard">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <AgentTable agents={agents.top} type="top" />
-            <AgentTable agents={agents.bottom} type="bottom" />
+            <AgentTable agents={agents.top} type="top" buildQS={buildParams} />
+            <AgentTable agents={agents.bottom} type="bottom" buildQS={buildParams} />
           </div>
         </SectionCard>
 

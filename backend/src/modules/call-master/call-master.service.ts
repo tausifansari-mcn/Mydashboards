@@ -325,36 +325,122 @@ export async function getSalesFunnel(filters: CallMasterFilters) {
 
 // ─── CX Parameters ────────────────────────────────────────────────────────────
 
+export const INBOUND_PARAMS = [
+  { key: 'call_answered_within_5_seconds',   label: 'Answered ≤5s' },
+  { key: 'customer_concern_acknowledged',    label: 'Concern Acknowledged' },
+  { key: 'professionalism_maintained',       label: 'Professionalism' },
+  { key: 'assurance_or_appreciation_provided', label: 'Assurance' },
+  { key: 'pronunciation_and_clarity',        label: 'Pronunciation & Clarity' },
+  { key: 'enthusiasm_and_no_fumbling',       label: 'Enthusiasm' },
+  { key: 'active_listening',                 label: 'Active Listening' },
+  { key: 'politeness_and_no_sarcasm',        label: 'Politeness' },
+  { key: 'proper_grammar',                   label: 'Proper Grammar' },
+  { key: 'accurate_issue_probing',           label: 'Issue Probing' },
+  { key: 'proper_hold_procedure',            label: 'Hold Procedure' },
+  { key: 'proper_transfer_and_language',     label: 'Transfer & Language' },
+  { key: 'dead_air_under_10_seconds',        label: 'Dead Air <10s' },
+  { key: 'case_escalated_correctly',         label: 'Escalation' },
+  { key: 'address_recorded_completely',      label: 'Address Recorded' },
+  { key: 'correct_and_complete_information', label: 'Correct Info' },
+  { key: 'upselling_or_offers_suggested',    label: 'Upselling' },
+  { key: 'further_assistance_offered',       label: 'Further Assistance' },
+  { key: 'proper_call_closure',              label: 'Call Closure' },
+] as const;
+
+export const OUTBOUND_PARAMS = [
+  { key: 'Opening',           label: 'Opening' },
+  { key: 'Offered',           label: 'Offer Presented' },
+  { key: 'ObjectionHandling', label: 'Objection Handling' },
+  { key: 'PrepaidPitch',      label: 'Prepaid Pitch' },
+  { key: 'UpsellingEfforts',  label: 'Upselling Efforts' },
+  { key: 'OfferUrgency',      label: 'Offer Urgency' },
+] as const;
+
 export async function getCXParameters(filters: CallMasterFilters) {
   const { startDate, endDate, clientIds } = filters;
+  const ibFilter = clientIds?.length ? `AND ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
+  const obFilter = clientIds?.length ? `AND client_id IN (${clientIds.map(() => '?').join(',')})` : '';
+  const ibParams: (string | number | null)[] = [startDate, endDate, ...(clientIds || [])];
+  const obParams: (string | number | null)[] = [startDate, endDate, ...(clientIds || [])];
+
+  // Inbound: all 19 parameters
+  const ibSelect = INBOUND_PARAMS
+    .map(p => `ROUND(AVG(COALESCE(\`${p.key}\`,0))*100,1) AS \`${p.key}\``)
+    .join(', ');
+
+  const [ibRow] = await querySource<Record<string, number>>(`
+    SELECT ${ibSelect}
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ? ${ibFilter}
+  `, ibParams);
+
+  const inbound = INBOUND_PARAMS.map(p => ({
+    parameter: p.label,
+    key: p.key,
+    score: ibRow ? (Number(ibRow[p.key]) || 0) : 0,
+  }));
+
+  // Outbound: 6 parameters
+  const [obRow] = await querySource<Record<string, number>>(`
+    SELECT
+      ROUND(AVG(CASE WHEN Opening=1           OR Opening='1'           THEN 1 ELSE 0 END)*100,1) AS Opening,
+      ROUND(AVG(CASE WHEN Offered=1           OR Offered='1'           THEN 1 ELSE 0 END)*100,1) AS Offered,
+      ROUND(AVG(CASE WHEN ObjectionHandling=1 OR ObjectionHandling='1' THEN 1 ELSE 0 END)*100,1) AS ObjectionHandling,
+      ROUND(AVG(CASE WHEN PrepaidPitch=1      OR PrepaidPitch='1'      THEN 1 ELSE 0 END)*100,1) AS PrepaidPitch,
+      ROUND(AVG(CASE WHEN UpsellingEfforts=1  OR UpsellingEfforts='1'  THEN 1 ELSE 0 END)*100,1) AS UpsellingEfforts,
+      ROUND(AVG(CASE WHEN OfferUrgency=1      OR OfferUrgency='1'      THEN 1 ELSE 0 END)*100,1) AS OfferUrgency
+    FROM db_external.CallDetails
+    WHERE CallDate BETWEEN ? AND ? ${obFilter}
+  `, obParams);
+
+  const outbound = OUTBOUND_PARAMS.map(p => ({
+    parameter: p.label,
+    key: p.key,
+    score: obRow ? (Number(obRow[p.key]) || 0) : 0,
+  }));
+
+  // Scenario distribution (QRC + Sale) from inbound
+  const scenarioRows = await querySource<{ scenario: string; cnt: number }>(`
+    SELECT scenario, COUNT(*) AS cnt
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ? ${ibFilter}
+      AND scenario IS NOT NULL AND scenario != ''
+    GROUP BY scenario
+    ORDER BY cnt DESC
+  `, ibParams);
+
+  const scenario = scenarioRows.map(r => ({
+    name: String(r.scenario),
+    value: Number(r.cnt),
+  }));
+
+  return { inbound, outbound, scenario };
+}
+
+// ─── Agent Parameter Drill-down ───────────────────────────────────────────────
+
+export async function getAgentParams(agentName: string, filters: CallMasterFilters) {
+  const { startDate, endDate, clientIds } = filters;
   const clientFilter = clientIds?.length ? `AND ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
+  const params: (string | number | null)[] = [startDate, endDate, agentName, ...(clientIds || [])];
+
+  const ibSelect = INBOUND_PARAMS
+    .map(p => `ROUND(AVG(COALESCE(\`${p.key}\`,0))*100,1) AS \`${p.key}\``)
+    .join(', ');
 
   const [row] = await querySource<Record<string, number>>(`
-    SELECT
-      ROUND(AVG(COALESCE(customer_concern_acknowledged,0)) * 100, 1) AS concern_acknowledged,
-      ROUND(AVG(COALESCE(express_empathy,0)) * 100, 1) AS empathy,
-      ROUND(AVG(COALESCE(active_listening,0)) * 100, 1) AS active_listening,
-      ROUND(AVG(COALESCE(assurance_or_appreciation_provided,0)) * 100, 1) AS assurance,
-      ROUND(AVG(COALESCE(politeness_and_no_sarcasm,0)) * 100, 1) AS politeness,
-      ROUND(AVG(COALESCE(professionalism_maintained,0)) * 100, 1) AS professionalism,
-      ROUND(AVG(COALESCE(proper_call_closure,0)) * 100, 1) AS call_closure,
-      ROUND(AVG(COALESCE(upselling_or_offers_suggested,0)) * 100, 1) AS upselling
+    SELECT ${ibSelect}
     FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ? ${clientFilter}
-  `, [startDate, endDate, ...(clientIds || [])]);
+    WHERE CallDate BETWEEN ? AND ? AND User = ? ${clientFilter}
+  `, params);
 
   if (!row) return [];
 
-  return [
-    { parameter: 'Concern Acknowledged', score: Number(row.concern_acknowledged) || 0 },
-    { parameter: 'Empathy', score: Number(row.empathy) || 0 },
-    { parameter: 'Active Listening', score: Number(row.active_listening) || 0 },
-    { parameter: 'Assurance', score: Number(row.assurance) || 0 },
-    { parameter: 'Politeness', score: Number(row.politeness) || 0 },
-    { parameter: 'Professionalism', score: Number(row.professionalism) || 0 },
-    { parameter: 'Call Closure', score: Number(row.call_closure) || 0 },
-    { parameter: 'Upselling', score: Number(row.upselling) || 0 },
-  ];
+  return INBOUND_PARAMS.map(p => ({
+    parameter: p.label,
+    key: p.key,
+    score: Number(row[p.key]) || 0,
+  }));
 }
 
 // ─── Calls by Month ───────────────────────────────────────────────────────────
