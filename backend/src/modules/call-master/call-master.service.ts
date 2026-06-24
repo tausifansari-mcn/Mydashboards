@@ -128,7 +128,7 @@ export async function getQualityTrend(filters: CallMasterFilters, period: 'daily
     ? "DATE_FORMAT(CallDate, '%Y-%m')"
     : period === 'weekly'
     ? "DATE_FORMAT(CallDate, '%Y-%u')"
-    : 'DATE(CallDate)';
+    : "DATE_FORMAT(CallDate, '%Y-%m-%d')";
 
   return querySource<{ period: string; quality: number; calls: number }>(`
     SELECT
@@ -225,18 +225,18 @@ export async function getCallsByDay(filters: CallMasterFilters) {
 
   const qFilter = clientIds?.length ? `AND ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
   const qRows = await querySource<{ dow: number; cnt: number }>(`
-    SELECT DAYOFWEEK(CallDate) - 1 AS dow, COUNT(*) AS cnt
+    SELECT (DAYOFWEEK(CallDate) - 1) AS dow, COUNT(*) AS cnt
     FROM db_audit.call_quality_assessment
     WHERE CallDate BETWEEN ? AND ? ${qFilter}
-    GROUP BY DAYOFWEEK(CallDate)
+    GROUP BY (DAYOFWEEK(CallDate) - 1)
   `, [startDate, endDate, ...(clientIds || [])]);
 
   const oFilter = clientIds?.length ? `AND client_id IN (${clientIds.map(() => '?').join(',')})` : '';
   const oRows = await querySource<{ dow: number; cnt: number }>(`
-    SELECT DAYOFWEEK(CallDate) - 1 AS dow, COUNT(*) AS cnt
+    SELECT (DAYOFWEEK(CallDate) - 1) AS dow, COUNT(*) AS cnt
     FROM db_external.CallDetails
     WHERE CallDate BETWEEN ? AND ? ${oFilter}
-    GROUP BY DAYOFWEEK(CallDate)
+    GROUP BY (DAYOFWEEK(CallDate) - 1)
   `, [startDate, endDate, ...(clientIds || [])]);
 
   qRows.forEach((r) => { results[r.dow].inbound = Number(r.cnt); });

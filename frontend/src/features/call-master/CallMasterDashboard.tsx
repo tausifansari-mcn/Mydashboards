@@ -4,7 +4,7 @@ import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
-  ResponsiveContainer, FunnelChart, Funnel, LabelList,
+  ResponsiveContainer,
 } from 'recharts';
 import {
   PhoneCall, CheckCircle, Shield, Heart, TrendingUp,
@@ -359,13 +359,25 @@ export default function CallMasterDashboard() {
         api.get(`/call-master/top-agents?${qs}`),
       ]);
       setKPIs(kRes.data.data);
-      setTrend(tRes.data.data || []);
+      // Parse decimal strings from MySQL AVG/ROUND to numbers for Recharts
+      setTrend((tRes.data.data || []).map((r: TrendRow) => ({
+        ...r, quality: parseFloat(String(r.quality)) || 0, calls: Number(r.calls) || 0,
+      })));
       setByHour(hRes.data.data || []);
       setByDay(dRes.data.data || []);
       setByClient(cRes.data.data || { inbound: [], outbound: [] });
       setFunnel(fRes.data.data || []);
-      setCXParams(xRes.data.data || []);
-      setAgents(aRes.data.data || { top: [], bottom: [] });
+      setCXParams((xRes.data.data || []).map((r: CXRow) => ({
+        ...r, score: parseFloat(String(r.score)) || 0,
+      })));
+      const agentData = aRes.data.data || { top: [], bottom: [] };
+      const parseAgent = (a: AgentRow) => ({
+        ...a,
+        quality: parseFloat(String(a.quality)) || 0,
+        compliance: parseFloat(String(a.compliance)) || 0,
+        calls: Number(a.calls) || 0,
+      });
+      setAgents({ top: agentData.top.map(parseAgent), bottom: agentData.bottom.map(parseAgent) });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to load dashboard data';
       setError(msg);
