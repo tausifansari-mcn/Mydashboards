@@ -122,7 +122,7 @@ export async function getCXParameters(req: Request, res: Response) {
 
 export async function getClientList(req: Request, res: Response) {
   try {
-    const data = await svc.getClientList();
+    const data = await svc.getClientList(req.tenantId ?? null);
     res.json({ success: true, data });
   } catch (err) {
     console.error('getClientList error:', err);

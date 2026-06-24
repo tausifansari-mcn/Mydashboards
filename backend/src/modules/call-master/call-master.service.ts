@@ -15,10 +15,13 @@ export async function resolveClientIds(tenantClientId: number | null): Promise<n
   return client ? [client.dialdesk_client_id] : [];
 }
 
-// Helper: get list of all clients with their dialdesk ids for filter dropdowns
-export async function getClientList() {
+// Helper: get list of clients visible to this tenant (for filter dropdowns)
+export async function getClientList(tenantClientId: number | null) {
+  const where = tenantClientId === null
+    ? { is_active: true }                          // super admin → all
+    : { is_active: true, id: tenantClientId };     // tenant user → only their client
   return prisma.md_clients.findMany({
-    where: { is_active: true },
+    where,
     select: { id: true, name: true, dialdesk_client_id: true },
     orderBy: { name: 'asc' },
   });

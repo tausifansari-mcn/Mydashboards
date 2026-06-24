@@ -9,7 +9,7 @@ import {
 import {
   PhoneCall, CheckCircle, Shield, Heart, TrendingUp,
   Users, Layers, UserCheck, AlertCircle, Calendar,
-  RefreshCw, ChevronDown, Award, ThumbsDown,
+  RefreshCw, ChevronDown, Award, ThumbsDown, Lock,
 } from 'lucide-react';
 import api from '@/lib/axios';
 
@@ -156,8 +156,13 @@ function FilterBar({
   onRefresh: () => void;
   loading: boolean;
 }) {
+  // If the API returned exactly 1 client, this user is tenant-scoped — lock the client filter
+  const isTenantLocked = clients.length === 1;
+  const lockedClient = isTenantLocked ? clients[0] : null;
+
   return (
     <div className="flex flex-wrap gap-3 items-center">
+      {/* Date range */}
       <div className="flex items-center gap-2 bg-[#1E293B] border border-white/10 rounded-lg px-3 py-2">
         <Calendar size={14} className="text-slate-400" />
         <input
@@ -175,20 +180,29 @@ function FilterBar({
         />
       </div>
 
-      <div className="relative">
-        <select
-          value={filters.clientId}
-          onChange={(e) => onChange('clientId', e.target.value)}
-          className="appearance-none bg-[#1E293B] border border-white/10 text-sm text-slate-200 rounded-lg px-3 py-2 pr-8 outline-none"
-        >
-          <option value="">All Clients</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
-          ))}
-        </select>
-        <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
-      </div>
+      {/* Client filter — locked badge for tenant users, dropdown for super admin */}
+      {isTenantLocked ? (
+        <div className="flex items-center gap-2 bg-[#1E293B] border border-blue-500/40 rounded-lg px-3 py-2">
+          <Lock size={12} className="text-blue-400 shrink-0" />
+          <span className="text-sm text-blue-300 font-medium">{lockedClient!.name}</span>
+        </div>
+      ) : (
+        <div className="relative">
+          <select
+            value={filters.clientId}
+            onChange={(e) => onChange('clientId', e.target.value)}
+            className="appearance-none bg-[#1E293B] border border-white/10 text-sm text-slate-200 rounded-lg px-3 py-2 pr-8 outline-none"
+          >
+            <option value="">All Clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
+            ))}
+          </select>
+          <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
+        </div>
+      )}
 
+      {/* LOB */}
       <div className="relative">
         <select
           value={filters.lob}
@@ -202,6 +216,7 @@ function FilterBar({
         <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
       </div>
 
+      {/* Period */}
       <div className="relative">
         <select
           value={filters.period}
@@ -387,7 +402,16 @@ export default function CallMasterDashboard() {
   }, [buildParams]);
 
   useEffect(() => {
-    api.get('/call-master/clients').then((r) => setClients(r.data.data || [])).catch(() => {});
+    api.get('/call-master/clients')
+      .then((r) => {
+        const list: ClientItem[] = r.data.data || [];
+        setClients(list);
+        // If user is tenant-scoped (only 1 client returned), auto-lock the filter
+        if (list.length === 1) {
+          setFilters((prev) => ({ ...prev, clientId: String(list[0].dialdesk_client_id) }));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
