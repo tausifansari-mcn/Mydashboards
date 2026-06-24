@@ -190,3 +190,65 @@ export async function getCallsByMonth(req: Request, res: Response) {
     res.status(500).json({ success: false, message: 'Failed to fetch calls by month' });
   }
 }
+
+export async function getProcessList(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    const data = await svc.getProcessList(filters);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('getProcessList error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch process list' });
+  }
+}
+
+export async function getFatalByDay(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    const data = await svc.getFatalByDay(filters);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('getFatalByDay error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch fatal by day' });
+  }
+}
+
+export async function exportData(req: Request, res: Response) {
+  try {
+    const { startDate, endDate } = parseDateRange(req);
+    const source = (req.query.source as 'inbound' | 'outbound') || 'inbound';
+    const scope  = await svc.resolveUserScope(req.user!.id, req.tenantId ?? null);
+
+    // LOB access check
+    if (scope.allowedLobs !== null) {
+      const required = source === 'inbound' ? 'Inbound' : 'Outbound';
+      if (!scope.allowedLobs.includes(required)) {
+        res.status(403).json({ success: false, message: `Access to ${source} data not permitted` });
+        return;
+      }
+    }
+
+    // Resolve clientIds (mirrors buildFilters logic)
+    let clientIds: number[] | undefined;
+    if (req.query.clientId) {
+      const requested = Number(req.query.clientId);
+      clientIds = (scope.clientIds === null || scope.clientIds.includes(requested))
+        ? [requested]
+        : [];
+    } else if (scope.clientIds !== null) {
+      clientIds = scope.clientIds.length ? scope.clientIds : [-1];
+    }
+
+    const filters: svc.CallMasterFilters = { startDate, endDate, clientIds };
+    const columns = req.query.columns
+      ? String(req.query.columns).split(',').map(c => c.trim()).filter(Boolean)
+      : [];
+    const limit = Math.min(Number(req.query.limit) || 5000, 10000);
+
+    const rows = await svc.getExportData(filters, source, columns, limit);
+    res.json({ success: true, data: { rows, count: (rows as unknown[]).length } });
+  } catch (err) {
+    console.error('exportData error:', err);
+    res.status(500).json({ success: false, message: 'Export failed' });
+  }
+}

@@ -155,11 +155,8 @@ export async function getKPIs(filters: CallMasterFilters) {
     }
   }
 
-  // Platform stats (clients/processes from shivamgiri)
-  const [activeClients, activeProcesses] = await Promise.all([
-    prisma.md_clients.count({ where: { is_active: true } }),
-    prisma.md_processes.count({ where: { is_active: true } }),
-  ]);
+  // Platform stats
+  const activeClients = await prisma.md_clients.count({ where: { is_active: true } });
 
   // Active agents — LOB-aware: inbound=db_audit User, outbound=CallDetails AgentName, all=union
   let activeAgents = 0;
@@ -207,7 +204,6 @@ export async function getKPIs(filters: CallMasterFilters) {
     salesConversion: outboundKPIs.salesConversion,
     outboundQuality: outboundKPIs.outboundQuality,
     activeClients,
-    activeProcesses,
     activeAgents,
   };
 }
@@ -656,4 +652,192 @@ export async function getCallsByMonth(filters: CallMasterFilters) {
   });
 
   return Object.values(months).sort((a, b) => a.month.localeCompare(b.month));
+}
+
+// ─── Process List (quality + fatal per process) ───────────────────────────────
+
+export async function getProcessList(filters: CallMasterFilters) {
+  const { startDate, endDate, clientIds } = filters;
+  const processFilter = clientIds?.length
+    ? `AND p.dialdesk_client_id IN (${clientIds.map(() => '?').join(',')})`
+    : '';
+
+  const rows = await querySource<{
+    process_name: string;
+    lob: string;
+    client_name: string;
+    total_calls: number;
+    quality_score: number | null;
+    fatal_calls: number;
+    fatal_rate: number | null;
+  }>(`
+    SELECT
+      p.process_name,
+      p.lob,
+      COALESCE(c.name, 'Unknown') AS client_name,
+      COUNT(q.CallDate)                                                    AS total_calls,
+      ROUND(AVG(q.quality_percentage), 1)                                  AS quality_score,
+      COALESCE(SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END), 0) AS fatal_calls,
+      ROUND(
+        SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0
+          / NULLIF(COUNT(q.CallDate), 0),
+        1
+      ) AS fatal_rate
+    FROM shivamgiri.md_processes p
+    LEFT JOIN shivamgiri.md_clients c ON c.id = p.client_id
+    LEFT JOIN db_audit.call_quality_assessment q
+      ON CAST(q.ClientId AS UNSIGNED) = p.dialdesk_client_id
+     AND q.CallDate BETWEEN ? AND ?
+    WHERE p.is_active = TRUE ${processFilter}
+    GROUP BY p.id, p.process_name, p.lob, c.name
+    ORDER BY c.name, p.lob, p.process_name
+  `, [startDate, endDate, ...(clientIds || [])]);
+
+  return rows.map(r => ({
+    process_name: String(r.process_name),
+    lob:          String(r.lob),
+    client_name:  String(r.client_name),
+    total_calls:  Number(r.total_calls) || 0,
+    quality_score: r.quality_score !== null ? Number(r.quality_score) : null,
+    fatal_calls:  Number(r.fatal_calls) || 0,
+    fatal_rate:   r.fatal_rate !== null ? Number(r.fatal_rate) : null,
+  }));
+}
+
+// ─── Fatal Calls by Day of Week (inbound, quality_percentage = 0) ─────────────
+
+export async function getFatalByDay(filters: CallMasterFilters) {
+  const { startDate, endDate, clientIds } = filters;
+  const clientFilter = clientIds?.length
+    ? `AND ClientId IN (${clientIds.map(() => '?').join(',')})`
+    : '';
+
+  const rows = await querySource<{ day: string; dow: number; fatal_calls: number }>(`
+    SELECT
+      DAYNAME(CallDate)    AS day,
+      DAYOFWEEK(CallDate)  AS dow,
+      COUNT(*)             AS fatal_calls
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ?
+      AND quality_percentage = 0
+      ${clientFilter}
+    GROUP BY DAYOFWEEK(CallDate), DAYNAME(CallDate)
+    ORDER BY DAYOFWEEK(CallDate)
+  `, [startDate, endDate, ...(clientIds || [])]);
+
+  // Ensure all 7 days are present (fill missing days with 0)
+  const DAY_ORDER = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const map = Object.fromEntries(rows.map(r => [String(r.day), Number(r.fatal_calls) || 0]));
+  return DAY_ORDER.map(d => ({ day: d, fatal_calls: map[d] ?? 0 }));
+}
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+
+const INBOUND_EXPORT_SQL: Record<string, string> = {
+  CallDate:     'q.CallDate',
+  User:         'q.User',
+  Client:       "COALESCE(c.name, CONCAT('Client ', q.ClientId))",
+  QualityScore: 'q.quality_percentage',
+  scenario:     'q.scenario',
+  scenario1:    'q.scenario1',
+  call_answered_within_5_seconds:     'q.`call_answered_within_5_seconds`',
+  customer_concern_acknowledged:      'q.`customer_concern_acknowledged`',
+  professionalism_maintained:         'q.`professionalism_maintained`',
+  assurance_or_appreciation_provided: 'q.`assurance_or_appreciation_provided`',
+  pronunciation_and_clarity:          'q.`pronunciation_and_clarity`',
+  enthusiasm_and_no_fumbling:         'q.`enthusiasm_and_no_fumbling`',
+  active_listening:                   'q.`active_listening`',
+  politeness_and_no_sarcasm:          'q.`politeness_and_no_sarcasm`',
+  proper_grammar:                     'q.`proper_grammar`',
+  accurate_issue_probing:             'q.`accurate_issue_probing`',
+  proper_hold_procedure:              'q.`proper_hold_procedure`',
+  proper_transfer_and_language:       'q.`proper_transfer_and_language`',
+  dead_air_under_10_seconds:          'q.`dead_air_under_10_seconds`',
+  case_escalated_correctly:           'q.`case_escalated_correctly`',
+  address_recorded_completely:        'q.`address_recorded_completely`',
+  correct_and_complete_information:   'q.`correct_and_complete_information`',
+  upselling_or_offers_suggested:      'q.`upselling_or_offers_suggested`',
+  further_assistance_offered:         'q.`further_assistance_offered`',
+  proper_call_closure:                'q.`proper_call_closure`',
+};
+
+const OBQ_EXPORT_SQL = `ROUND((
+  (CASE WHEN d.Opening=1 OR d.Opening='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN d.Offered=1 OR d.Offered='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN d.ObjectionHandling=1 OR d.ObjectionHandling='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN d.PrepaidPitch=1 OR d.PrepaidPitch='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN d.UpsellingEfforts=1 OR d.UpsellingEfforts='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN d.OfferUrgency=1 OR d.OfferUrgency='1' THEN 1 ELSE 0 END) +
+  (CASE WHEN LOWER(COALESCE(d.SensitiveWordUsed,'none')) = 'none' THEN 1 ELSE 0 END)
+) / 7.0 * 100, 1)`;
+
+const OUTBOUND_EXPORT_SQL: Record<string, string> = {
+  CallDate:         'd.CallDate',
+  AgentName:        'd.AgentName',
+  Client:           "COALESCE(c.name, CONCAT('Client ', d.client_id))",
+  LengthSec:        'd.LengthSec',
+  CallDisposition:  'd.CallDisposition',
+  StartTime:        'd.StartTime',
+  EndTime:          'd.EndTime',
+  Opening:          'd.Opening',
+  Offered:          'd.Offered',
+  ObjectionHandling:'d.ObjectionHandling',
+  PrepaidPitch:     'd.PrepaidPitch',
+  UpsellingEfforts: 'd.UpsellingEfforts',
+  OfferUrgency:     'd.OfferUrgency',
+  SensitiveWordUsed:'d.SensitiveWordUsed',
+  OBQuality:        OBQ_EXPORT_SQL,
+  SaleDone:         'd.SaleDone',
+  ProductOffering:  'd.ProductOffering',
+  DiscountType:     'd.DiscountType',
+  Category:         'd.Category',
+  SubCategory:      'd.SubCategory',
+  Feedback:         'd.Feedback',
+  Feedback_Category:'d.Feedback_Category',
+  AreaForImprovement:'d.AreaForImprovement',
+  SensitiveWordContext:'d.SensitiveWordContext',
+  NotInterestedBucketReason:'d.NotInterestedBucketReason',
+};
+
+export async function getExportData(
+  filters: CallMasterFilters,
+  source: 'inbound' | 'outbound',
+  selectedColKeys: string[],
+  limit = 5000,
+) {
+  const sqlMap = source === 'inbound' ? INBOUND_EXPORT_SQL : OUTBOUND_EXPORT_SQL;
+  const validKeys = selectedColKeys.filter(k => k in sqlMap);
+  if (validKeys.length === 0) return [];
+
+  const { startDate, endDate, clientIds } = filters;
+  const selectClause = validKeys.map(k => `${sqlMap[k]} AS \`${k}\``).join(', ');
+
+  if (source === 'inbound') {
+    const clientFilter = clientIds?.length
+      ? `AND q.ClientId IN (${clientIds.map(() => '?').join(',')})`
+      : '';
+    return querySource(
+      `SELECT ${selectClause}
+       FROM db_audit.call_quality_assessment q
+       LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+       WHERE q.CallDate BETWEEN ? AND ? ${clientFilter}
+       ORDER BY q.CallDate DESC
+       LIMIT ${limit}`,
+      [startDate, endDate, ...(clientIds || [])],
+    );
+  } else {
+    const clientFilter = clientIds?.length
+      ? `AND d.client_id IN (${clientIds.map(() => '?').join(',')})`
+      : '';
+    return querySource(
+      `SELECT ${selectClause}
+       FROM db_external.CallDetails d
+       LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = d.client_id
+       WHERE d.CallDate BETWEEN ? AND ? ${clientFilter}
+         AND d.AgentName IS NOT NULL AND d.AgentName != ''
+       ORDER BY d.CallDate DESC
+       LIMIT ${limit}`,
+      [startDate, endDate, ...(clientIds || [])],
+    );
+  }
 }

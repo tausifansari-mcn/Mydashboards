@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -9,7 +9,7 @@ import {
 } from 'recharts';
 import {
   PhoneCall, CheckCircle, Shield, Heart, TrendingUp,
-  Users, Layers, UserCheck, AlertCircle, Calendar,
+  Users, UserCheck, AlertCircle, Calendar,
   RefreshCw, ChevronDown, Award, ThumbsDown, Lock, X, Info, Download,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
@@ -26,7 +26,6 @@ interface KPIs {
   salesConversion: number;
   outboundQuality: number;
   activeClients: number;
-  activeProcesses: number;
   activeAgents: number;
 }
 
@@ -40,9 +39,70 @@ interface AgentRow    { agent: string; calls: number; quality: number; complianc
 interface AgentParamRow { parameter: string; key: string; score: number }
 interface HourRow    { hour: string; inbound: number; outbound: number; total: number }
 interface DayRow     { day: string; inbound: number; outbound: number }
-interface MonthRow   { month: string; inbound: number; outbound: number; sales: number }
 interface ClientRow        { client_name: string; audited?: number; quality?: number; calls?: number; sales?: number }
 interface ActiveAgentItem  { agent: string; calls: number; quality: number; clients: string; lob: string }
+interface ProcessListItem  { process_name: string; lob: string; client_name: string; total_calls: number; quality_score: number | null; fatal_calls: number; fatal_rate: number | null }
+interface FatalDayRow      { day: string; fatal_calls: number }
+
+// ─── Export Column Metadata ───────────────────────────────────────────────────
+
+interface ExportColMeta { key: string; label: string; group: string }
+
+const IB_EXPORT_COLS: ExportColMeta[] = [
+  { key: 'CallDate',    label: 'Date',              group: 'Call Info' },
+  { key: 'User',        label: 'Agent',             group: 'Call Info' },
+  { key: 'Client',      label: 'Client',            group: 'Call Info' },
+  { key: 'QualityScore', label: 'Quality Score (%)', group: 'Call Info' },
+  { key: 'scenario',    label: 'Scenario',          group: 'Call Info' },
+  { key: 'scenario1',   label: 'Sub-Scenario',      group: 'Call Info' },
+  { key: 'call_answered_within_5_seconds',    label: 'Answered ≤5s',          group: 'Quality Parameters' },
+  { key: 'customer_concern_acknowledged',     label: 'Concern Acknowledged',   group: 'Quality Parameters' },
+  { key: 'professionalism_maintained',        label: 'Professionalism',        group: 'Quality Parameters' },
+  { key: 'assurance_or_appreciation_provided', label: 'Assurance',            group: 'Quality Parameters' },
+  { key: 'pronunciation_and_clarity',         label: 'Pronunciation & Clarity', group: 'Quality Parameters' },
+  { key: 'enthusiasm_and_no_fumbling',        label: 'Enthusiasm',             group: 'Quality Parameters' },
+  { key: 'active_listening',                  label: 'Active Listening',       group: 'Quality Parameters' },
+  { key: 'politeness_and_no_sarcasm',         label: 'Politeness',             group: 'Quality Parameters' },
+  { key: 'proper_grammar',                    label: 'Proper Grammar',         group: 'Quality Parameters' },
+  { key: 'accurate_issue_probing',            label: 'Issue Probing',          group: 'Quality Parameters' },
+  { key: 'proper_hold_procedure',             label: 'Hold Procedure',         group: 'Quality Parameters' },
+  { key: 'proper_transfer_and_language',      label: 'Transfer & Language',    group: 'Quality Parameters' },
+  { key: 'dead_air_under_10_seconds',         label: 'Dead Air <10s',          group: 'Quality Parameters' },
+  { key: 'case_escalated_correctly',          label: 'Escalation',             group: 'Quality Parameters' },
+  { key: 'address_recorded_completely',       label: 'Address Recorded',       group: 'Quality Parameters' },
+  { key: 'correct_and_complete_information',  label: 'Correct Info',           group: 'Quality Parameters' },
+  { key: 'upselling_or_offers_suggested',     label: 'Upselling',              group: 'Quality Parameters' },
+  { key: 'further_assistance_offered',        label: 'Further Assistance',     group: 'Quality Parameters' },
+  { key: 'proper_call_closure',               label: 'Call Closure',           group: 'Quality Parameters' },
+];
+
+const OB_EXPORT_COLS: ExportColMeta[] = [
+  { key: 'CallDate',       label: 'Date',              group: 'Call Info' },
+  { key: 'AgentName',      label: 'Agent',             group: 'Call Info' },
+  { key: 'Client',         label: 'Client',            group: 'Call Info' },
+  { key: 'LengthSec',      label: 'Duration (sec)',    group: 'Call Info' },
+  { key: 'CallDisposition', label: 'Disposition',      group: 'Call Info' },
+  { key: 'StartTime',      label: 'Start Time',        group: 'Call Info' },
+  { key: 'EndTime',        label: 'End Time',          group: 'Call Info' },
+  { key: 'Opening',             label: 'Opening',           group: 'Quality' },
+  { key: 'Offered',             label: 'Offer Presented',   group: 'Quality' },
+  { key: 'ObjectionHandling',   label: 'Objection Handling', group: 'Quality' },
+  { key: 'PrepaidPitch',        label: 'Prepaid Pitch',     group: 'Quality' },
+  { key: 'UpsellingEfforts',    label: 'Upselling Efforts', group: 'Quality' },
+  { key: 'OfferUrgency',        label: 'Offer Urgency',     group: 'Quality' },
+  { key: 'SensitiveWordUsed',   label: 'Sensitive Words',   group: 'Quality' },
+  { key: 'OBQuality',           label: 'OB Quality (%)',    group: 'Quality' },
+  { key: 'SaleDone',       label: 'Sale Done',         group: 'Sales' },
+  { key: 'ProductOffering', label: 'Product',          group: 'Sales' },
+  { key: 'DiscountType',   label: 'Discount Type',     group: 'Sales' },
+  { key: 'Category',       label: 'Category',          group: 'Sales' },
+  { key: 'SubCategory',    label: 'Sub Category',      group: 'Sales' },
+  { key: 'Feedback',            label: 'Feedback',          group: 'Feedback' },
+  { key: 'Feedback_Category',   label: 'Feedback Category', group: 'Feedback' },
+  { key: 'AreaForImprovement',  label: 'Area for Improvement', group: 'Feedback' },
+  { key: 'SensitiveWordContext', label: 'Sensitive Word Context', group: 'Feedback' },
+  { key: 'NotInterestedBucketReason', label: 'Not Interested Reason', group: 'Feedback' },
+];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -852,6 +912,295 @@ function AgentTable({
   );
 }
 
+// ─── Export Modal ─────────────────────────────────────────────────────────────
+
+function ExportModal({ open, onClose, clients, currentFilters }: {
+  open: boolean;
+  onClose: () => void;
+  clients: ClientItem[];
+  currentFilters: Filters;
+}) {
+  const cfRef = useRef(currentFilters);
+  useEffect(() => { cfRef.current = currentFilters; }, [currentFilters]);
+
+  const [source, setSource]                 = useState<'inbound' | 'outbound'>('inbound');
+  const [exportStart, setExportStart]       = useState('');
+  const [exportEnd, setExportEnd]           = useState('');
+  const [exportClientId, setExportClientId] = useState('');
+  const [rowLimit, setRowLimit]             = useState(5000);
+  const [selectedCols, setSelectedCols]     = useState<Set<string>>(new Set());
+  const [isDownloading, setIsDownloading]   = useState(false);
+
+  // Sync from dashboard filters when modal opens
+  useEffect(() => {
+    if (!open) return;
+    const cf = cfRef.current;
+    const s: 'inbound' | 'outbound' = cf.lob === 'Outbound' ? 'outbound' : 'inbound';
+    setSource(s);
+    setExportStart(cf.startDate);
+    setExportEnd(cf.endDate);
+    setExportClientId(cf.clientId);
+    const cols = s === 'outbound' ? OB_EXPORT_COLS : IB_EXPORT_COLS;
+    setSelectedCols(new Set(cols.filter(c => c.group === 'Call Info').map(c => c.key)));
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const cols   = source === 'inbound' ? IB_EXPORT_COLS : OB_EXPORT_COLS;
+  const groups = [...new Set(cols.map(c => c.group))];
+
+  const switchSource = (s: 'inbound' | 'outbound') => {
+    setSource(s);
+    const newCols = s === 'inbound' ? IB_EXPORT_COLS : OB_EXPORT_COLS;
+    setSelectedCols(new Set(newCols.filter(c => c.group === 'Call Info').map(c => c.key)));
+  };
+
+  const toggleCol = (key: string) =>
+    setSelectedCols(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+
+  const toggleGroup = (group: string) => {
+    const keys = cols.filter(c => c.group === group).map(c => c.key);
+    const allOn = keys.every(k => selectedCols.has(k));
+    setSelectedCols(prev => {
+      const next = new Set(prev);
+      keys.forEach(k => allOn ? next.delete(k) : next.add(k));
+      return next;
+    });
+  };
+
+  const applyPreset = (preset: 'all' | 'info' | 'quality') => {
+    if (preset === 'all')
+      setSelectedCols(new Set(cols.map(c => c.key)));
+    else if (preset === 'info')
+      setSelectedCols(new Set(cols.filter(c => c.group === 'Call Info').map(c => c.key)));
+    else
+      setSelectedCols(new Set(cols.filter(c => c.group === 'Quality Parameters' || c.group === 'Quality').map(c => c.key)));
+  };
+
+  const handleDownload = async () => {
+    if (selectedCols.size === 0) return;
+    setIsDownloading(true);
+    try {
+      const p = new URLSearchParams({
+        source,
+        startDate: exportStart.replace('T', ' '),
+        endDate:   exportEnd.replace('T', ' '),
+        columns:   [...selectedCols].join(','),
+        limit:     String(rowLimit),
+      });
+      if (exportClientId) p.set('clientId', exportClientId);
+
+      const r = await api.get(`/call-master/export?${p}`);
+      const rows: Record<string, unknown>[] = r.data?.data?.rows || [];
+
+      if (rows.length === 0) {
+        alert('No data found for the selected filters.');
+        return;
+      }
+
+      // Rename column keys to human-readable labels for CSV headers
+      const keyToLabel = Object.fromEntries(cols.map(c => [c.key, c.label]));
+      const renamed = rows.map(row => {
+        const out: Record<string, unknown> = {};
+        for (const key of [...selectedCols]) {
+          if (key in row) out[keyToLabel[key] ?? key] = row[key];
+        }
+        return out;
+      });
+
+      downloadCSV(`call_master_${source}_${new Date().toISOString().slice(0, 10)}`, renamed);
+    } catch (err) {
+      console.error('Export failed:', err);
+      alert('Export failed. Please try again.');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 z-50 backdrop-blur-sm"
+            onClick={onClose}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            className="fixed inset-x-4 top-8 bottom-8 md:inset-x-auto md:left-1/2 md:-translate-x-1/2 md:w-full md:max-w-3xl bg-[#0B1120] border border-white/10 rounded-2xl z-50 flex flex-col shadow-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10 shrink-0">
+              <Download size={16} className="text-blue-400" />
+              <h2 className="text-base font-semibold text-white flex-1">Export Report</h2>
+              <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/5">
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Body: left filters panel + right column selector */}
+            <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-[220px_1fr]">
+
+              {/* ── Left panel ── */}
+              <div className="border-b md:border-b-0 md:border-r border-white/8 p-5 flex flex-col gap-5 overflow-y-auto">
+
+                {/* Source */}
+                <div>
+                  <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold mb-2">Data Source</p>
+                  <div className="flex gap-2">
+                    {(['inbound', 'outbound'] as const).map(s => (
+                      <button key={s} onClick={() => switchSource(s)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                          source === s
+                            ? s === 'inbound' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
+                            : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
+                        }`}
+                      >
+                        {s === 'inbound' ? 'Inbound' : 'Outbound'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Date range */}
+                <div>
+                  <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold mb-2">Date Range</p>
+                  <div className="space-y-2">
+                    <div>
+                      <span className="text-[10px] text-slate-600 block mb-1">From</span>
+                      <input type="datetime-local" value={exportStart}
+                        onChange={e => setExportStart(e.target.value)}
+                        className="w-full bg-[#1E293B] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-200 outline-none [color-scheme:dark]"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-600 block mb-1">To</span>
+                      <input type="datetime-local" value={exportEnd}
+                        onChange={e => setExportEnd(e.target.value)}
+                        className="w-full bg-[#1E293B] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-200 outline-none [color-scheme:dark]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Client */}
+                <div>
+                  <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold mb-2">Client</p>
+                  <select value={exportClientId} onChange={e => setExportClientId(e.target.value)}
+                    className="w-full appearance-none bg-[#1E293B] border border-white/10 text-xs text-slate-200 rounded-lg px-2 py-1.5 outline-none"
+                  >
+                    <option value="">All Clients</option>
+                    {clients.map(c => (
+                      <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Row limit */}
+                <div>
+                  <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold mb-2">Row Limit</p>
+                  <select value={rowLimit} onChange={e => setRowLimit(Number(e.target.value))}
+                    className="w-full appearance-none bg-[#1E293B] border border-white/10 text-xs text-slate-200 rounded-lg px-2 py-1.5 outline-none"
+                  >
+                    <option value={1000}>1,000 rows</option>
+                    <option value={5000}>5,000 rows</option>
+                    <option value={10000}>10,000 rows</option>
+                  </select>
+                </div>
+
+                {/* Column presets */}
+                <div>
+                  <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold mb-2">Column Presets</p>
+                  <div className="space-y-1.5">
+                    {([
+                      { id: 'all'     as const, label: 'All Columns' },
+                      { id: 'info'    as const, label: 'Call Info Only' },
+                      { id: 'quality' as const, label: 'Quality Only' },
+                    ] as const).map(p => (
+                      <button key={p.id} onClick={() => applyPreset(p.id)}
+                        className="w-full text-left text-xs text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Download button */}
+                <div className="mt-auto space-y-2">
+                  <button
+                    onClick={handleDownload}
+                    disabled={isDownloading || selectedCols.size === 0}
+                    className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold py-2.5 rounded-lg transition-colors"
+                  >
+                    {isDownloading
+                      ? <><RefreshCw size={14} className="animate-spin" /> Fetching…</>
+                      : <><Download size={14} /> Download CSV</>
+                    }
+                  </button>
+                  <p className="text-[10px] text-slate-600 text-center">
+                    {selectedCols.size} col{selectedCols.size !== 1 ? 's' : ''} · max {rowLimit.toLocaleString()} rows
+                  </p>
+                </div>
+              </div>
+
+              {/* ── Right panel: column checkboxes ── */}
+              <div className="overflow-y-auto p-5">
+                <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold mb-4">Select Columns</p>
+                <div className="space-y-5">
+                  {groups.map(group => {
+                    const groupCols = cols.filter(c => c.group === group);
+                    const allOn  = groupCols.every(c => selectedCols.has(c.key));
+                    const someOn = groupCols.some(c => selectedCols.has(c.key));
+                    return (
+                      <div key={group}>
+                        <div className="flex items-center gap-2 mb-2.5 cursor-pointer" onClick={() => toggleGroup(group)}>
+                          <div className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] font-bold shrink-0 transition-colors ${
+                            allOn  ? 'bg-blue-600 border-blue-600 text-white' :
+                            someOn ? 'bg-blue-600/40 border-blue-500 text-white' :
+                            'border-white/20 bg-transparent text-transparent'
+                          }`}>✓</div>
+                          <span className="text-xs font-semibold text-slate-300">{group}</span>
+                          <span className="text-[10px] text-slate-600 ml-auto">
+                            {groupCols.filter(c => selectedCols.has(c.key)).length}/{groupCols.length}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5 pl-6">
+                          {groupCols.map(col => (
+                            <label key={col.key} className="flex items-center gap-2 cursor-pointer group/col">
+                              <input
+                                type="checkbox"
+                                checked={selectedCols.has(col.key)}
+                                onChange={() => toggleCol(col.key)}
+                                className="w-3.5 h-3.5 rounded accent-blue-500"
+                              />
+                              <span className="text-xs text-slate-400 group-hover/col:text-slate-200 transition-colors truncate" title={col.label}>
+                                {col.label}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function CallMasterDashboard() {
@@ -872,7 +1221,7 @@ export default function CallMasterDashboard() {
   const [trend, setTrend] = useState<TrendRow[]>([]);
   const [byHour, setByHour] = useState<HourRow[]>([]);
   const [byDay, setByDay] = useState<DayRow[]>([]);
-  const [byMonth, setByMonth] = useState<MonthRow[]>([]);
+  const [fatalByDay, setFatalByDay] = useState<FatalDayRow[]>([]);
   const [byClient, setByClient] = useState<{ inbound: ClientRow[]; outbound: ClientRow[] }>({ inbound: [], outbound: [] });
   const [funnel, setFunnel] = useState<FunnelRow[]>([]);
   const [cxData, setCXData] = useState<CXData>({ inbound: [], outbound: [], scenario: [] });
@@ -881,7 +1230,10 @@ export default function CallMasterDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<string | null>(null);
   const [agentsList, setAgentsList] = useState<ActiveAgentItem[]>([]);
-  const [agentsListLoading, setAgentsListLoading] = useState(false);
+  const [agentsListLoading, setAgentsListLoading]   = useState(false);
+  const [processList, setProcessList]               = useState<ProcessListItem[]>([]);
+  const [processListLoading, setProcessListLoading] = useState(false);
+  const [exportOpen, setExportOpen]                 = useState(false);
 
   const buildParams = useCallback(() => {
     const p: Record<string, string> = {
@@ -899,12 +1251,12 @@ export default function CallMasterDashboard() {
     setError(null);
     try {
       const qs = buildParams();
-      const [kRes, tRes, hRes, dRes, mRes, cRes, fRes, xRes, aRes] = await Promise.all([
+      const [kRes, tRes, hRes, dRes, fdRes, cRes, fRes, xRes, aRes] = await Promise.all([
         api.get(`/call-master/kpis?${qs}`),
         api.get(`/call-master/quality-trend?${qs}`),
         api.get(`/call-master/calls-by-hour?${qs}`),
         api.get(`/call-master/calls-by-day?${qs}`),
-        api.get(`/call-master/calls-by-month?${qs}`),
+        api.get(`/call-master/fatal-by-day?${qs}`),
         api.get(`/call-master/calls-by-client?${qs}`),
         api.get(`/call-master/sales-funnel?${qs}`),
         api.get(`/call-master/cx-parameters?${qs}`),
@@ -916,8 +1268,8 @@ export default function CallMasterDashboard() {
       })));
       setByHour(hRes.data.data || []);
       setByDay(dRes.data.data || []);
-      setByMonth((mRes.data.data || []).map((r: MonthRow) => ({
-        ...r, inbound: Number(r.inbound) || 0, outbound: Number(r.outbound) || 0, sales: Number(r.sales) || 0,
+      setFatalByDay((fdRes.data.data || []).map((r: FatalDayRow) => ({
+        day: String(r.day), fatal_calls: Number(r.fatal_calls) || 0,
       })));
       setByClient(cRes.data.data || { inbound: [], outbound: [] });
       setFunnel(fRes.data.data || []);
@@ -976,6 +1328,21 @@ export default function CallMasterDashboard() {
       } catch { setAgentsList([]); }
       finally { setAgentsListLoading(false); }
     }
+    if (key === 'active_clients') {
+      setProcessList([]);
+      setProcessListLoading(true);
+      try {
+        const r = await api.get(`/call-master/process-list?${buildParams()}`);
+        setProcessList((r.data.data || []).map((p: ProcessListItem) => ({
+          ...p,
+          total_calls:  Number(p.total_calls) || 0,
+          quality_score: p.quality_score !== null ? parseFloat(String(p.quality_score)) : null,
+          fatal_calls:  Number(p.fatal_calls) || 0,
+          fatal_rate:   p.fatal_rate !== null ? parseFloat(String(p.fatal_rate)) : null,
+        })));
+      } catch { setProcessList([]); }
+      finally { setProcessListLoading(false); }
+    }
   };
 
   const DRAWER_INFO: Record<string, { title: string; description: string }> = {
@@ -986,8 +1353,7 @@ export default function CallMasterDashboard() {
     cx_score:        { title: 'Customer Experience (CX) Score', description: 'Composite score of parameters that directly shape how a customer perceives the interaction: concern acknowledgment, assurance, active listening, politeness, pronunciation, and enthusiasm. Target: ≥ 75%.' },
     sales_conv:      { title: 'Sales Conversion Rate', description: 'Percentage of outbound calls where SaleDone = 1 in CallDetails. Calculated as (successful sales / total calls) × 100. Reflects agent effectiveness in converting outbound pitches to sales.' },
     ob_quality:      { title: 'Outbound Quality Score', description: 'Average quality score across all outbound calls, calculated per-row as (Opening + Offer Presented + Objection Handling + Prepaid Pitch + Upselling Efforts + Offer Urgency + No Sensitive Words) ÷ 7 × 100. A score of 100% means every parameter was met on every call.' },
-    active_clients:  { title: 'Active Clients', description: 'Clients currently marked as active in the platform. Super admins see all clients; tenant users see only their assigned client.' },
-    active_processes:{ title: 'Active Processes', description: 'Active campaign lines / LOBs configured per client. Each process represents a distinct business workflow (e.g. Bellavita Inbound, GNC Outbound). Processes drive data routing and reporting segmentation.' },
+    active_clients:  { title: 'Active Clients & Processes', description: 'All active processes grouped by client. Quality Score = average inbound quality (%) for the selected period. Fatal Score = % of calls with 0% quality (complete failures). A process with 0 calls had no audited inbound activity in this period.' },
     active_agents:   { title: 'Active Agents — Date Range', description: 'Unique agents (User field) who appear in at least one audited inbound call during the selected period. Shows their call volume, average quality score, and client(s) they handled.' },
   };
 
@@ -1040,15 +1406,23 @@ export default function CallMasterDashboard() {
       <div className="px-6 pt-6 pb-4 bg-[#0B1120] border-b border-white/5">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-3">
-            <img src="/mas-call-logo.png" alt="MAS Call" className="h-10 w-10 rounded-lg object-contain" />
             <div>
               <h1 className="text-xl font-bold text-white tracking-tight">Call Master</h1>
               <p className="text-xs text-slate-500 mt-0.5">Real-time analytics · {filters.lob === 'All' ? 'All LOBs' : filters.lob}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/20">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-            <span className="text-xs text-green-400 font-medium">Live</span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setExportOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 border border-blue-500/30 text-blue-400 hover:bg-blue-600/25 hover:text-blue-300 text-xs font-medium transition-colors"
+            >
+              <Download size={13} />
+              Export Report
+            </button>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/20">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              <span className="text-xs text-green-400 font-medium">Live</span>
+            </div>
           </div>
         </div>
         <FilterBar filters={filters} clients={clients} onChange={handleFilterChange} onRefresh={fetchAll} loading={loading} />
@@ -1076,15 +1450,14 @@ export default function CallMasterDashboard() {
             : <KPICard index={2} label="OB Quality"    value={kpis?.outboundQuality ?? 0} suffix="%" dec={1} icon={<Award size={15}/>} color={COLOR_PURPLE} sub="7-param score" onClick={() => openDrawer('ob_quality')} />
           }
           <KPICard index={3} label="Compliance"     value={kpis?.compliance    ?? 0} suffix="%" dec={1} icon={<Shield size={15}/>} color={COLOR_AMBER} onClick={() => openDrawer('compliance')} />
-          <KPICard index={4} label="CX Score"       value={kpis?.customerExperience ?? 0} suffix="%" dec={1} icon={<Heart size={15}/>} color="#EC4899"   onClick={() => openDrawer('cx_score')} />
+          <KPICard index={4} label="Soft Score"       value={kpis?.customerExperience ?? 0} suffix="%" dec={1} icon={<Heart size={15}/>} color="#EC4899"   onClick={() => openDrawer('cx_score')} />
         </div>
 
         {/* ── Row 2: operational KPIs (role-gated) ────────────────────────── */}
-        <div className={`grid gap-3 ${isSuperAdmin ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-2'}`}>
-          <KPICard index={5} label="Sales Conv."    value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={15}/>} color={COLOR_GREEN}  onClick={() => openDrawer('sales_conv')} />
-          {isSuperAdmin && <KPICard index={6} label="Active Clients"   value={kpis?.activeClients   ?? 0} icon={<Users    size={15}/>} color={COLOR_BLUE}   onClick={() => openDrawer('active_clients')} />}
-          {isSuperAdmin && <KPICard index={7} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers   size={15}/>} color={COLOR_PURPLE} onClick={() => openDrawer('active_processes')} />}
-          <KPICard index={8} label="Active Agents"  value={kpis?.activeAgents   ?? 0} icon={<UserCheck size={15}/>} color={COLOR_AMBER} sub={`${filters.lob === 'All' ? 'IB+OB' : filters.lob}`} onClick={() => openDrawer('active_agents')} />
+        <div className={`grid gap-3 ${isSuperAdmin ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2'}`}>
+          <KPICard index={5} label="Sales Conv."   value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={15}/>} color={COLOR_GREEN} onClick={() => openDrawer('sales_conv')} />
+          {isSuperAdmin && <KPICard index={6} label="Active Clients" value={kpis?.activeClients ?? 0} icon={<Users size={15}/>} color={COLOR_BLUE} sub="click for process list" onClick={() => openDrawer('active_clients')} />}
+          <KPICard index={7} label="Active Agents" value={kpis?.activeAgents ?? 0} icon={<UserCheck size={15}/>} color={COLOR_AMBER} sub={filters.lob === 'All' ? 'IB+OB' : filters.lob} onClick={() => openDrawer('active_agents')} />
         </div>
 
         {/* ── Row 3: Quality Trend (3/5) + Hourly Distribution (2/5) ──────── */}
@@ -1160,21 +1533,21 @@ export default function CallMasterDashboard() {
             </ResponsiveContainer>
           </SectionCard>
 
-          <SectionCard title="Monthly Volume" accent={COLOR_AMBER} description={CHART_DESC.monthly_volume}
-            downloadData={{ filename: 'monthly_volume', rows: byMonth.map(r => ({ Month: r.month, Inbound: r.inbound, Outbound: r.outbound, Sales: r.sales })) }}>
-            <ResponsiveContainer width="100%" height={210}>
-              <BarChart data={byMonth} margin={{ top: 4, right: 4, bottom: 0, left: -12 }}>
-                <CartesianGrid {...GRID} />
-                <XAxis dataKey="month" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
-                  tickFormatter={(v: string) => v.slice(5)} />
-                <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} />
-                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-                {showInbound  && <Bar dataKey="inbound"  fill={COLOR_BLUE}   name="Inbound"  radius={[3,3,0,0]} stackId="a" />}
-                {showOutbound && <Bar dataKey="outbound" fill={COLOR_PURPLE}  name="Outbound" radius={[3,3,0,0]} stackId="a" />}
-              </BarChart>
-            </ResponsiveContainer>
-          </SectionCard>
+          {showInbound && (
+            <SectionCard title="Fatal Calls by Day" accent={COLOR_RED} description="Inbound calls that scored 0% quality — a complete failure of all parameters. Shows which days of the week have the most fatal calls. Use this to target coaching sessions mid-week."
+              downloadData={{ filename: 'fatal_by_day', rows: fatalByDay.map(r => ({ Day: r.day, 'Fatal Calls': r.fatal_calls })) }}>
+              <ResponsiveContainer width="100%" height={210}>
+                <BarChart data={fatalByDay} margin={{ top: 4, right: 4, bottom: 0, left: -12 }}>
+                  <CartesianGrid {...GRID} />
+                  <XAxis dataKey="day" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
+                    tickFormatter={(v: string) => v.slice(0, 3)} />
+                  <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [v, 'Fatal Calls']} />
+                  <Bar dataKey="fatal_calls" fill={COLOR_RED} name="Fatal Calls" radius={[3,3,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </SectionCard>
+          )}
 
           {showInbound ? (
             <SectionCard title="Inbound by Client" accent={COLOR_GREEN} description={CHART_DESC.inbound_clients}
@@ -1285,6 +1658,54 @@ export default function CallMasterDashboard() {
           title={DRAWER_INFO[drawer].title}
           description={DRAWER_INFO[drawer].description}
         >
+          {/* Active Clients — process list with quality + fatal */}
+          {drawer === 'active_clients' && (
+            processListLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <RefreshCw size={20} className="animate-spin text-blue-400" />
+                <span className="ml-3 text-sm text-slate-400">Loading processes…</span>
+              </div>
+            ) : processList.length === 0 ? (
+              <p className="text-slate-600 text-sm text-center py-12">No process data available</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-[#0B1120]">
+                    <tr className="border-b border-white/10">
+                      <th className="text-left text-slate-500 py-2 pr-3 font-semibold">Process</th>
+                      <th className="text-left text-slate-500 py-2 pr-3 font-semibold">Client</th>
+                      <th className="text-left text-slate-500 py-2 pr-3 font-semibold">LOB</th>
+                      <th className="text-right text-slate-500 py-2 pr-3 font-semibold">Calls</th>
+                      <th className="text-right text-slate-500 py-2 pr-3 font-semibold">Quality</th>
+                      <th className="text-right text-slate-500 py-2 font-semibold">Fatal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {processList.map((p, i) => (
+                      <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                        <td className="py-2.5 pr-3 font-medium text-slate-200 max-w-[120px] truncate" title={p.process_name}>{p.process_name}</td>
+                        <td className="py-2.5 pr-3 text-slate-400 max-w-[100px] truncate" title={p.client_name}>{p.client_name}</td>
+                        <td className="py-2.5 pr-3">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                            p.lob === 'Outbound' ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-blue-400'
+                          }`}>{p.lob === 'Outbound' ? 'OB' : 'IB'}</span>
+                        </td>
+                        <td className="py-2.5 pr-3 text-right text-slate-400">{fmt(p.total_calls)}</td>
+                        <td className="py-2.5 pr-3 text-right font-semibold" style={{ color: p.quality_score !== null ? pctColor(p.quality_score) : '#64748B' }}>
+                          {p.quality_score !== null ? `${p.quality_score.toFixed(1)}%` : '—'}
+                        </td>
+                        <td className="py-2.5 text-right font-semibold" style={{ color: p.fatal_calls > 0 ? COLOR_RED : '#64748B' }}>
+                          {p.fatal_calls > 0 ? `${p.fatal_calls} (${(p.fatal_rate ?? 0).toFixed(1)}%)` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-[11px] text-slate-600 mt-3 text-right">{processList.length} processes · fatal = 0% quality calls</p>
+              </div>
+            )
+          )}
+
           {/* Active Agents — full list table */}
           {drawer === 'active_agents' && (
             agentsListLoading ? (
@@ -1336,21 +1757,19 @@ export default function CallMasterDashboard() {
             )
           )}
 
-          {/* For all other KPI drawers — no extra data needed, description is enough */}
-          {drawer !== 'active_agents' && (
+          {/* For simple KPI drawers — show current value + date range */}
+          {drawer !== 'active_agents' && drawer !== 'active_clients' && (
             <div className="space-y-4 pt-2">
               <div className="bg-white/5 rounded-xl p-4 border border-white/5">
                 <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Current Value</p>
                 <p className="text-3xl font-bold text-white">
-                  {drawer === 'total_calls'      && <AnimatedNumber value={kpis?.totalCalls ?? 0} />}
-                  {drawer === 'audited_calls'     && <AnimatedNumber value={kpis?.totalAudited ?? 0} />}
-                  {drawer === 'quality_score'     && <><AnimatedNumber value={kpis?.qualityScore ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
-                  {drawer === 'compliance'        && <><AnimatedNumber value={kpis?.compliance ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
-                  {drawer === 'cx_score'          && <><AnimatedNumber value={kpis?.customerExperience ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
-                  {drawer === 'sales_conv'        && <><AnimatedNumber value={kpis?.salesConversion ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
-                  {drawer === 'ob_quality'        && <><AnimatedNumber value={kpis?.outboundQuality ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
-                  {drawer === 'active_clients'    && <AnimatedNumber value={kpis?.activeClients ?? 0} />}
-                  {drawer === 'active_processes'  && <AnimatedNumber value={kpis?.activeProcesses ?? 0} />}
+                  {drawer === 'total_calls'  && <AnimatedNumber value={kpis?.totalCalls ?? 0} />}
+                  {drawer === 'audited_calls'&& <AnimatedNumber value={kpis?.totalAudited ?? 0} />}
+                  {drawer === 'quality_score'&& <><AnimatedNumber value={kpis?.qualityScore ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'compliance'   && <><AnimatedNumber value={kpis?.compliance ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'cx_score'     && <><AnimatedNumber value={kpis?.customerExperience ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'sales_conv'   && <><AnimatedNumber value={kpis?.salesConversion ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'ob_quality'   && <><AnimatedNumber value={kpis?.outboundQuality ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
                 </p>
               </div>
               <div className="bg-white/5 rounded-xl p-4 border border-white/5">
@@ -1362,6 +1781,14 @@ export default function CallMasterDashboard() {
           )}
         </DetailDrawer>
       )}
+
+      {/* ── Export Modal ─────────────────────────────────────────────────────── */}
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        clients={clients}
+        currentFilters={filters}
+      />
     </div>
   );
 }

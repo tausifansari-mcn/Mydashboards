@@ -46,8 +46,8 @@ export default function Sidebar() {
     >
       {/* Logo */}
       <div className="flex h-16 items-center px-4 border-b border-white/10">
-        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary">
-          <LayoutDashboard className="h-4 w-4 text-white" />
+        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg overflow-hidden bg-white/5">
+          <img src="/mas-call-logo.png" alt="MAS Call" className="h-7 w-7 object-contain" />
         </div>
         <AnimatePresence>
           {sidebarExpanded && (
