@@ -365,23 +365,13 @@ function CXParametersCard({ cxData, lob }: { cxData: CXData; lob: string }) {
       )}
 
       {tab === 'inbound' && showInbound && (
-        <>
-          <div className="max-h-[220px] overflow-y-auto pr-1 mb-4">
-            <ParamBars rows={cxData.inbound} />
-          </div>
-          <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Pareto Analysis</p>
-          <ParetoChart data={cxData.inbound} />
-        </>
+        <div className="max-h-[220px] overflow-y-auto pr-1">
+          <ParamBars rows={cxData.inbound} />
+        </div>
       )}
 
       {tab === 'outbound' && showOutbound && (
-        <>
-          <div className="mb-4">
-            <ParamBars rows={cxData.outbound} barH="h-6" />
-          </div>
-          <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Pareto Analysis</p>
-          <ParetoChart data={cxData.outbound} />
-        </>
+        <ParamBars rows={cxData.outbound} barH="h-6" />
       )}
     </SectionCard>
   );
@@ -1018,6 +1008,24 @@ export default function CallMasterDashboard() {
             <CXParametersCard cxData={cxData} lob={filters.lob} />
           </div>
         </div>
+
+        {/* ── Pareto Analysis ──────────────────────────────────────────────── */}
+        {(showInbound || showOutbound) && (
+          <div className={`grid gap-5 ${showInbound && showOutbound ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+            {showInbound && cxData.inbound.length > 0 && (
+              <SectionCard title="Parameter Pareto · Inbound" accent={COLOR_GREEN}>
+                <p className="text-xs text-slate-500 mb-3">Bars = adherence %, Line = cumulative %</p>
+                <ParetoChart data={cxData.inbound} />
+              </SectionCard>
+            )}
+            {showOutbound && cxData.outbound.length > 0 && (
+              <SectionCard title="Parameter Pareto · Outbound" accent={COLOR_PURPLE}>
+                <p className="text-xs text-slate-500 mb-3">Bars = adherence %, Line = cumulative %</p>
+                <ParetoChart data={cxData.outbound} />
+              </SectionCard>
+            )}
+          </div>
+        )}
 
         {/* ── Scenario Distribution ────────────────────────────────────────── */}
         {showInbound && <ScenarioSection scenario={cxData.scenario} buildQS={buildParams} />}
