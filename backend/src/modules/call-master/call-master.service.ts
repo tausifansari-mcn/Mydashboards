@@ -184,10 +184,12 @@ export async function getKPIs(filters: CallMasterFilters) {
     } else {
       const [r] = await querySource<{ cnt: number }>(`
         SELECT COUNT(DISTINCT agent) AS cnt FROM (
-          SELECT User AS agent FROM db_audit.call_quality_assessment
+          SELECT CONVERT(User USING utf8mb4) COLLATE utf8mb4_general_ci AS agent
+          FROM db_audit.call_quality_assessment
           WHERE CallDate BETWEEN ? AND ? ${ibCF}
           UNION
-          SELECT AgentName AS agent FROM db_external.CallDetails
+          SELECT CONVERT(AgentName USING utf8mb4) COLLATE utf8mb4_general_ci AS agent
+          FROM db_external.CallDetails
           WHERE CallDate BETWEEN ? AND ? ${obCF}
             AND AgentName IS NOT NULL AND AgentName != ''
         ) t
