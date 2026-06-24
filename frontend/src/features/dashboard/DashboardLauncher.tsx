@@ -90,7 +90,7 @@ export default function DashboardLauncher() {
         variants={container} initial="hidden" animate="visible"
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
       >
-        {allDashboards.map((dash) => {
+        {allDashboards.filter((d) => d.slug !== 'quality').map((dash) => {
           const accessible = isAccessible(dash.slug);
           const Icon = iconMap[dash.icon] || BarChart2;
           return (

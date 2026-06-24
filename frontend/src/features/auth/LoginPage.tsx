@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { Eye, EyeOff, LayoutDashboard, Loader2 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/axios';
+import WeatherBackground from './WeatherBackground';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -31,15 +32,16 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#1e3a8a] via-[#1E40AF] to-[#1d4ed8] p-4">
+    <div className="relative flex min-h-screen items-center justify-center p-4 overflow-hidden">
+      <WeatherBackground />
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: 'easeOut' }}
-        className="w-full max-w-sm"
+        className="relative z-10 w-full max-w-sm"
       >
         {/* Card */}
-        <div className="rounded-2xl bg-white p-8 shadow-2xl">
+        <div className="rounded-2xl bg-white/90 backdrop-blur-md p-8 shadow-2xl border border-white/30">
           {/* Brand */}
           <div className="mb-8 text-center">
             <motion.div
@@ -102,7 +104,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <p className="mt-6 text-center text-xs text-white/50">
+        <p className="mt-6 text-center text-xs text-white drop-shadow-md">
           © {new Date().getFullYear()} Mass Call Net. All rights reserved.
         </p>
       </motion.div>

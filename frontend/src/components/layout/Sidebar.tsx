@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Users, Building2, LogOut,
-  ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck, PhoneCall,
+  ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck, PhoneCall, TrendingUp,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -12,6 +12,7 @@ import api from '@/lib/axios';
 const mainLinks = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Launcher' },
   { to: '/call-master', icon: PhoneCall, label: 'Call Master' },
+  { to: '/sales', icon: TrendingUp, label: 'Sales' },
 ];
 
 const adminLinks = [
