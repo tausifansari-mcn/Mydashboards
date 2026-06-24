@@ -14,6 +14,7 @@ const ProcessesPage = lazy(() => import('@/features/admin/ProcessesPage'));
 const AccessPage = lazy(() => import('@/features/admin/AccessPage'));
 const ProfilePage = lazy(() => import('@/features/profile/ProfilePage'));
 const AuditPage = lazy(() => import('@/features/audit/AuditPage'));
+const CallMasterDashboard = lazy(() => import('@/features/call-master/CallMasterDashboard'));
 
 const wrap = (C: React.ComponentType) => (
   <Suspense fallback={<PageLoader />}>
@@ -32,6 +33,7 @@ const router = createBrowserRouter([
         element: <AppShell />,
         children: [
           { path: '/dashboard', element: wrap(DashboardLauncher) },
+          { path: '/call-master', element: wrap(CallMasterDashboard) },
           { path: '/profile', element: wrap(ProfilePage) },
           {
             element: <PrivateRoute roles={['super_admin']} />,

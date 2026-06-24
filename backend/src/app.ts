@@ -11,6 +11,7 @@ import userRoutes from './modules/users/users.routes';
 import processRoutes from './modules/processes/processes.routes';
 import dashboardRoutes from './modules/dashboards/dashboards.routes';
 import auditRoutes from './modules/audit/audit.routes';
+import callMasterRoutes from './modules/call-master/call-master.routes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -29,6 +30,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/processes', processRoutes);
 app.use('/api/dashboards', dashboardRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/call-master', callMasterRoutes);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date() }));
 
