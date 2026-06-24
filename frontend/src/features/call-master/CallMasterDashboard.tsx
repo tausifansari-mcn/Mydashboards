@@ -42,7 +42,7 @@ interface HourRow    { hour: string; inbound: number; outbound: number; total: n
 interface DayRow     { day: string; inbound: number; outbound: number }
 interface MonthRow   { month: string; inbound: number; outbound: number; sales: number }
 interface ClientRow        { client_name: string; audited?: number; quality?: number; calls?: number; sales?: number }
-interface ActiveAgentItem  { agent: string; calls: number; quality: number; clients: string }
+interface ActiveAgentItem  { agent: string; calls: number; quality: number; clients: string; lob: string }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -957,6 +957,7 @@ export default function CallMasterDashboard() {
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { setAgentsList([]); }, [filters.lob]);
 
   const handleFilterChange = (k: keyof Filters, v: string) => {
     setFilters((prev) => ({ ...prev, [k]: v }));
@@ -965,6 +966,7 @@ export default function CallMasterDashboard() {
   const openDrawer = async (key: string) => {
     setDrawer(key);
     if (key === 'active_agents') {
+      setAgentsList([]);
       setAgentsListLoading(true);
       try {
         const r = await api.get(`/call-master/active-agents-list?${buildParams()}`);
@@ -1069,24 +1071,21 @@ export default function CallMasterDashboard() {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <KPICard index={0} label="Total Calls"    value={kpis?.totalCalls    ?? 0} icon={<PhoneCall  size={15}/>} color={COLOR_BLUE}   sub="Outbound"   onClick={() => openDrawer('total_calls')} />
           <KPICard index={1} label="Audited Calls"  value={kpis?.totalAudited  ?? 0} icon={<CheckCircle size={15}/>} color={COLOR_PURPLE} sub="Inbound QA" onClick={() => openDrawer('audited_calls')} />
-          <KPICard index={2} label="Quality Score"  value={kpis?.qualityScore  ?? 0} suffix="%" dec={1} icon={<Award  size={15}/>} color={COLOR_GREEN} onClick={() => openDrawer('quality_score')} />
+          {showInbound
+            ? <KPICard index={2} label="Quality Score" value={kpis?.qualityScore ?? 0} suffix="%" dec={1} icon={<Award size={15}/>} color={COLOR_GREEN} onClick={() => openDrawer('quality_score')} />
+            : <KPICard index={2} label="OB Quality"    value={kpis?.outboundQuality ?? 0} suffix="%" dec={1} icon={<Award size={15}/>} color={COLOR_PURPLE} sub="7-param score" onClick={() => openDrawer('ob_quality')} />
+          }
           <KPICard index={3} label="Compliance"     value={kpis?.compliance    ?? 0} suffix="%" dec={1} icon={<Shield size={15}/>} color={COLOR_AMBER} onClick={() => openDrawer('compliance')} />
           <KPICard index={4} label="CX Score"       value={kpis?.customerExperience ?? 0} suffix="%" dec={1} icon={<Heart size={15}/>} color="#EC4899"   onClick={() => openDrawer('cx_score')} />
         </div>
 
         {/* ── Row 2: operational KPIs (role-gated) ────────────────────────── */}
-        {(() => {
-          const cols = 2 + (isSuperAdmin ? 2 : 0) + (showOutbound ? 1 : 0);
-          return (
-            <div className={`grid gap-3 grid-cols-2 lg:grid-cols-${cols}`}>
-              <KPICard index={5} label="Sales Conv."    value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={15}/>} color={COLOR_GREEN}  onClick={() => openDrawer('sales_conv')} />
-              {showOutbound && <KPICard index={6} label="OB Quality"    value={kpis?.outboundQuality ?? 0} suffix="%" dec={1} icon={<Award size={15}/>} color={COLOR_PURPLE} sub="7-param score" onClick={() => openDrawer('ob_quality')} />}
-              {isSuperAdmin && <KPICard index={7} label="Active Clients"   value={kpis?.activeClients   ?? 0} icon={<Users    size={15}/>} color={COLOR_BLUE}   onClick={() => openDrawer('active_clients')} />}
-              {isSuperAdmin && <KPICard index={8} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers   size={15}/>} color={COLOR_PURPLE} onClick={() => openDrawer('active_processes')} />}
-              <KPICard index={9} label="Active Agents"  value={kpis?.activeAgents   ?? 0} icon={<UserCheck size={15}/>} color={COLOR_AMBER} sub="In date range"  onClick={() => openDrawer('active_agents')} />
-            </div>
-          );
-        })()}
+        <div className={`grid gap-3 ${isSuperAdmin ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-2'}`}>
+          <KPICard index={5} label="Sales Conv."    value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={15}/>} color={COLOR_GREEN}  onClick={() => openDrawer('sales_conv')} />
+          {isSuperAdmin && <KPICard index={6} label="Active Clients"   value={kpis?.activeClients   ?? 0} icon={<Users    size={15}/>} color={COLOR_BLUE}   onClick={() => openDrawer('active_clients')} />}
+          {isSuperAdmin && <KPICard index={7} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers   size={15}/>} color={COLOR_PURPLE} onClick={() => openDrawer('active_processes')} />}
+          <KPICard index={8} label="Active Agents"  value={kpis?.activeAgents   ?? 0} icon={<UserCheck size={15}/>} color={COLOR_AMBER} sub={`${filters.lob === 'All' ? 'IB+OB' : filters.lob}`} onClick={() => openDrawer('active_agents')} />
+        </div>
 
         {/* ── Row 3: Quality Trend (3/5) + Hourly Distribution (2/5) ──────── */}
         <div className={`grid gap-5 ${showInbound ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1'}`}>
@@ -1318,7 +1317,13 @@ export default function CallMasterDashboard() {
                         </td>
                         <td className="py-2.5 text-slate-400 max-w-[160px] truncate" title={a.clients}>
                           <span className="inline-flex items-center gap-1.5">
-                            <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 text-[10px] font-medium shrink-0">IB</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${
+                              a.lob === 'Outbound'
+                                ? 'bg-purple-500/15 text-purple-400'
+                                : 'bg-blue-500/15 text-blue-400'
+                            }`}>
+                              {a.lob === 'Outbound' ? 'OB' : 'IB'}
+                            </span>
                             {a.clients}
                           </span>
                         </td>

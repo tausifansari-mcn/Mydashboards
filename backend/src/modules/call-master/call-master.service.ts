@@ -161,15 +161,40 @@ export async function getKPIs(filters: CallMasterFilters) {
     prisma.md_processes.count({ where: { is_active: true } }),
   ]);
 
-  // Active agents = distinct agents who had calls in the selected date range
-  const agentClientFilter = clientIds?.length
-    ? `AND ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
-  const [agentRow] = await querySource<{ cnt: number }>(`
-    SELECT COUNT(DISTINCT User) AS cnt
-    FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ? ${agentClientFilter}
-  `, [startDate, endDate, ...(clientIds || [])]);
-  const activeAgents = Number(agentRow?.cnt) || 0;
+  // Active agents — LOB-aware: inbound=db_audit User, outbound=CallDetails AgentName, all=union
+  let activeAgents = 0;
+  {
+    const ibCF = clientIds?.length ? `AND ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
+    const obCF = clientIds?.length ? `AND client_id IN (${clientIds.map(() => '?').join(',')})` : '';
+    if (lob === 'Inbound') {
+      const [r] = await querySource<{ cnt: number }>(`
+        SELECT COUNT(DISTINCT User) AS cnt
+        FROM db_audit.call_quality_assessment
+        WHERE CallDate BETWEEN ? AND ? ${ibCF}
+      `, [startDate, endDate, ...(clientIds || [])]);
+      activeAgents = Number(r?.cnt) || 0;
+    } else if (lob === 'Outbound') {
+      const [r] = await querySource<{ cnt: number }>(`
+        SELECT COUNT(DISTINCT AgentName) AS cnt
+        FROM db_external.CallDetails
+        WHERE CallDate BETWEEN ? AND ? ${obCF}
+          AND AgentName IS NOT NULL AND AgentName != ''
+      `, [startDate, endDate, ...(clientIds || [])]);
+      activeAgents = Number(r?.cnt) || 0;
+    } else {
+      const [r] = await querySource<{ cnt: number }>(`
+        SELECT COUNT(DISTINCT agent) AS cnt FROM (
+          SELECT User AS agent FROM db_audit.call_quality_assessment
+          WHERE CallDate BETWEEN ? AND ? ${ibCF}
+          UNION
+          SELECT AgentName AS agent FROM db_external.CallDetails
+          WHERE CallDate BETWEEN ? AND ? ${obCF}
+            AND AgentName IS NOT NULL AND AgentName != ''
+        ) t
+      `, [startDate, endDate, ...(clientIds || []), startDate, endDate, ...(clientIds || [])]);
+      activeAgents = Number(r?.cnt) || 0;
+    }
+  }
 
   return {
     totalCalls: outboundKPIs.totalCalls,
@@ -521,29 +546,56 @@ export async function getAgentParams(agentName: string, filters: CallMasterFilte
   }));
 }
 
-// ─── Active Agents Detail List ───────────────────────────────────────────────
+// ─── Active Agents Detail List (LOB-aware) ───────────────────────────────────
 
 export async function getActiveAgentsList(filters: CallMasterFilters) {
   const { startDate, endDate, clientIds } = filters;
-  const clientFilter = clientIds?.length
-    ? `AND q.ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
+  const lob = filters.lob || 'All';
+  const ibCF = clientIds?.length ? `AND q.ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
+  const obCF = clientIds?.length ? `AND d.client_id IN (${clientIds.map(() => '?').join(',')})` : '';
 
-  return querySource<{ agent: string; calls: number; quality: number; clients: string }>(`
+  const ibQuery = `
     SELECT
       q.User AS agent,
       COUNT(*) AS calls,
       ROUND(AVG(q.quality_percentage), 1) AS quality,
-      GROUP_CONCAT(
-        DISTINCT COALESCE(c.name, CONCAT('Client ', q.ClientId))
-        ORDER BY c.name SEPARATOR ', '
-      ) AS clients
+      GROUP_CONCAT(DISTINCT COALESCE(c.name, CONCAT('Client ', q.ClientId)) ORDER BY c.name SEPARATOR ', ') AS clients,
+      'Inbound' AS lob
     FROM db_audit.call_quality_assessment q
-    LEFT JOIN shivamgiri.md_clients c
-      ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
-    WHERE q.CallDate BETWEEN ? AND ? ${clientFilter}
+    LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+    WHERE q.CallDate BETWEEN ? AND ? ${ibCF}
     GROUP BY q.User
-    ORDER BY calls DESC
-  `, [startDate, endDate, ...(clientIds || [])]);
+    ORDER BY calls DESC`;
+
+  const obQuery = `
+    SELECT
+      d.AgentName AS agent,
+      COUNT(*) AS calls,
+      ROUND(AVG(${OB_QUALITY_EXPR}), 1) AS quality,
+      GROUP_CONCAT(DISTINCT COALESCE(c.name, CONCAT('Client ', d.client_id)) ORDER BY c.name SEPARATOR ', ') AS clients,
+      'Outbound' AS lob
+    FROM db_external.CallDetails d
+    LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = d.client_id
+    WHERE d.CallDate BETWEEN ? AND ? ${obCF}
+      AND d.AgentName IS NOT NULL AND d.AgentName != ''
+    GROUP BY d.AgentName
+    ORDER BY calls DESC`;
+
+  type AgentRow = { agent: string; calls: number; quality: number; clients: string; lob: string };
+
+  if (lob === 'Inbound') {
+    return querySource<AgentRow>(ibQuery, [startDate, endDate, ...(clientIds || [])]);
+  }
+  if (lob === 'Outbound') {
+    return querySource<AgentRow>(obQuery, [startDate, endDate, ...(clientIds || [])]);
+  }
+
+  // All: both sets, sorted by calls desc
+  const [ibRows, obRows] = await Promise.all([
+    querySource<AgentRow>(ibQuery, [startDate, endDate, ...(clientIds || [])]),
+    querySource<AgentRow>(obQuery, [startDate, endDate, ...(clientIds || [])]),
+  ]);
+  return [...ibRows, ...obRows].sort((a, b) => Number(b.calls) - Number(a.calls));
 }
 
 // ─── Scenario Detail (sub-scenario from scenario1 column) ────────────────────
