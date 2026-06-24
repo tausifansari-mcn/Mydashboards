@@ -30,16 +30,17 @@ interface KPIs {
 }
 
 interface ClientItem { id: number; name: string; dialdesk_client_id: number }
-interface TrendRow { period: string; quality: number; calls: number }
-interface FunnelRow { stage: string; value: number; pct: number }
+interface TrendRow   { period: string; quality: number; calls: number }
+interface FunnelRow  { stage: string; value: number; pct: number }
 interface CXParamRow { parameter: string; key: string; score: number }
 interface ScenarioRow { name: string; value: number }
 interface CXData { inbound: CXParamRow[]; outbound: CXParamRow[]; scenario: ScenarioRow[] }
-interface AgentRow { agent: string; calls: number; quality: number; compliance: number }
+interface AgentRow    { agent: string; calls: number; quality: number; compliance: number }
 interface AgentParamRow { parameter: string; key: string; score: number }
-interface HourRow { hour: string; inbound: number; outbound: number; total: number }
-interface DayRow { day: string; inbound: number; outbound: number }
-interface ClientRow { client_name: string; audited?: number; quality?: number; calls?: number; sales?: number }
+interface HourRow    { hour: string; inbound: number; outbound: number; total: number }
+interface DayRow     { day: string; inbound: number; outbound: number }
+interface MonthRow   { month: string; inbound: number; outbound: number; sales: number }
+interface ClientRow  { client_name: string; audited?: number; quality?: number; calls?: number; sales?: number }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -101,43 +102,47 @@ function KPICard({ label, value, suffix, dec, icon, color, sub, index }: KPICard
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.4 }}
-      className="bg-[#1E293B] rounded-xl p-5 flex flex-col gap-3 border border-white/5 hover:border-white/15 transition-colors"
+      className="relative bg-gradient-to-br from-[#1E293B] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-white/5 hover:border-white/10 transition-all overflow-hidden"
     >
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">{label}</span>
-        <div className="p-2 rounded-lg" style={{ backgroundColor: `${color}20` }}>
-          <div style={{ color }}>{icon}</div>
+      {/* Accent left bar */}
+      <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
+      <div className="pl-2">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider leading-none">{label}</span>
+          <div className="p-1.5 rounded-lg" style={{ backgroundColor: `${color}18` }}>
+            <div style={{ color }}>{icon}</div>
+          </div>
         </div>
+        <div className="text-2xl font-bold text-white tracking-tight">
+          <AnimatedNumber value={value} suffix={suffix} dec={dec} />
+        </div>
+        {sub && <div className="text-[11px] text-slate-500 mt-1">{sub}</div>}
       </div>
-      <div className="text-3xl font-bold text-white">
-        <AnimatedNumber value={value} suffix={suffix} dec={dec} />
-      </div>
-      {sub && <div className="text-xs text-slate-500">{sub}</div>}
-      <div className="h-1 rounded-full bg-white/5">
-        <motion.div
-          className="h-1 rounded-full"
-          style={{ backgroundColor: color }}
-          initial={{ width: 0 }}
-          animate={{ width: suffix === '%' ? `${Math.min(value, 100)}%` : '100%' }}
-          transition={{ delay: index * 0.05 + 0.3, duration: 0.8 }}
-        />
-      </div>
+      {/* Bottom shimmer bar */}
+      <div className="absolute bottom-0 left-0 right-0 h-px" style={{ background: `linear-gradient(90deg, ${color}40, transparent)` }} />
     </motion.div>
   );
 }
 
 // ─── Section Card ─────────────────────────────────────────────────────────────
 
-function SectionCard({ title, children, className = '' }: { title: string; children: React.ReactNode; className?: string }) {
+function SectionCard({ title, children, className = '', accent = COLOR_BLUE }: {
+  title: string; children: React.ReactNode; className?: string; accent?: string;
+}) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4 }}
-      className={`bg-[#1E293B] rounded-xl border border-white/5 p-5 ${className}`}
+      className={`bg-[#1E293B] rounded-xl border border-white/5 overflow-hidden ${className}`}
     >
-      <h3 className="text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider">{title}</h3>
-      {children}
+      <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
+        <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
+        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">{title}</h3>
+      </div>
+      <div className="p-5">
+        {children}
+      </div>
     </motion.div>
   );
 }
@@ -345,7 +350,7 @@ function CXParametersCard({ cxData, lob }: { cxData: CXData; lob: string }) {
   }, [lob]);
 
   return (
-    <SectionCard title="CX Quality Parameters">
+    <SectionCard title="CX Quality Parameters" accent="#EC4899">
       {(showInbound && showOutbound) && (
         <div className="flex gap-1 mb-4 bg-white/5 rounded-lg p-1 w-fit">
           <button onClick={() => setTab('inbound')}
@@ -407,7 +412,7 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
   const total = scenario.reduce((s, r) => s + r.value, 0) || 1;
 
   return (
-    <SectionCard title="Scenario Distribution (Inbound)">
+    <SectionCard title="Scenario Distribution · Inbound" accent={COLOR_BLUE}>
       <p className="text-xs text-slate-500 mb-4">Click a slice to drill into sub-scenarios</p>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Main pie */}
@@ -742,6 +747,7 @@ export default function CallMasterDashboard() {
   const [trend, setTrend] = useState<TrendRow[]>([]);
   const [byHour, setByHour] = useState<HourRow[]>([]);
   const [byDay, setByDay] = useState<DayRow[]>([]);
+  const [byMonth, setByMonth] = useState<MonthRow[]>([]);
   const [byClient, setByClient] = useState<{ inbound: ClientRow[]; outbound: ClientRow[] }>({ inbound: [], outbound: [] });
   const [funnel, setFunnel] = useState<FunnelRow[]>([]);
   const [cxData, setCXData] = useState<CXData>({ inbound: [], outbound: [], scenario: [] });
@@ -765,23 +771,26 @@ export default function CallMasterDashboard() {
     setError(null);
     try {
       const qs = buildParams();
-      const [kRes, tRes, hRes, dRes, cRes, fRes, xRes, aRes] = await Promise.all([
+      const [kRes, tRes, hRes, dRes, mRes, cRes, fRes, xRes, aRes] = await Promise.all([
         api.get(`/call-master/kpis?${qs}`),
         api.get(`/call-master/quality-trend?${qs}`),
         api.get(`/call-master/calls-by-hour?${qs}`),
         api.get(`/call-master/calls-by-day?${qs}`),
+        api.get(`/call-master/calls-by-month?${qs}`),
         api.get(`/call-master/calls-by-client?${qs}`),
         api.get(`/call-master/sales-funnel?${qs}`),
         api.get(`/call-master/cx-parameters?${qs}`),
         api.get(`/call-master/top-agents?${qs}`),
       ]);
       setKPIs(kRes.data.data);
-      // Parse decimal strings from MySQL AVG/ROUND to numbers for Recharts
       setTrend((tRes.data.data || []).map((r: TrendRow) => ({
         ...r, quality: parseFloat(String(r.quality)) || 0, calls: Number(r.calls) || 0,
       })));
       setByHour(hRes.data.data || []);
       setByDay(dRes.data.data || []);
+      setByMonth((mRes.data.data || []).map((r: MonthRow) => ({
+        ...r, inbound: Number(r.inbound) || 0, outbound: Number(r.outbound) || 0, sales: Number(r.sales) || 0,
+      })));
       setByClient(cRes.data.data || { inbound: [], outbound: [] });
       setFunnel(fRes.data.data || []);
       const rawCX = xRes.data.data || { inbound: [], outbound: [], scenario: [] };
@@ -826,180 +835,215 @@ export default function CallMasterDashboard() {
   };
 
   const maxFunnelValue = funnel[0]?.value || 1;
+  const showInbound  = filters.lob !== 'Outbound';
+  const showOutbound = filters.lob !== 'Inbound';
+
+  const TOOLTIP_STYLE = { background: '#0F172A', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
+  const AXIS_TICK = { fill: '#64748B', fontSize: 11 };
+  const GRID = { strokeDasharray: '3 3', stroke: '#1E293B' };
 
   return (
     <div className="min-h-screen bg-[#0F172A] text-white">
-      {/* Header */}
-      <div className="px-6 pt-6 pb-4 border-b border-white/5">
-        <div className="flex items-center justify-between mb-4">
+      {/* ── Header ──────────────────────────────────────────────────────────── */}
+      <div className="px-6 pt-6 pb-4 bg-[#0B1120] border-b border-white/5">
+        <div className="flex items-center justify-between mb-5">
           <div>
-            <h1 className="text-2xl font-bold text-white">Call Master</h1>
-            <p className="text-sm text-slate-400 mt-0.5">Real-time analytics across all lines of business</p>
+            <h1 className="text-xl font-bold text-white tracking-tight">Call Master</h1>
+            <p className="text-xs text-slate-500 mt-0.5">Real-time analytics · {filters.lob === 'All' ? 'All LOBs' : filters.lob}</p>
           </div>
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-            Live Data
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/20">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+            <span className="text-xs text-green-400 font-medium">Live</span>
           </div>
         </div>
-        <FilterBar
-          filters={filters}
-          clients={clients}
-          onChange={handleFilterChange}
-          onRefresh={fetchAll}
-          loading={loading}
-        />
+        <FilterBar filters={filters} clients={clients} onChange={handleFilterChange} onRefresh={fetchAll} loading={loading} />
       </div>
 
-      <div className="p-6 space-y-6">
+      <div className="p-6 space-y-5">
         {/* Error */}
         <AnimatePresence>
           {error && (
             <motion.div
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
+              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
               className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-300 rounded-xl px-4 py-3 text-sm"
             >
-              <AlertCircle size={16} />
-              {error}
+              <AlertCircle size={16} /> {error}
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* KPI Cards — row 1: call metrics */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-          <KPICard index={0} label="Total Calls" value={kpis?.totalCalls ?? 0} icon={<PhoneCall size={16} />} color={COLOR_BLUE} sub="Outbound" />
-          <KPICard index={1} label="Audited Calls" value={kpis?.totalAudited ?? 0} icon={<CheckCircle size={16} />} color={COLOR_PURPLE} sub="Inbound QA" />
-          <KPICard index={2} label="Quality Score" value={kpis?.qualityScore ?? 0} suffix="%" dec={1} icon={<Award size={16} />} color={COLOR_GREEN} />
-          <KPICard index={3} label="Compliance" value={kpis?.compliance ?? 0} suffix="%" dec={1} icon={<Shield size={16} />} color={COLOR_AMBER} />
-          <KPICard index={4} label="CX Score" value={kpis?.customerExperience ?? 0} suffix="%" dec={1} icon={<Heart size={16} />} color="#EC4899" />
+        {/* ── Row 1: 5 primary KPI cards ─────────────────────────────────── */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <KPICard index={0} label="Total Calls"    value={kpis?.totalCalls    ?? 0} icon={<PhoneCall  size={15}/>} color={COLOR_BLUE}   sub="Outbound" />
+          <KPICard index={1} label="Audited Calls"  value={kpis?.totalAudited  ?? 0} icon={<CheckCircle size={15}/>} color={COLOR_PURPLE} sub="Inbound QA" />
+          <KPICard index={2} label="Quality Score"  value={kpis?.qualityScore  ?? 0} suffix="%" dec={1} icon={<Award  size={15}/>} color={COLOR_GREEN} />
+          <KPICard index={3} label="Compliance"     value={kpis?.compliance    ?? 0} suffix="%" dec={1} icon={<Shield size={15}/>} color={COLOR_AMBER} />
+          <KPICard index={4} label="CX Score"       value={kpis?.customerExperience ?? 0} suffix="%" dec={1} icon={<Heart size={15}/>} color="#EC4899" />
         </div>
 
-        {/* KPI Cards — row 2: platform metrics (Active Clients/Processes hidden for non-super-admin) */}
-        <div className={`grid gap-4 ${isSuperAdmin ? 'grid-cols-2 sm:grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'}`}>
-          <KPICard index={5} label="Sales Conversion" value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={16} />} color={COLOR_GREEN} />
-          {isSuperAdmin && <KPICard index={6} label="Active Clients" value={kpis?.activeClients ?? 0} icon={<Users size={16} />} color={COLOR_BLUE} />}
-          {isSuperAdmin && <KPICard index={7} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers size={16} />} color={COLOR_PURPLE} />}
-          <KPICard index={8} label="Active Agents" value={kpis?.activeAgents ?? 0} icon={<UserCheck size={16} />} color={COLOR_AMBER} sub="In date range" />
+        {/* ── Row 2: operational KPIs (role-gated) ────────────────────────── */}
+        <div className={`grid gap-3 ${isSuperAdmin ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-2'}`}>
+          <KPICard index={5} label="Sales Conv."    value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={15}/>} color={COLOR_GREEN} />
+          {isSuperAdmin && <KPICard index={6} label="Active Clients"   value={kpis?.activeClients   ?? 0} icon={<Users    size={15}/>} color={COLOR_BLUE} />}
+          {isSuperAdmin && <KPICard index={7} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers   size={15}/>} color={COLOR_PURPLE} />}
+          <KPICard index={8} label="Active Agents"  value={kpis?.activeAgents   ?? 0} icon={<UserCheck size={15}/>} color={COLOR_AMBER} sub="In date range" />
         </div>
 
-        {/* Quality Trend + Calls by Hour */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {filters.lob !== 'Outbound' && (
-            <SectionCard title={`Quality Trend — Inbound (${filters.period})`}>
-              <ResponsiveContainer width="100%" height={240}>
-                <LineChart data={trend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                  <XAxis dataKey="period" tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                  <YAxis domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 11 }} unit="%" />
-                  <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} labelStyle={{ color: '#CBD5E1' }} />
-                  <Legend />
-                  <Line type="monotone" dataKey="quality" stroke={COLOR_GREEN} strokeWidth={2} dot={false} name="Quality %" />
-                  <Line type="monotone" dataKey="calls" stroke={COLOR_BLUE} strokeWidth={2} dot={false} name="Audited Calls" />
-                </LineChart>
-              </ResponsiveContainer>
-            </SectionCard>
+        {/* ── Row 3: Quality Trend (3/5) + Hourly Distribution (2/5) ──────── */}
+        <div className={`grid gap-5 ${showInbound ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1'}`}>
+          {showInbound && (
+            <div className="lg:col-span-3">
+              <SectionCard title={`Quality Trend · Inbound (${filters.period})`} accent={COLOR_GREEN}>
+                <ResponsiveContainer width="100%" height={270}>
+                  <LineChart data={trend} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
+                    <defs>
+                      <linearGradient id="qualityFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor={COLOR_GREEN}  stopOpacity={0.15} />
+                        <stop offset="95%" stopColor={COLOR_GREEN}  stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid {...GRID} />
+                    <XAxis dataKey="period" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                    <YAxis domain={[0, 100]} tick={AXIS_TICK} tickLine={false} axisLine={false} unit="%" />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: '#CBD5E1' }} />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+                    <Line type="monotone" dataKey="quality" stroke={COLOR_GREEN} strokeWidth={2.5} dot={{ r: 2, fill: COLOR_GREEN }} name="Quality %" />
+                    <Line type="monotone" dataKey="calls"   stroke={COLOR_BLUE}  strokeWidth={1.5} dot={false} strokeDasharray="4 2" name="Audited Calls" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </SectionCard>
+            </div>
           )}
 
-          <SectionCard title="Calls by Hour of Day">
-            <ResponsiveContainer width="100%" height={240}>
-              <AreaChart data={byHour}>
-                <defs>
-                  <linearGradient id="inboundGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={COLOR_BLUE} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={COLOR_BLUE} stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="outboundGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={COLOR_PURPLE} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={COLOR_PURPLE} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis dataKey="hour" tick={{ fill: '#94A3B8', fontSize: 10 }} interval={3} />
-                <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
-                <Legend />
-                {filters.lob !== 'Outbound' && <Area type="monotone" dataKey="inbound" stroke={COLOR_BLUE} fill="url(#inboundGrad)" name="Inbound" strokeWidth={2} />}
-                {filters.lob !== 'Inbound'  && <Area type="monotone" dataKey="outbound" stroke={COLOR_PURPLE} fill="url(#outboundGrad)" name="Outbound" strokeWidth={2} />}
-              </AreaChart>
-            </ResponsiveContainer>
-          </SectionCard>
+          <div className={showInbound ? 'lg:col-span-2' : ''}>
+            <SectionCard title="Calls by Hour" accent={COLOR_PURPLE}>
+              <ResponsiveContainer width="100%" height={270}>
+                <AreaChart data={byHour} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
+                  <defs>
+                    <linearGradient id="ibHourGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor={COLOR_BLUE}   stopOpacity={0.35} />
+                      <stop offset="95%" stopColor={COLOR_BLUE}   stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="obHourGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor={COLOR_PURPLE} stopOpacity={0.35} />
+                      <stop offset="95%" stopColor={COLOR_PURPLE} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid {...GRID} />
+                  <XAxis dataKey="hour" tick={AXIS_TICK} tickLine={false} axisLine={false} interval={3} />
+                  <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+                  {showInbound  && <Area type="monotone" dataKey="inbound"  stroke={COLOR_BLUE}   fill="url(#ibHourGrad)" strokeWidth={2} name="Inbound" />}
+                  {showOutbound && <Area type="monotone" dataKey="outbound" stroke={COLOR_PURPLE}  fill="url(#obHourGrad)" strokeWidth={2} name="Outbound" />}
+                </AreaChart>
+              </ResponsiveContainer>
+            </SectionCard>
+          </div>
         </div>
 
-        {/* Calls by Day + Calls by Client */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <SectionCard title="Calls by Day of Week">
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={byDay}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis dataKey="day" tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
-                <Legend />
-                {filters.lob !== 'Outbound' && <Bar dataKey="inbound" fill={COLOR_BLUE} name="Inbound" radius={[3, 3, 0, 0]} />}
-                {filters.lob !== 'Inbound'  && <Bar dataKey="outbound" fill={COLOR_PURPLE} name="Outbound" radius={[3, 3, 0, 0]} />}
+        {/* ── Row 4: 3-col volume charts ───────────────────────────────────── */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <SectionCard title="Calls by Day of Week" accent={COLOR_BLUE}>
+            <ResponsiveContainer width="100%" height={210}>
+              <BarChart data={byDay} margin={{ top: 4, right: 4, bottom: 0, left: -12 }}>
+                <CartesianGrid {...GRID} />
+                <XAxis dataKey="day" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
+                  tickFormatter={(v: string) => v.slice(0, 3)} />
+                <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                {showInbound  && <Bar dataKey="inbound"  fill={COLOR_BLUE}   name="Inbound"  radius={[3,3,0,0]} />}
+                {showOutbound && <Bar dataKey="outbound" fill={COLOR_PURPLE}  name="Outbound" radius={[3,3,0,0]} />}
               </BarChart>
             </ResponsiveContainer>
           </SectionCard>
 
-          {filters.lob !== 'Outbound' && (
-            <SectionCard title="Calls by Client (Inbound QA)">
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={byClient.inbound.slice(0, 10)} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                  <XAxis type="number" tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                  <YAxis dataKey="client_name" type="category" tick={{ fill: '#94A3B8', fontSize: 10 }} width={100} />
-                  <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
-                  <Bar dataKey="audited" fill={COLOR_GREEN} name="Audited" radius={[0, 3, 3, 0]} />
+          <SectionCard title="Monthly Volume" accent={COLOR_AMBER}>
+            <ResponsiveContainer width="100%" height={210}>
+              <BarChart data={byMonth} margin={{ top: 4, right: 4, bottom: 0, left: -12 }}>
+                <CartesianGrid {...GRID} />
+                <XAxis dataKey="month" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
+                  tickFormatter={(v: string) => v.slice(5)} />
+                <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                {showInbound  && <Bar dataKey="inbound"  fill={COLOR_BLUE}   name="Inbound"  radius={[3,3,0,0]} stackId="a" />}
+                {showOutbound && <Bar dataKey="outbound" fill={COLOR_PURPLE}  name="Outbound" radius={[3,3,0,0]} stackId="a" />}
+              </BarChart>
+            </ResponsiveContainer>
+          </SectionCard>
+
+          {showInbound ? (
+            <SectionCard title="Inbound by Client" accent={COLOR_GREEN}>
+              <ResponsiveContainer width="100%" height={210}>
+                <BarChart data={byClient.inbound.slice(0, 8)} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
+                  <CartesianGrid {...GRID} horizontal={false} />
+                  <XAxis type="number" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                  <YAxis dataKey="client_name" type="category" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false} width={80} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Bar dataKey="audited" fill={COLOR_GREEN} name="Audited" radius={[0,3,3,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </SectionCard>
+          ) : (
+            <SectionCard title="Outbound by Client" accent={COLOR_PURPLE}>
+              <ResponsiveContainer width="100%" height={210}>
+                <BarChart data={byClient.outbound.slice(0, 8)} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
+                  <CartesianGrid {...GRID} horizontal={false} />
+                  <XAxis type="number" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                  <YAxis dataKey="client_name" type="category" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false} width={80} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Bar dataKey="calls" fill={COLOR_PURPLE} name="Calls" radius={[0,3,3,0]} />
+                  <Bar dataKey="sales" fill={COLOR_GREEN}  name="Sales" radius={[0,3,3,0]} />
                 </BarChart>
               </ResponsiveContainer>
             </SectionCard>
           )}
         </div>
 
-        {/* Sales Funnel (Outbound) — hidden for Inbound-only filter */}
-        {filters.lob !== 'Inbound' && (
-          <SectionCard title="Sales Funnel (Outbound)">
-            <div className="space-y-3 mt-2">
-              {funnel.map((row) => (
-                <FunnelBar key={row.stage} row={row} max={maxFunnelValue} />
-              ))}
-              {funnel.length === 0 && (
-                <p className="text-center text-slate-600 text-sm py-8">No outbound data for this period</p>
-              )}
+        {/* ── Row 5: Sales Funnel (2/5) + CX Parameters (3/5) ────────────── */}
+        <div className={`grid gap-5 ${showOutbound ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1'}`}>
+          {showOutbound && (
+            <div className="lg:col-span-2">
+              <SectionCard title="Sales Funnel · Outbound" accent={COLOR_PURPLE}>
+                <div className="space-y-3 pt-1">
+                  {funnel.map((row) => <FunnelBar key={row.stage} row={row} max={maxFunnelValue} />)}
+                  {funnel.length === 0 && <p className="text-center text-slate-600 text-sm py-8">No outbound data</p>}
+                </div>
+              </SectionCard>
             </div>
-          </SectionCard>
-        )}
+          )}
+          <div className={showOutbound ? 'lg:col-span-3' : ''}>
+            <CXParametersCard cxData={cxData} lob={filters.lob} />
+          </div>
+        </div>
 
-        {/* CX Quality Parameters */}
-        <CXParametersCard cxData={cxData} lob={filters.lob} />
+        {/* ── Scenario Distribution ────────────────────────────────────────── */}
+        {showInbound && <ScenarioSection scenario={cxData.scenario} buildQS={buildParams} />}
 
-        {/* Scenario Distribution — only when Inbound or All */}
-        {filters.lob !== 'Outbound' && (
-          <ScenarioSection scenario={cxData.scenario} buildQS={buildParams} />
-        )}
-
-        {/* Agent Leaderboard — only when Inbound or All (data is inbound-sourced) */}
-        {filters.lob !== 'Outbound' && (
-          <SectionCard title="Agent Leaderboard">
+        {/* ── Agent Leaderboard ────────────────────────────────────────────── */}
+        {showInbound && (
+          <SectionCard title="Agent Leaderboard" accent={COLOR_AMBER}>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <AgentTable agents={agents.top} type="top" buildQS={buildParams} />
+              <AgentTable agents={agents.top}    type="top"    buildQS={buildParams} />
               <AgentTable agents={agents.bottom} type="bottom" buildQS={buildParams} />
             </div>
           </SectionCard>
         )}
 
-        {/* Outbound by Client — only when Outbound or All */}
-        {filters.lob !== 'Inbound' && byClient.outbound.length > 0 && (
-          <SectionCard title="Outbound Calls by Client">
+        {/* ── Outbound Calls by Client (full width, "All" LOB only) ────────── */}
+        {filters.lob === 'All' && byClient.outbound.length > 0 && (
+          <SectionCard title="Outbound Calls by Client" accent={COLOR_PURPLE}>
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={byClient.outbound.slice(0, 10)} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis type="number" tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                <YAxis dataKey="client_name" type="category" tick={{ fill: '#94A3B8', fontSize: 10 }} width={100} />
-                <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
-                <Bar dataKey="calls" fill={COLOR_PURPLE} name="Total Calls" radius={[0, 3, 3, 0]} />
-                <Bar dataKey="sales" fill={COLOR_GREEN} name="Sales" radius={[0, 3, 3, 0]} />
+              <BarChart data={byClient.outbound.slice(0, 12)} layout="vertical" margin={{ top: 4, right: 32, bottom: 0, left: 0 }}>
+                <CartesianGrid {...GRID} horizontal={false} />
+                <XAxis type="number" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                <YAxis dataKey="client_name" type="category" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false} width={90} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                <Bar dataKey="calls" fill={COLOR_PURPLE} name="Total Calls" radius={[0,3,3,0]} />
+                <Bar dataKey="sales" fill={COLOR_GREEN}  name="Sales"       radius={[0,3,3,0]} />
               </BarChart>
             </ResponsiveContainer>
           </SectionCard>
