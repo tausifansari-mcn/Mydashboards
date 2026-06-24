@@ -10,21 +10,31 @@ function parseDateRange(req: Request): { startDate: string; endDate: string } {
 
 async function buildFilters(req: Request): Promise<svc.CallMasterFilters> {
   const { startDate, endDate } = parseDateRange(req);
-  const lob = (req.query.lob as 'Inbound' | 'Outbound' | 'All') || 'All';
+  const requestedLob = (req.query.lob as 'Inbound' | 'Outbound' | 'All') || 'All';
 
-  // Multi-tenant: resolve which clientIds are visible
-  const allowedIds = await svc.resolveClientIds(req.tenantId ?? null);
+  // Resolve scope: which clients + LOBs this user can see
+  const scope = await svc.resolveUserScope(req.user!.id, req.tenantId ?? null);
+
+  // Clamp the requested LOB to what the user's processes allow
+  let lob: 'Inbound' | 'Outbound' | 'All' = requestedLob;
+  if (scope.allowedLobs !== null) {
+    const hasIb = scope.allowedLobs.includes('Inbound');
+    const hasOb = scope.allowedLobs.includes('Outbound');
+    if (hasIb && !hasOb)       lob = 'Inbound';
+    else if (!hasIb && hasOb)  lob = 'Outbound';
+    // if both allowed: respect what the user requested
+  }
+
   let clientIds: number[] | undefined;
-
   if (req.query.clientId) {
     const requested = Number(req.query.clientId);
-    if (allowedIds === null || allowedIds.includes(requested)) {
+    if (scope.clientIds === null || scope.clientIds.includes(requested)) {
       clientIds = [requested];
     } else {
-      clientIds = []; // forbidden — return empty
+      clientIds = []; // requested client not in allowed set → empty result
     }
-  } else if (allowedIds !== null) {
-    clientIds = allowedIds.length ? allowedIds : [-1]; // tenant with no clients → no results
+  } else if (scope.clientIds !== null) {
+    clientIds = scope.clientIds.length ? scope.clientIds : [-1]; // no clients → no results
   }
 
   return { startDate, endDate, lob, clientIds };
@@ -122,7 +132,7 @@ export async function getCXParameters(req: Request, res: Response) {
 
 export async function getClientList(req: Request, res: Response) {
   try {
-    const data = await svc.getClientList(req.tenantId ?? null);
+    const data = await svc.getClientList(req.tenantId ?? null, req.user!.id);
     res.json({ success: true, data });
   } catch (err) {
     console.error('getClientList error:', err);

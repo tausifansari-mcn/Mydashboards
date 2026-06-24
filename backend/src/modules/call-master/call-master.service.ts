@@ -8,20 +8,73 @@ export interface CallMasterFilters {
   lob?: 'Inbound' | 'Outbound' | 'All';
 }
 
-// Helper: resolve which dialdesk_client_ids a user can see
-export async function resolveClientIds(tenantClientId: number | null): Promise<number[] | null> {
-  if (tenantClientId === null) return null; // super admin → all
-  const client = await prisma.md_clients.findUnique({ where: { id: tenantClientId } });
-  return client ? [client.dialdesk_client_id] : [];
+export interface UserScope {
+  clientIds: number[] | null;              // null = super admin (unrestricted)
+  allowedLobs: ('Inbound' | 'Outbound')[] | null; // null = unrestricted
 }
 
-// Helper: get list of clients visible to this tenant (for filter dropdowns)
-export async function getClientList(tenantClientId: number | null) {
-  const where = tenantClientId === null
-    ? { is_active: true }                          // super admin → all
-    : { is_active: true, id: tenantClientId };     // tenant user → only their client
+/**
+ * Resolves what data a user is allowed to see.
+ * Priority: super_admin → unrestricted; process mappings → scoped by those
+ * processes' dialdesk_client_ids and LOBs; else falls back to the single
+ * client assigned on the user record.
+ */
+export async function resolveUserScope(userId: number, tenantClientId: number | null): Promise<UserScope> {
+  if (tenantClientId === null) return { clientIds: null, allowedLobs: null };
+
+  // Check process assignments first — they define the most granular scope
+  const mappings = await prisma.md_user_process_mapping.findMany({
+    where: { user_id: userId },
+    include: { process: true },
+  });
+
+  if (mappings.length > 0) {
+    const clientIds = [...new Set(mappings.map(m => m.process.dialdesk_client_id))];
+    const lobSet = new Set(mappings.map(m => m.process.lob.toLowerCase()));
+    const allowedLobs: ('Inbound' | 'Outbound')[] = [];
+    if (lobSet.has('inbound'))  allowedLobs.push('Inbound');
+    if (lobSet.has('outbound')) allowedLobs.push('Outbound');
+    return {
+      clientIds,
+      allowedLobs: allowedLobs.length > 0 ? allowedLobs : null,
+    };
+  }
+
+  // No process mappings yet — fall back to the assigned client
+  const client = await prisma.md_clients.findUnique({ where: { id: tenantClientId } });
+  return { clientIds: client ? [client.dialdesk_client_id] : [], allowedLobs: null };
+}
+
+// Helper: get list of clients visible to this user (for filter dropdowns)
+export async function getClientList(tenantClientId: number | null, userId?: number) {
+  // Super admin: all active clients
+  if (tenantClientId === null) {
+    return prisma.md_clients.findMany({
+      where: { is_active: true },
+      select: { id: true, name: true, dialdesk_client_id: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  // Check process mappings — only show clients the user has processes for
+  if (userId !== undefined) {
+    const mappings = await prisma.md_user_process_mapping.findMany({
+      where: { user_id: userId },
+      include: { process: true },
+    });
+    if (mappings.length > 0) {
+      const prismaClientIds = [...new Set(mappings.map(m => m.process.client_id))];
+      return prisma.md_clients.findMany({
+        where: { is_active: true, id: { in: prismaClientIds } },
+        select: { id: true, name: true, dialdesk_client_id: true },
+        orderBy: { name: 'asc' },
+      });
+    }
+  }
+
+  // Fallback: the single client assigned on the user record
   return prisma.md_clients.findMany({
-    where,
+    where: { is_active: true, id: tenantClientId },
     select: { id: true, name: true, dialdesk_client_id: true },
     orderBy: { name: 'asc' },
   });
