@@ -452,6 +452,31 @@ export async function getAgentParams(agentName: string, filters: CallMasterFilte
   }));
 }
 
+// ─── Active Agents Detail List ───────────────────────────────────────────────
+
+export async function getActiveAgentsList(filters: CallMasterFilters) {
+  const { startDate, endDate, clientIds } = filters;
+  const clientFilter = clientIds?.length
+    ? `AND q.ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
+
+  return querySource<{ agent: string; calls: number; quality: number; clients: string }>(`
+    SELECT
+      q.User AS agent,
+      COUNT(*) AS calls,
+      ROUND(AVG(q.quality_percentage), 1) AS quality,
+      GROUP_CONCAT(
+        DISTINCT COALESCE(c.name, CONCAT('Client ', q.ClientId))
+        ORDER BY c.name SEPARATOR ', '
+      ) AS clients
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN shivamgiri.md_clients c
+      ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+    WHERE q.CallDate BETWEEN ? AND ? ${clientFilter}
+    GROUP BY q.User
+    ORDER BY calls DESC
+  `, [startDate, endDate, ...(clientIds || [])]);
+}
+
 // ─── Scenario Detail (sub-scenario from scenario1 column) ────────────────────
 
 export async function getScenarioDetail(scenario: string, filters: CallMasterFilters) {

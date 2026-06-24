@@ -19,6 +19,7 @@ router.get('/sales-funnel', ctrl.getSalesFunnel);
 router.get('/cx-parameters', ctrl.getCXParameters);
 router.get('/agent-params', ctrl.getAgentParams);
 router.get('/scenario-detail', ctrl.getScenarioDetail);
+router.get('/active-agents-list', ctrl.getActiveAgentsList);
 router.get('/clients', ctrl.getClientList);
 
 export default router;

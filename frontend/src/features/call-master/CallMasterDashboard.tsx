@@ -10,7 +10,7 @@ import {
 import {
   PhoneCall, CheckCircle, Shield, Heart, TrendingUp,
   Users, Layers, UserCheck, AlertCircle, Calendar,
-  RefreshCw, ChevronDown, Award, ThumbsDown, Lock, X,
+  RefreshCw, ChevronDown, Award, ThumbsDown, Lock, X, Info,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/axios';
@@ -40,7 +40,8 @@ interface AgentParamRow { parameter: string; key: string; score: number }
 interface HourRow    { hour: string; inbound: number; outbound: number; total: number }
 interface DayRow     { day: string; inbound: number; outbound: number }
 interface MonthRow   { month: string; inbound: number; outbound: number; sales: number }
-interface ClientRow  { client_name: string; audited?: number; quality?: number; calls?: number; sales?: number }
+interface ClientRow        { client_name: string; audited?: number; quality?: number; calls?: number; sales?: number }
+interface ActiveAgentItem  { agent: string; calls: number; quality: number; clients: string }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -94,23 +95,29 @@ interface KPICardProps {
   color: string;
   sub?: string;
   index: number;
+  onClick?: () => void;
 }
 
-function KPICard({ label, value, suffix, dec, icon, color, sub, index }: KPICardProps) {
+function KPICard({ label, value, suffix, dec, icon, color, sub, index, onClick }: KPICardProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.4 }}
-      className="relative bg-gradient-to-br from-[#1E293B] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-white/5 hover:border-white/10 transition-all overflow-hidden"
+      onClick={onClick}
+      className={`relative bg-gradient-to-br from-[#1E293B] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-white/5 transition-all overflow-hidden group
+        ${onClick ? 'cursor-pointer hover:border-white/20 hover:from-[#243047] hover:to-[#1a2840]' : ''}`}
     >
       {/* Accent left bar */}
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
       <div className="pl-2">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider leading-none">{label}</span>
-          <div className="p-1.5 rounded-lg" style={{ backgroundColor: `${color}18` }}>
-            <div style={{ color }}>{icon}</div>
+          <div className="flex items-center gap-1.5">
+            {onClick && <Info size={11} className="text-slate-600 group-hover:text-slate-400 transition-colors" />}
+            <div className="p-1.5 rounded-lg" style={{ backgroundColor: `${color}18` }}>
+              <div style={{ color }}>{icon}</div>
+            </div>
           </div>
         </div>
         <div className="text-2xl font-bold text-white tracking-tight">
@@ -126,9 +133,20 @@ function KPICard({ label, value, suffix, dec, icon, color, sub, index }: KPICard
 
 // ─── Section Card ─────────────────────────────────────────────────────────────
 
-function SectionCard({ title, children, className = '', accent = COLOR_BLUE }: {
-  title: string; children: React.ReactNode; className?: string; accent?: string;
+function SectionCard({ title, children, className = '', accent = COLOR_BLUE, description, onInfoClick }: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+  accent?: string;
+  description?: string;
+  onInfoClick?: () => void;
 }) {
+  const [tipOpen, setTipOpen] = useState(false);
+  const handleInfo = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onInfoClick) { onInfoClick(); return; }
+    if (description) setTipOpen(v => !v);
+  };
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -138,8 +156,27 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE }: {
     >
       <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
         <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">{title}</h3>
+        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
+        {(description || onInfoClick) && (
+          <button onClick={handleInfo} className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
+            <Info size={13} />
+          </button>
+        )}
       </div>
+      <AnimatePresence>
+        {tipOpen && description && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="px-5 py-3 bg-blue-500/5 border-b border-blue-500/10 text-xs text-slate-400 leading-relaxed">
+              {description}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div className="p-5">
         {children}
       </div>
@@ -273,6 +310,49 @@ function FunnelBar({ row, max }: { row: FunnelRow; max: number }) {
       </div>
       <div className="w-12 text-xs text-slate-400 shrink-0">{row.pct}%</div>
     </div>
+  );
+}
+
+// ─── Detail Drawer ────────────────────────────────────────────────────────────
+
+function DetailDrawer({ open, onClose, title, description, children }: {
+  open: boolean; onClose: () => void; title: string; description: string; children?: React.ReactNode;
+}) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm"
+            onClick={onClose}
+          />
+          <motion.div
+            initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+            transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+            className="fixed right-0 top-0 bottom-0 w-full max-w-lg bg-[#0B1120] border-l border-white/10 z-50 flex flex-col shadow-2xl"
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between px-6 py-4 border-b border-white/8">
+              <div>
+                <h2 className="text-base font-semibold text-white">{title}</h2>
+              </div>
+              <button onClick={onClose} className="mt-0.5 text-slate-500 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/5">
+                <X size={16} />
+              </button>
+            </div>
+            {/* Description */}
+            <div className="px-6 py-3 bg-blue-500/5 border-b border-white/5">
+              <p className="text-xs text-slate-400 leading-relaxed">{description}</p>
+            </div>
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {children}
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -744,6 +824,9 @@ export default function CallMasterDashboard() {
   const [agents, setAgents] = useState<{ top: AgentRow[]; bottom: AgentRow[] }>({ top: [], bottom: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState<string | null>(null);
+  const [agentsList, setAgentsList] = useState<ActiveAgentItem[]>([]);
+  const [agentsListLoading, setAgentsListLoading] = useState(false);
 
   const buildParams = useCallback(() => {
     const p: Record<string, string> = {
@@ -824,6 +907,48 @@ export default function CallMasterDashboard() {
     setFilters((prev) => ({ ...prev, [k]: v }));
   };
 
+  const openDrawer = async (key: string) => {
+    setDrawer(key);
+    if (key === 'active_agents') {
+      setAgentsListLoading(true);
+      try {
+        const r = await api.get(`/call-master/active-agents-list?${buildParams()}`);
+        setAgentsList((r.data.data || []).map((a: ActiveAgentItem) => ({
+          ...a, calls: Number(a.calls), quality: parseFloat(String(a.quality)) || 0,
+        })));
+      } catch { setAgentsList([]); }
+      finally { setAgentsListLoading(false); }
+    }
+  };
+
+  const DRAWER_INFO: Record<string, { title: string; description: string }> = {
+    total_calls:     { title: 'Total Outbound Calls', description: 'Total number of outbound calls dialled during the selected date range. Sourced from db_external.CallDetails. Includes all call outcomes regardless of result.' },
+    audited_calls:   { title: 'Audited Inbound Calls', description: 'Total inbound calls reviewed by a quality analyst. Each record in db_audit.call_quality_assessment represents one quality-evaluated call. Only audited calls contribute to the quality score.' },
+    quality_score:   { title: 'Overall Quality Score', description: 'Weighted average of quality_percentage across all audited inbound calls. Covers 19 behavioral and process parameters scored 0 or 1 by QA analysts. Target: ≥ 80%.' },
+    compliance:      { title: 'Compliance Score', description: 'Measures adherence to mandatory process steps: professionalism, hold procedure, accurate information, address recording, escalation, and call closure. Non-negotiable parameters with regulatory or legal implications. Target: ≥ 90%.' },
+    cx_score:        { title: 'Customer Experience (CX) Score', description: 'Composite score of parameters that directly shape how a customer perceives the interaction: concern acknowledgment, assurance, active listening, politeness, pronunciation, and enthusiasm. Target: ≥ 75%.' },
+    sales_conv:      { title: 'Sales Conversion Rate', description: 'Percentage of outbound calls where SaleDone = 1 in CallDetails. Calculated as (successful sales / total calls) × 100. Reflects agent effectiveness in converting outbound pitches to sales.' },
+    active_clients:  { title: 'Active Clients', description: 'Clients currently marked as active in the platform. Super admins see all clients; tenant users see only their assigned client.' },
+    active_processes:{ title: 'Active Processes', description: 'Active campaign lines / LOBs configured per client. Each process represents a distinct business workflow (e.g. Bellavita Inbound, GNC Outbound). Processes drive data routing and reporting segmentation.' },
+    active_agents:   { title: 'Active Agents — Date Range', description: 'Unique agents (User field) who appear in at least one audited inbound call during the selected period. Shows their call volume, average quality score, and client(s) they handled.' },
+  };
+
+  // Chart section descriptions
+  const CHART_DESC: Record<string, string> = {
+    quality_trend:   'Daily / weekly / monthly trend of the average inbound quality score alongside the count of audited calls. A falling trend with rising audited calls signals a quality-capacity trade-off.',
+    calls_by_hour:   'Distribution of calls across the 24-hour day. Identifies peak hours, understaffing windows, and optimal scheduling slots for both inbound and outbound teams.',
+    calls_by_day:    'Call volume by day of week. Useful for scheduling, spotting weekend drops, and identifying mid-week demand spikes.',
+    monthly_volume:  'Stacked monthly call volumes. Shows seasonal trends and month-over-month growth for both inbound (audited) and outbound (dialled) channels.',
+    inbound_clients: 'Number of quality-audited calls per client. Reveals which clients receive the most QA attention and who might need increased audit coverage.',
+    outbound_clients:'Total outbound calls and resulting sales per client. Compares dialling activity against conversion outcomes across clients.',
+    sales_funnel:    'Outbound sales conversion funnel showing drop-off at each stage: Opening → Offer Presented → Objection Handled → Upsell Attempted → Sale Completed.',
+    cx_params:       'Adherence rates for each CX and compliance parameter. Parameters below 60% (red) are critical coaching priorities. Parameters 60-79% (amber) need monitoring.',
+    pareto_ib:       'Pareto analysis of inbound parameter adherence. The amber cumulative line identifies which few parameters drive most of the quality gap — focus coaching here first.',
+    pareto_ob:       'Pareto analysis of outbound parameter adherence. Identifies which pitch/handling parameters have the biggest impact on overall outbound effectiveness.',
+    scenario:        'Distribution of call types (Query / Request / Complaint / Sale) from the scenario field in call_quality_assessment. Click a slice to see the sub-scenario breakdown from the scenario1 column.',
+    agent_board:     'Agent performance ranking by average quality score. Top Performers (≥ 80%) and Coaching Needed (< 60%) agents. Click any agent to see their parameter-level breakdown.',
+  };
+
   const maxFunnelValue = funnel[0]?.value || 1;
   const showInbound  = filters.lob !== 'Outbound';
   const showOutbound = filters.lob !== 'Inbound';
@@ -864,26 +989,26 @@ export default function CallMasterDashboard() {
 
         {/* ── Row 1: 5 primary KPI cards ─────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          <KPICard index={0} label="Total Calls"    value={kpis?.totalCalls    ?? 0} icon={<PhoneCall  size={15}/>} color={COLOR_BLUE}   sub="Outbound" />
-          <KPICard index={1} label="Audited Calls"  value={kpis?.totalAudited  ?? 0} icon={<CheckCircle size={15}/>} color={COLOR_PURPLE} sub="Inbound QA" />
-          <KPICard index={2} label="Quality Score"  value={kpis?.qualityScore  ?? 0} suffix="%" dec={1} icon={<Award  size={15}/>} color={COLOR_GREEN} />
-          <KPICard index={3} label="Compliance"     value={kpis?.compliance    ?? 0} suffix="%" dec={1} icon={<Shield size={15}/>} color={COLOR_AMBER} />
-          <KPICard index={4} label="CX Score"       value={kpis?.customerExperience ?? 0} suffix="%" dec={1} icon={<Heart size={15}/>} color="#EC4899" />
+          <KPICard index={0} label="Total Calls"    value={kpis?.totalCalls    ?? 0} icon={<PhoneCall  size={15}/>} color={COLOR_BLUE}   sub="Outbound"   onClick={() => openDrawer('total_calls')} />
+          <KPICard index={1} label="Audited Calls"  value={kpis?.totalAudited  ?? 0} icon={<CheckCircle size={15}/>} color={COLOR_PURPLE} sub="Inbound QA" onClick={() => openDrawer('audited_calls')} />
+          <KPICard index={2} label="Quality Score"  value={kpis?.qualityScore  ?? 0} suffix="%" dec={1} icon={<Award  size={15}/>} color={COLOR_GREEN} onClick={() => openDrawer('quality_score')} />
+          <KPICard index={3} label="Compliance"     value={kpis?.compliance    ?? 0} suffix="%" dec={1} icon={<Shield size={15}/>} color={COLOR_AMBER} onClick={() => openDrawer('compliance')} />
+          <KPICard index={4} label="CX Score"       value={kpis?.customerExperience ?? 0} suffix="%" dec={1} icon={<Heart size={15}/>} color="#EC4899"   onClick={() => openDrawer('cx_score')} />
         </div>
 
         {/* ── Row 2: operational KPIs (role-gated) ────────────────────────── */}
         <div className={`grid gap-3 ${isSuperAdmin ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-2'}`}>
-          <KPICard index={5} label="Sales Conv."    value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={15}/>} color={COLOR_GREEN} />
-          {isSuperAdmin && <KPICard index={6} label="Active Clients"   value={kpis?.activeClients   ?? 0} icon={<Users    size={15}/>} color={COLOR_BLUE} />}
-          {isSuperAdmin && <KPICard index={7} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers   size={15}/>} color={COLOR_PURPLE} />}
-          <KPICard index={8} label="Active Agents"  value={kpis?.activeAgents   ?? 0} icon={<UserCheck size={15}/>} color={COLOR_AMBER} sub="In date range" />
+          <KPICard index={5} label="Sales Conv."    value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={15}/>} color={COLOR_GREEN}  onClick={() => openDrawer('sales_conv')} />
+          {isSuperAdmin && <KPICard index={6} label="Active Clients"   value={kpis?.activeClients   ?? 0} icon={<Users    size={15}/>} color={COLOR_BLUE}   onClick={() => openDrawer('active_clients')} />}
+          {isSuperAdmin && <KPICard index={7} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers   size={15}/>} color={COLOR_PURPLE} onClick={() => openDrawer('active_processes')} />}
+          <KPICard index={8} label="Active Agents"  value={kpis?.activeAgents   ?? 0} icon={<UserCheck size={15}/>} color={COLOR_AMBER} sub="In date range"  onClick={() => openDrawer('active_agents')} />
         </div>
 
         {/* ── Row 3: Quality Trend (3/5) + Hourly Distribution (2/5) ──────── */}
         <div className={`grid gap-5 ${showInbound ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1'}`}>
           {showInbound && (
             <div className="lg:col-span-3">
-              <SectionCard title={`Quality Trend · Inbound (${filters.period})`} accent={COLOR_GREEN}>
+              <SectionCard title={`Quality Trend · Inbound (${filters.period})`} accent={COLOR_GREEN} description={CHART_DESC.quality_trend}>
                 <ResponsiveContainer width="100%" height={270}>
                   <LineChart data={trend} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
                     <defs>
@@ -906,7 +1031,7 @@ export default function CallMasterDashboard() {
           )}
 
           <div className={showInbound ? 'lg:col-span-2' : ''}>
-            <SectionCard title="Calls by Hour" accent={COLOR_PURPLE}>
+            <SectionCard title="Calls by Hour" accent={COLOR_PURPLE} description={CHART_DESC.calls_by_hour}>
               <ResponsiveContainer width="100%" height={270}>
                 <AreaChart data={byHour} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
                   <defs>
@@ -934,7 +1059,7 @@ export default function CallMasterDashboard() {
 
         {/* ── Row 4: 3-col volume charts ───────────────────────────────────── */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          <SectionCard title="Calls by Day of Week" accent={COLOR_BLUE}>
+          <SectionCard title="Calls by Day of Week" accent={COLOR_BLUE} description={CHART_DESC.calls_by_day}>
             <ResponsiveContainer width="100%" height={210}>
               <BarChart data={byDay} margin={{ top: 4, right: 4, bottom: 0, left: -12 }}>
                 <CartesianGrid {...GRID} />
@@ -949,7 +1074,7 @@ export default function CallMasterDashboard() {
             </ResponsiveContainer>
           </SectionCard>
 
-          <SectionCard title="Monthly Volume" accent={COLOR_AMBER}>
+          <SectionCard title="Monthly Volume" accent={COLOR_AMBER} description={CHART_DESC.monthly_volume}>
             <ResponsiveContainer width="100%" height={210}>
               <BarChart data={byMonth} margin={{ top: 4, right: 4, bottom: 0, left: -12 }}>
                 <CartesianGrid {...GRID} />
@@ -965,7 +1090,7 @@ export default function CallMasterDashboard() {
           </SectionCard>
 
           {showInbound ? (
-            <SectionCard title="Inbound by Client" accent={COLOR_GREEN}>
+            <SectionCard title="Inbound by Client" accent={COLOR_GREEN} description={CHART_DESC.inbound_clients}>
               <ResponsiveContainer width="100%" height={210}>
                 <BarChart data={byClient.inbound.slice(0, 8)} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
                   <CartesianGrid {...GRID} horizontal={false} />
@@ -977,7 +1102,7 @@ export default function CallMasterDashboard() {
               </ResponsiveContainer>
             </SectionCard>
           ) : (
-            <SectionCard title="Outbound by Client" accent={COLOR_PURPLE}>
+            <SectionCard title="Outbound by Client" accent={COLOR_PURPLE} description={CHART_DESC.outbound_clients}>
               <ResponsiveContainer width="100%" height={210}>
                 <BarChart data={byClient.outbound.slice(0, 8)} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
                   <CartesianGrid {...GRID} horizontal={false} />
@@ -996,7 +1121,7 @@ export default function CallMasterDashboard() {
         <div className={`grid gap-5 ${showOutbound ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1'}`}>
           {showOutbound && (
             <div className="lg:col-span-2">
-              <SectionCard title="Sales Funnel · Outbound" accent={COLOR_PURPLE}>
+              <SectionCard title="Sales Funnel · Outbound" accent={COLOR_PURPLE} description={CHART_DESC.sales_funnel}>
                 <div className="space-y-3 pt-1">
                   {funnel.map((row) => <FunnelBar key={row.stage} row={row} max={maxFunnelValue} />)}
                   {funnel.length === 0 && <p className="text-center text-slate-600 text-sm py-8">No outbound data</p>}
@@ -1013,13 +1138,13 @@ export default function CallMasterDashboard() {
         {(showInbound || showOutbound) && (
           <div className={`grid gap-5 ${showInbound && showOutbound ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
             {showInbound && cxData.inbound.length > 0 && (
-              <SectionCard title="Parameter Pareto · Inbound" accent={COLOR_GREEN}>
+              <SectionCard title="Parameter Pareto · Inbound" accent={COLOR_GREEN} description={CHART_DESC.pareto_ib}>
                 <p className="text-xs text-slate-500 mb-3">Bars = adherence %, Line = cumulative %</p>
                 <ParetoChart data={cxData.inbound} />
               </SectionCard>
             )}
             {showOutbound && cxData.outbound.length > 0 && (
-              <SectionCard title="Parameter Pareto · Outbound" accent={COLOR_PURPLE}>
+              <SectionCard title="Parameter Pareto · Outbound" accent={COLOR_PURPLE} description={CHART_DESC.pareto_ob}>
                 <p className="text-xs text-slate-500 mb-3">Bars = adherence %, Line = cumulative %</p>
                 <ParetoChart data={cxData.outbound} />
               </SectionCard>
@@ -1032,7 +1157,7 @@ export default function CallMasterDashboard() {
 
         {/* ── Agent Leaderboard ────────────────────────────────────────────── */}
         {showInbound && (
-          <SectionCard title="Agent Leaderboard" accent={COLOR_AMBER}>
+          <SectionCard title="Agent Leaderboard" accent={COLOR_AMBER} description={CHART_DESC.agent_board}>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <AgentTable agents={agents.top}    type="top"    buildQS={buildParams} />
               <AgentTable agents={agents.bottom} type="bottom" buildQS={buildParams} />
@@ -1042,7 +1167,7 @@ export default function CallMasterDashboard() {
 
         {/* ── Outbound Calls by Client (full width, "All" LOB only) ────────── */}
         {filters.lob === 'All' && byClient.outbound.length > 0 && (
-          <SectionCard title="Outbound Calls by Client" accent={COLOR_PURPLE}>
+          <SectionCard title="Outbound Calls by Client" accent={COLOR_PURPLE} description={CHART_DESC.outbound_clients}>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={byClient.outbound.slice(0, 12)} layout="vertical" margin={{ top: 4, right: 32, bottom: 0, left: 0 }}>
                 <CartesianGrid {...GRID} horizontal={false} />
@@ -1057,6 +1182,85 @@ export default function CallMasterDashboard() {
           </SectionCard>
         )}
       </div>
+
+      {/* ── Detail Drawer ──────────────────────────────────────────────────── */}
+      {drawer && DRAWER_INFO[drawer] && (
+        <DetailDrawer
+          open={!!drawer}
+          onClose={() => { setDrawer(null); setAgentsList([]); }}
+          title={DRAWER_INFO[drawer].title}
+          description={DRAWER_INFO[drawer].description}
+        >
+          {/* Active Agents — full list table */}
+          {drawer === 'active_agents' && (
+            agentsListLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <RefreshCw size={20} className="animate-spin text-blue-400" />
+                <span className="ml-3 text-sm text-slate-400">Loading agents…</span>
+              </div>
+            ) : agentsList.length === 0 ? (
+              <p className="text-slate-600 text-sm text-center py-12">No agent data for this period</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-[#0B1120]">
+                    <tr className="border-b border-white/10">
+                      <th className="text-left text-slate-500 py-2 pr-3 font-semibold">#</th>
+                      <th className="text-left text-slate-500 py-2 pr-3 font-semibold">Agent</th>
+                      <th className="text-right text-slate-500 py-2 pr-3 font-semibold">Calls</th>
+                      <th className="text-right text-slate-500 py-2 pr-3 font-semibold">Quality</th>
+                      <th className="text-left text-slate-500 py-2 font-semibold">LOB / Clients</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {agentsList.map((a, i) => (
+                      <tr key={a.agent} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                        <td className="py-2.5 pr-3 text-slate-600">{i + 1}</td>
+                        <td className="py-2.5 pr-3 font-medium text-slate-200">{a.agent}</td>
+                        <td className="py-2.5 pr-3 text-right text-slate-400">{fmt(a.calls)}</td>
+                        <td className="py-2.5 pr-3 text-right font-semibold" style={{ color: pctColor(a.quality) }}>
+                          {a.quality.toFixed(1)}%
+                        </td>
+                        <td className="py-2.5 text-slate-400 max-w-[160px] truncate" title={a.clients}>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 text-[10px] font-medium shrink-0">IB</span>
+                            {a.clients}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-[11px] text-slate-600 mt-3 text-right">{agentsList.length} agents · Inbound source</p>
+              </div>
+            )
+          )}
+
+          {/* For all other KPI drawers — no extra data needed, description is enough */}
+          {drawer !== 'active_agents' && (
+            <div className="space-y-4 pt-2">
+              <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Current Value</p>
+                <p className="text-3xl font-bold text-white">
+                  {drawer === 'total_calls'      && <AnimatedNumber value={kpis?.totalCalls ?? 0} />}
+                  {drawer === 'audited_calls'     && <AnimatedNumber value={kpis?.totalAudited ?? 0} />}
+                  {drawer === 'quality_score'     && <><AnimatedNumber value={kpis?.qualityScore ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'compliance'        && <><AnimatedNumber value={kpis?.compliance ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'cx_score'          && <><AnimatedNumber value={kpis?.customerExperience ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'sales_conv'        && <><AnimatedNumber value={kpis?.salesConversion ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'active_clients'    && <AnimatedNumber value={kpis?.activeClients ?? 0} />}
+                  {drawer === 'active_processes'  && <AnimatedNumber value={kpis?.activeProcesses ?? 0} />}
+                </p>
+              </div>
+              <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Date Range</p>
+                <p className="text-sm text-slate-300">{filters.startDate} — {filters.endDate}</p>
+                <p className="text-xs text-slate-500 mt-1">LOB: {filters.lob}</p>
+              </div>
+            </div>
+          )}
+        </DetailDrawer>
+      )}
     </div>
   );
 }

@@ -130,6 +130,17 @@ export async function getClientList(req: Request, res: Response) {
   }
 }
 
+export async function getActiveAgentsList(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    const data = await svc.getActiveAgentsList(filters);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('getActiveAgentsList error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch active agents list' });
+  }
+}
+
 export async function getScenarioDetail(req: Request, res: Response) {
   try {
     const scenario = req.query.scenario as string;
