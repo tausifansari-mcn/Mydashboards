@@ -130,6 +130,19 @@ export async function getClientList(req: Request, res: Response) {
   }
 }
 
+export async function getScenarioDetail(req: Request, res: Response) {
+  try {
+    const scenario = req.query.scenario as string;
+    if (!scenario) { res.status(400).json({ success: false, message: 'scenario query param required' }); return; }
+    const filters = await buildFilters(req);
+    const data = await svc.getScenarioDetail(scenario, filters);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('getScenarioDetail error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch scenario detail' });
+  }
+}
+
 export async function getAgentParams(req: Request, res: Response) {
   try {
     const agent = req.query.agent as string;

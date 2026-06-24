@@ -100,12 +100,21 @@ export async function getKPIs(filters: CallMasterFilters) {
     }
   }
 
-  // Platform stats from shivamgiri
-  const [activeClients, activeProcesses, activeAgents] = await Promise.all([
+  // Platform stats (clients/processes from shivamgiri)
+  const [activeClients, activeProcesses] = await Promise.all([
     prisma.md_clients.count({ where: { is_active: true } }),
     prisma.md_processes.count({ where: { is_active: true } }),
-    prisma.md_users.count({ where: { is_active: true, role: { name: { not: 'super_admin' } } } }),
   ]);
+
+  // Active agents = distinct agents who had calls in the selected date range
+  const agentClientFilter = clientIds?.length
+    ? `AND ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
+  const [agentRow] = await querySource<{ cnt: number }>(`
+    SELECT COUNT(DISTINCT User) AS cnt
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ? ${agentClientFilter}
+  `, [startDate, endDate, ...(clientIds || [])]);
+  const activeAgents = Number(agentRow?.cnt) || 0;
 
   return {
     totalCalls: outboundKPIs.totalCalls,
@@ -441,6 +450,26 @@ export async function getAgentParams(agentName: string, filters: CallMasterFilte
     key: p.key,
     score: Number(row[p.key]) || 0,
   }));
+}
+
+// ─── Scenario Detail (sub-scenario from scenario1 column) ────────────────────
+
+export async function getScenarioDetail(scenario: string, filters: CallMasterFilters) {
+  const { startDate, endDate, clientIds } = filters;
+  const clientFilter = clientIds?.length
+    ? `AND ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
+
+  const rows = await querySource<{ sub: string; cnt: number }>(`
+    SELECT scenario1 AS sub, COUNT(*) AS cnt
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ?
+      AND scenario = ? ${clientFilter}
+      AND scenario1 IS NOT NULL AND scenario1 != ''
+    GROUP BY scenario1
+    ORDER BY cnt DESC
+  `, [startDate, endDate, scenario, ...(clientIds || [])]);
+
+  return rows.map(r => ({ name: String(r.sub), value: Number(r.cnt) }));
 }
 
 // ─── Calls by Month ───────────────────────────────────────────────────────────

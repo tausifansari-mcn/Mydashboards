@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
+  ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell,
   ResponsiveContainer,
@@ -11,6 +12,7 @@ import {
   Users, Layers, UserCheck, AlertCircle, Calendar,
   RefreshCw, ChevronDown, Award, ThumbsDown, Lock, X,
 } from 'lucide-react';
+import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/axios';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -269,146 +271,239 @@ function FunnelBar({ row, max }: { row: FunnelRow; max: number }) {
   );
 }
 
-// ─── CX Quality Parameters (tabbed) ─────────────────────────────────────────
+// ─── Pareto Chart ─────────────────────────────────────────────────────────────
+
+function ParetoChart({ data }: { data: CXParamRow[] }) {
+  if (data.length === 0) return <p className="text-slate-600 text-sm text-center py-4">No data</p>;
+  const sorted = [...data].sort((a, b) => b.score - a.score);
+  const totalScore = sorted.reduce((s, p) => s + p.score, 0) || 1;
+  let cum = 0;
+  const chartData = sorted.map(p => {
+    cum += p.score;
+    return { name: p.parameter, score: p.score, cumulative: parseFloat((cum / totalScore * 100).toFixed(1)) };
+  });
+
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <ComposedChart data={chartData} margin={{ top: 4, right: 36, bottom: 64, left: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+        <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 8 }} angle={-45} textAnchor="end" interval={0} />
+        <YAxis yAxisId="left" domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 10 }} unit="%" />
+        <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 10 }} unit="%" />
+        <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
+        <Bar yAxisId="left" dataKey="score" name="Adherence %" radius={[2, 2, 0, 0]}>
+          {chartData.map((entry, i) => <Cell key={i} fill={pctColor(entry.score)} />)}
+        </Bar>
+        <Line yAxisId="right" type="monotone" dataKey="cumulative" stroke={COLOR_AMBER} strokeWidth={2} dot={false} name="Cumulative %" />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ─── CX Quality Parameters (tabbed, LOB-aware) ───────────────────────────────
 
 const SCENARIO_COLORS = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#06B6D4'];
 
-function CXParametersCard({ cxData }: { cxData: CXData }) {
-  const [tab, setTab] = useState<'inbound' | 'outbound' | 'scenario'>('inbound');
+function ParamBars({ rows, barH = 'h-5' }: { rows: CXParamRow[]; barH?: string }) {
+  const sorted = [...rows].sort((a, b) => b.score - a.score);
+  if (sorted.length === 0) return <p className="text-slate-600 text-sm text-center py-8">No data</p>;
+  return (
+    <div className="space-y-1.5">
+      {sorted.map(p => (
+        <div key={p.key} className="flex items-center gap-2">
+          <span className="text-xs text-slate-400 w-40 shrink-0 truncate" title={p.parameter}>{p.parameter}</span>
+          <div className={`flex-1 bg-white/5 rounded-full ${barH} overflow-hidden`}>
+            <motion.div
+              className={`${barH} rounded-full flex items-center justify-end pr-2`}
+              style={{ backgroundColor: pctColor(p.score), minWidth: 4 }}
+              initial={{ width: 0 }}
+              animate={{ width: `${p.score}%` }}
+              transition={{ duration: 0.7 }}
+            >
+              {p.score > 12 && <span className="text-[10px] text-white font-bold">{p.score.toFixed(0)}%</span>}
+            </motion.div>
+          </div>
+          {p.score <= 12 && (
+            <span className="text-[10px] w-8 text-right shrink-0" style={{ color: pctColor(p.score) }}>
+              {p.score.toFixed(0)}%
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
-  const tabs: { id: typeof tab; label: string }[] = [
-    { id: 'inbound', label: 'Inbound' },
-    { id: 'outbound', label: 'Outbound' },
-    { id: 'scenario', label: 'Scenario' },
-  ];
+function CXParametersCard({ cxData, lob }: { cxData: CXData; lob: string }) {
+  const showInbound  = lob !== 'Outbound';
+  const showOutbound = lob !== 'Inbound';
+  const [tab, setTab] = useState<'inbound' | 'outbound'>(showInbound ? 'inbound' : 'outbound');
+
+  useEffect(() => {
+    if (lob === 'Outbound') setTab('outbound');
+    else setTab('inbound');
+  }, [lob]);
 
   return (
     <SectionCard title="CX Quality Parameters">
-      {/* Tab switcher */}
-      <div className="flex gap-1 mb-4 bg-white/5 rounded-lg p-1 w-fit">
-        {tabs.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-              tab === t.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            {t.label}
+      {(showInbound && showOutbound) && (
+        <div className="flex gap-1 mb-4 bg-white/5 rounded-lg p-1 w-fit">
+          <button onClick={() => setTab('inbound')}
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'inbound' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+            Inbound (19)
           </button>
-        ))}
-      </div>
-
-      {/* Inbound — 19 params horizontal bars */}
-      {tab === 'inbound' && (
-        <div className="space-y-1.5 max-h-[340px] overflow-y-auto pr-1">
-          {cxData.inbound.length === 0 && (
-            <p className="text-slate-600 text-sm text-center py-8">No inbound data</p>
-          )}
-          {[...cxData.inbound].sort((a, b) => b.score - a.score).map(p => (
-            <div key={p.key} className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 w-40 shrink-0 truncate" title={p.parameter}>{p.parameter}</span>
-              <div className="flex-1 bg-white/5 rounded-full h-5 overflow-hidden">
-                <motion.div
-                  className="h-5 rounded-full flex items-center justify-end pr-2"
-                  style={{ backgroundColor: pctColor(p.score), minWidth: 4 }}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${p.score}%` }}
-                  transition={{ duration: 0.7 }}
-                >
-                  {p.score > 12 && (
-                    <span className="text-[10px] text-white font-bold">{p.score.toFixed(0)}%</span>
-                  )}
-                </motion.div>
-              </div>
-              {p.score <= 12 && (
-                <span className="text-[10px] w-8 text-right shrink-0" style={{ color: pctColor(p.score) }}>
-                  {p.score.toFixed(0)}%
-                </span>
-              )}
-            </div>
-          ))}
+          <button onClick={() => setTab('outbound')}
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'outbound' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+            Outbound (6)
+          </button>
         </div>
       )}
 
-      {/* Outbound — 6 params */}
-      {tab === 'outbound' && (
-        <div className="space-y-2.5">
-          {cxData.outbound.length === 0 && (
-            <p className="text-slate-600 text-sm text-center py-8">No outbound data</p>
-          )}
-          {[...cxData.outbound].sort((a, b) => b.score - a.score).map(p => (
-            <div key={p.key} className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 w-40 shrink-0">{p.parameter}</span>
-              <div className="flex-1 bg-white/5 rounded-full h-6 overflow-hidden">
-                <motion.div
-                  className="h-6 rounded-full flex items-center justify-end pr-2"
-                  style={{ backgroundColor: pctColor(p.score), minWidth: 4 }}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${p.score}%` }}
-                  transition={{ duration: 0.7 }}
-                >
-                  {p.score > 10 && (
-                    <span className="text-xs text-white font-bold">{p.score.toFixed(0)}%</span>
-                  )}
-                </motion.div>
-              </div>
-              {p.score <= 10 && (
-                <span className="text-xs w-8 text-right shrink-0" style={{ color: pctColor(p.score) }}>
-                  {p.score.toFixed(0)}%
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Scenario — pie chart */}
-      {tab === 'scenario' && (
-        cxData.scenario.length === 0 ? (
-          <p className="text-slate-600 text-sm text-center py-16">No scenario data</p>
-        ) : (
-          <div className="flex items-center gap-4">
-            <ResponsiveContainer width="55%" height={220}>
-              <PieChart>
-                <Pie
-                  data={cxData.scenario}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={85}
-                  strokeWidth={2}
-                  stroke="#0F172A"
-                >
-                  {cxData.scenario.map((_, i) => (
-                    <Cell key={i} fill={SCENARIO_COLORS[i % SCENARIO_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }}
-                  formatter={(v) => [Number(v).toLocaleString(), 'Calls']}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="flex-1 space-y-2">
-              {(() => {
-                const total = cxData.scenario.reduce((s, r) => s + r.value, 0) || 1;
-                return cxData.scenario.map((r, i) => (
-                  <div key={r.name} className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: SCENARIO_COLORS[i % SCENARIO_COLORS.length] }} />
-                    <span className="text-xs text-slate-300 flex-1">{r.name}</span>
-                    <span className="text-xs text-slate-400">{r.value.toLocaleString()}</span>
-                    <span className="text-xs font-medium text-slate-300 w-10 text-right">
-                      {((r.value / total) * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                ));
-              })()}
-            </div>
+      {tab === 'inbound' && showInbound && (
+        <>
+          <div className="max-h-[220px] overflow-y-auto pr-1 mb-4">
+            <ParamBars rows={cxData.inbound} />
           </div>
-        )
+          <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Pareto Analysis</p>
+          <ParetoChart data={cxData.inbound} />
+        </>
       )}
+
+      {tab === 'outbound' && showOutbound && (
+        <>
+          <div className="mb-4">
+            <ParamBars rows={cxData.outbound} barH="h-6" />
+          </div>
+          <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Pareto Analysis</p>
+          <ParetoChart data={cxData.outbound} />
+        </>
+      )}
+    </SectionCard>
+  );
+}
+
+// ─── Scenario Section ─────────────────────────────────────────────────────────
+
+function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; buildQS: () => string }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [subData, setSubData] = useState<ScenarioRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const handleClick = async (entry: { name?: string }) => {
+    const name = entry?.name;
+    if (!name) return;
+    if (selected === name) { setSelected(null); setSubData([]); return; }
+    setSelected(name);
+    setLoading(true);
+    try {
+      const qs = buildQS();
+      const r = await api.get(`/call-master/scenario-detail?scenario=${encodeURIComponent(name)}&${qs}`);
+      setSubData((r.data.data || []).map((s: ScenarioRow) => ({ name: String(s.name), value: Number(s.value) })));
+    } catch { setSubData([]); }
+    finally { setLoading(false); }
+  };
+
+  if (scenario.length === 0) return null;
+  const total = scenario.reduce((s, r) => s + r.value, 0) || 1;
+
+  return (
+    <SectionCard title="Scenario Distribution (Inbound)">
+      <p className="text-xs text-slate-500 mb-4">Click a slice to drill into sub-scenarios</p>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Main pie */}
+        <div>
+          <ResponsiveContainer width="100%" height={220}>
+            <PieChart>
+              <Pie
+                data={scenario}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                outerRadius={85}
+                strokeWidth={2}
+                stroke="#0F172A"
+                onClick={handleClick}
+                style={{ cursor: 'pointer' }}
+              >
+                {scenario.map((r, i) => (
+                  <Cell
+                    key={i}
+                    fill={SCENARIO_COLORS[i % SCENARIO_COLORS.length]}
+                    opacity={selected && selected !== r.name ? 0.35 : 1}
+                  />
+                ))}
+              </Pie>
+              <Tooltip
+                contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }}
+                formatter={(v) => [Number(v).toLocaleString(), 'Calls']}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+          {/* Legend */}
+          <div className="mt-2 space-y-1.5">
+            {scenario.map((r, i) => (
+              <div key={r.name} className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: SCENARIO_COLORS[i % SCENARIO_COLORS.length] }} />
+                <span className="text-xs text-slate-300 flex-1">{r.name}</span>
+                <span className="text-xs text-slate-400">{r.value.toLocaleString()}</span>
+                <span className="text-xs font-semibold text-slate-300 w-12 text-right">
+                  {((r.value / total) * 100).toFixed(1)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Sub-scenario */}
+        <div className="flex flex-col justify-center">
+          {!selected && (
+            <p className="text-slate-600 text-xs text-center py-8">← Select a scenario to see sub-scenarios</p>
+          )}
+          {selected && loading && (
+            <p className="text-slate-500 text-xs text-center py-8">Loading sub-scenarios…</p>
+          )}
+          {selected && !loading && subData.length === 0 && (
+            <p className="text-slate-600 text-xs text-center py-8">No sub-scenario data for "{selected}"</p>
+          )}
+          {selected && !loading && subData.length > 0 && (() => {
+            const subTotal = subData.reduce((s, r) => s + r.value, 0) || 1;
+            return (
+              <>
+                <p className="text-xs text-slate-400 mb-3">
+                  Sub-scenarios — <span className="text-white font-medium">{selected}</span>
+                </p>
+                <ResponsiveContainer width="100%" height={160}>
+                  <PieChart>
+                    <Pie data={subData} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                      outerRadius={65} strokeWidth={2} stroke="#0F172A">
+                      {subData.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }}
+                      formatter={(v) => [Number(v).toLocaleString(), 'Calls']}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="mt-2 space-y-1.5">
+                  {subData.map((r, i) => (
+                    <div key={r.name} className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                      <span className="text-xs text-slate-300 flex-1">{r.name}</span>
+                      <span className="text-xs text-slate-400">{r.value.toLocaleString()}</span>
+                      <span className="text-xs font-semibold text-slate-300 w-12 text-right">
+                        {((r.value / subTotal) * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      </div>
     </SectionCard>
   );
 }
@@ -628,6 +723,9 @@ function AgentTable({
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function CallMasterDashboard() {
+  const { user } = useAuthStore();
+  const isSuperAdmin = user?.role === 'super_admin';
+
   const today = new Date().toISOString().slice(0, 10);
   const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
@@ -768,7 +866,7 @@ export default function CallMasterDashboard() {
           )}
         </AnimatePresence>
 
-        {/* KPI Cards */}
+        {/* KPI Cards — row 1: call metrics */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           <KPICard index={0} label="Total Calls" value={kpis?.totalCalls ?? 0} icon={<PhoneCall size={16} />} color={COLOR_BLUE} sub="Outbound" />
           <KPICard index={1} label="Audited Calls" value={kpis?.totalAudited ?? 0} icon={<CheckCircle size={16} />} color={COLOR_PURPLE} sub="Inbound QA" />
@@ -777,31 +875,31 @@ export default function CallMasterDashboard() {
           <KPICard index={4} label="CX Score" value={kpis?.customerExperience ?? 0} suffix="%" dec={1} icon={<Heart size={16} />} color="#EC4899" />
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* KPI Cards — row 2: platform metrics (Active Clients/Processes hidden for non-super-admin) */}
+        <div className={`grid gap-4 ${isSuperAdmin ? 'grid-cols-2 sm:grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'}`}>
           <KPICard index={5} label="Sales Conversion" value={kpis?.salesConversion ?? 0} suffix="%" dec={1} icon={<TrendingUp size={16} />} color={COLOR_GREEN} />
-          <KPICard index={6} label="Active Clients" value={kpis?.activeClients ?? 0} icon={<Users size={16} />} color={COLOR_BLUE} />
-          <KPICard index={7} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers size={16} />} color={COLOR_PURPLE} />
-          <KPICard index={8} label="Active Agents" value={kpis?.activeAgents ?? 0} icon={<UserCheck size={16} />} color={COLOR_AMBER} />
+          {isSuperAdmin && <KPICard index={6} label="Active Clients" value={kpis?.activeClients ?? 0} icon={<Users size={16} />} color={COLOR_BLUE} />}
+          {isSuperAdmin && <KPICard index={7} label="Active Processes" value={kpis?.activeProcesses ?? 0} icon={<Layers size={16} />} color={COLOR_PURPLE} />}
+          <KPICard index={8} label="Active Agents" value={kpis?.activeAgents ?? 0} icon={<UserCheck size={16} />} color={COLOR_AMBER} sub="In date range" />
         </div>
 
         {/* Quality Trend + Calls by Hour */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <SectionCard title={`Quality Trend (${filters.period})`}>
-            <ResponsiveContainer width="100%" height={240}>
-              <LineChart data={trend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis dataKey="period" tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                <YAxis domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 11 }} unit="%" />
-                <Tooltip
-                  contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }}
-                  labelStyle={{ color: '#CBD5E1' }}
-                />
-                <Legend />
-                <Line type="monotone" dataKey="quality" stroke={COLOR_GREEN} strokeWidth={2} dot={false} name="Quality %" />
-                <Line type="monotone" dataKey="calls" stroke={COLOR_BLUE} strokeWidth={2} dot={false} name="Audited Calls" yAxisId={undefined} />
-              </LineChart>
-            </ResponsiveContainer>
-          </SectionCard>
+          {filters.lob !== 'Outbound' && (
+            <SectionCard title={`Quality Trend — Inbound (${filters.period})`}>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={trend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <XAxis dataKey="period" tick={{ fill: '#94A3B8', fontSize: 11 }} />
+                  <YAxis domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 11 }} unit="%" />
+                  <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} labelStyle={{ color: '#CBD5E1' }} />
+                  <Legend />
+                  <Line type="monotone" dataKey="quality" stroke={COLOR_GREEN} strokeWidth={2} dot={false} name="Quality %" />
+                  <Line type="monotone" dataKey="calls" stroke={COLOR_BLUE} strokeWidth={2} dot={false} name="Audited Calls" />
+                </LineChart>
+              </ResponsiveContainer>
+            </SectionCard>
+          )}
 
           <SectionCard title="Calls by Hour of Day">
             <ResponsiveContainer width="100%" height={240}>
@@ -821,8 +919,8 @@ export default function CallMasterDashboard() {
                 <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} />
                 <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
                 <Legend />
-                <Area type="monotone" dataKey="inbound" stroke={COLOR_BLUE} fill="url(#inboundGrad)" name="Inbound" strokeWidth={2} />
-                <Area type="monotone" dataKey="outbound" stroke={COLOR_PURPLE} fill="url(#outboundGrad)" name="Outbound" strokeWidth={2} />
+                {filters.lob !== 'Outbound' && <Area type="monotone" dataKey="inbound" stroke={COLOR_BLUE} fill="url(#inboundGrad)" name="Inbound" strokeWidth={2} />}
+                {filters.lob !== 'Inbound'  && <Area type="monotone" dataKey="outbound" stroke={COLOR_PURPLE} fill="url(#outboundGrad)" name="Outbound" strokeWidth={2} />}
               </AreaChart>
             </ResponsiveContainer>
           </SectionCard>
@@ -838,27 +936,29 @@ export default function CallMasterDashboard() {
                 <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} />
                 <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
                 <Legend />
-                <Bar dataKey="inbound" fill={COLOR_BLUE} name="Inbound" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="outbound" fill={COLOR_PURPLE} name="Outbound" radius={[3, 3, 0, 0]} />
+                {filters.lob !== 'Outbound' && <Bar dataKey="inbound" fill={COLOR_BLUE} name="Inbound" radius={[3, 3, 0, 0]} />}
+                {filters.lob !== 'Inbound'  && <Bar dataKey="outbound" fill={COLOR_PURPLE} name="Outbound" radius={[3, 3, 0, 0]} />}
               </BarChart>
             </ResponsiveContainer>
           </SectionCard>
 
-          <SectionCard title="Calls by Client (Inbound QA)">
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={byClient.inbound.slice(0, 10)} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis type="number" tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                <YAxis dataKey="client_name" type="category" tick={{ fill: '#94A3B8', fontSize: 10 }} width={100} />
-                <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
-                <Bar dataKey="audited" fill={COLOR_GREEN} name="Audited" radius={[0, 3, 3, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </SectionCard>
+          {filters.lob !== 'Outbound' && (
+            <SectionCard title="Calls by Client (Inbound QA)">
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={byClient.inbound.slice(0, 10)} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <XAxis type="number" tick={{ fill: '#94A3B8', fontSize: 11 }} />
+                  <YAxis dataKey="client_name" type="category" tick={{ fill: '#94A3B8', fontSize: 10 }} width={100} />
+                  <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
+                  <Bar dataKey="audited" fill={COLOR_GREEN} name="Audited" radius={[0, 3, 3, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </SectionCard>
+          )}
         </div>
 
-        {/* Sales Funnel + CX Parameters */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Sales Funnel (Outbound) — hidden for Inbound-only filter */}
+        {filters.lob !== 'Inbound' && (
           <SectionCard title="Sales Funnel (Outbound)">
             <div className="space-y-3 mt-2">
               {funnel.map((row) => (
@@ -869,20 +969,28 @@ export default function CallMasterDashboard() {
               )}
             </div>
           </SectionCard>
+        )}
 
-          <CXParametersCard cxData={cxData} />
-        </div>
+        {/* CX Quality Parameters */}
+        <CXParametersCard cxData={cxData} lob={filters.lob} />
 
-        {/* Agent Leaderboard */}
-        <SectionCard title="Agent Leaderboard">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <AgentTable agents={agents.top} type="top" buildQS={buildParams} />
-            <AgentTable agents={agents.bottom} type="bottom" buildQS={buildParams} />
-          </div>
-        </SectionCard>
+        {/* Scenario Distribution — only when Inbound or All */}
+        {filters.lob !== 'Outbound' && (
+          <ScenarioSection scenario={cxData.scenario} buildQS={buildParams} />
+        )}
 
-        {/* Outbound by Client */}
-        {byClient.outbound.length > 0 && (
+        {/* Agent Leaderboard — only when Inbound or All (data is inbound-sourced) */}
+        {filters.lob !== 'Outbound' && (
+          <SectionCard title="Agent Leaderboard">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <AgentTable agents={agents.top} type="top" buildQS={buildParams} />
+              <AgentTable agents={agents.bottom} type="bottom" buildQS={buildParams} />
+            </div>
+          </SectionCard>
+        )}
+
+        {/* Outbound by Client — only when Outbound or All */}
+        {filters.lob !== 'Inbound' && byClient.outbound.length > 0 && (
           <SectionCard title="Outbound Calls by Client">
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={byClient.outbound.slice(0, 10)} layout="vertical">
