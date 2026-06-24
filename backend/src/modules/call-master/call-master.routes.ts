@@ -22,7 +22,8 @@ router.get('/scenario-detail', ctrl.getScenarioDetail);
 router.get('/active-agents-list', ctrl.getActiveAgentsList);
 router.get('/clients',      ctrl.getClientList);
 router.get('/process-list', ctrl.getProcessList);
-router.get('/fatal-by-day', ctrl.getFatalByDay);
-router.get('/export',       ctrl.exportData);
+router.get('/fatal-by-day',         ctrl.getFatalByDay);
+router.get('/export',               ctrl.exportData);
+router.get('/fatal-agent-summary',  ctrl.getFatalAgentSummary);
 
 export default router;

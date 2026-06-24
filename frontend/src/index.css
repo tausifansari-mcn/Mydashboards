@@ -19,3 +19,8 @@
 @layer utilities {
   .bg-primary-dark { background-color: #1e3a8a; }
 }
+
+/* Chart expand modal — override recharts fixed heights */
+.chart-expand-modal .recharts-responsive-container {
+  height: clamp(420px, 58vh, 620px) !important;
+}

@@ -252,3 +252,33 @@ export async function exportData(req: Request, res: Response) {
     res.status(500).json({ success: false, message: 'Export failed' });
   }
 }
+
+export async function getFatalAgentSummary(req: Request, res: Response) {
+  try {
+    const { startDate, endDate } = parseDateRange(req);
+    const scope = await svc.resolveUserScope(req.user!.id, req.tenantId ?? null);
+
+    if (scope.allowedLobs !== null && !scope.allowedLobs.includes('Inbound')) {
+      res.status(403).json({ success: false, message: 'Access to inbound data not permitted' });
+      return;
+    }
+
+    let clientIds: number[] | undefined;
+    if (req.query.clientId) {
+      const requested = Number(req.query.clientId);
+      clientIds = (scope.clientIds === null || scope.clientIds.includes(requested))
+        ? [requested]
+        : [];
+    } else if (scope.clientIds !== null) {
+      clientIds = scope.clientIds.length ? scope.clientIds : [-1];
+    }
+
+    const limit = Math.min(Number(req.query.limit) || 50000, 100000);
+    const filters: svc.CallMasterFilters = { startDate, endDate, clientIds };
+    const rows = await svc.getFatalAgentSummary(filters, limit);
+    res.json({ success: true, data: { rows, count: rows.length } });
+  } catch (err) {
+    console.error('getFatalAgentSummary error:', err);
+    res.status(500).json({ success: false, message: 'Fatal agent report failed' });
+  }
+}

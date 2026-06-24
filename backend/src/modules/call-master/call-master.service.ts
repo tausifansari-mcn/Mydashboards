@@ -90,6 +90,7 @@ export async function getKPIs(filters: CallMasterFilters) {
   let qualityKPIs = {
     totalAudited: 0,
     qualityScore: 0,
+    fatalScore: 0,
     customerExperience: 0,
     compliance: 0,
   };
@@ -100,11 +101,15 @@ export async function getKPIs(filters: CallMasterFilters) {
     const params: (string | number | null)[] =[startDate, endDate, ...(clientIds || [])];
 
     const [qRow] = await querySource<{
-      total: number; avg_quality: number; avg_cx: number; avg_compliance: number;
+      total: number; avg_quality: number; fatal_score: number; avg_cx: number; avg_compliance: number;
     }>(`
       SELECT
         COUNT(*) AS total,
         ROUND(AVG(quality_percentage), 2) AS avg_quality,
+        ROUND(
+          SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
+          2
+        ) AS fatal_score,
         ROUND(AVG(
           (COALESCE(customer_concern_acknowledged,0) + COALESCE(express_empathy,0) +
            COALESCE(active_listening,0) + COALESCE(assurance_or_appreciation_provided,0) +
@@ -123,6 +128,7 @@ export async function getKPIs(filters: CallMasterFilters) {
       qualityKPIs = {
         totalAudited: Number(qRow.total) || 0,
         qualityScore: Number(qRow.avg_quality) || 0,
+        fatalScore: Number(qRow.fatal_score) || 0,
         customerExperience: Number(qRow.avg_cx) || 0,
         compliance: Number(qRow.avg_compliance) || 0,
       };
@@ -199,6 +205,7 @@ export async function getKPIs(filters: CallMasterFilters) {
     totalCalls: outboundKPIs.totalCalls,
     totalAudited: qualityKPIs.totalAudited,
     qualityScore: qualityKPIs.qualityScore,
+    fatalScore: qualityKPIs.fatalScore,
     customerExperience: qualityKPIs.customerExperience,
     compliance: qualityKPIs.compliance,
     salesConversion: outboundKPIs.salesConversion,
@@ -221,11 +228,15 @@ export async function getQualityTrend(filters: CallMasterFilters, period: 'daily
     ? "DATE_FORMAT(CallDate, '%Y-%u')"
     : "DATE_FORMAT(CallDate, '%Y-%m-%d')";
 
-  return querySource<{ period: string; quality: number; calls: number }>(`
+  return querySource<{ period: string; quality: number; calls: number; fatal: number }>(`
     SELECT
       ${groupExpr} AS period,
       ROUND(AVG(quality_percentage), 2) AS quality,
-      COUNT(*) AS calls
+      COUNT(*) AS calls,
+      ROUND(
+        SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
+        2
+      ) AS fatal
     FROM db_audit.call_quality_assessment
     WHERE CallDate BETWEEN ? AND ? ${clientFilter}
     GROUP BY ${groupExpr}
@@ -343,15 +354,21 @@ export async function getTopAgents(filters: CallMasterFilters, limit = 10) {
   const clientFilter = clientIds?.length ? `AND ClientId IN (${clientIds.map(() => '?').join(',')})` : '';
   const params: (string | number | null)[] =[startDate, endDate, ...(clientIds || [])];
 
-  const top = await querySource<{ agent: string; calls: number; quality: number; compliance: number }>(`
-    SELECT
+  const agentSelect = `
       User AS agent,
       COUNT(*) AS calls,
       ROUND(AVG(quality_percentage), 2) AS quality,
       ROUND(AVG(
         (COALESCE(professionalism_maintained,0) + COALESCE(correct_and_complete_information,0) +
          COALESCE(proper_call_closure,0)) / 3.0 * 100
-      ), 2) AS compliance
+      ), 2) AS compliance,
+      ROUND(
+        SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
+        2
+      ) AS fatal_rate`;
+
+  const top = await querySource<{ agent: string; calls: number; quality: number; compliance: number; fatal_rate: number }>(`
+    SELECT ${agentSelect}
     FROM db_audit.call_quality_assessment
     WHERE CallDate BETWEEN ? AND ? ${clientFilter}
     GROUP BY User
@@ -360,15 +377,8 @@ export async function getTopAgents(filters: CallMasterFilters, limit = 10) {
     LIMIT ${limit}
   `, params);
 
-  const bottom = await querySource<{ agent: string; calls: number; quality: number; compliance: number }>(`
-    SELECT
-      User AS agent,
-      COUNT(*) AS calls,
-      ROUND(AVG(quality_percentage), 2) AS quality,
-      ROUND(AVG(
-        (COALESCE(professionalism_maintained,0) + COALESCE(correct_and_complete_information,0) +
-         COALESCE(proper_call_closure,0)) / 3.0 * 100
-      ), 2) AS compliance
+  const bottom = await querySource<{ agent: string; calls: number; quality: number; compliance: number; fatal_rate: number }>(`
+    SELECT ${agentSelect}
     FROM db_audit.call_quality_assessment
     WHERE CallDate BETWEEN ? AND ? ${clientFilter}
     GROUP BY User
@@ -840,4 +850,42 @@ export async function getExportData(
       [startDate, endDate, ...(clientIds || [])],
     );
   }
+}
+
+// ─── Fatal Agent Summary (agent × date aggregation for export) ────────────────
+
+export async function getFatalAgentSummary(filters: CallMasterFilters, limit = 50000) {
+  const { startDate, endDate, clientIds } = filters;
+  const clientFilter = clientIds?.length
+    ? `AND q.ClientId IN (${clientIds.map(() => '?').join(',')})`
+    : '';
+
+  return querySource<{
+    date: string;
+    agent: string;
+    client: string;
+    total_calls: number;
+    fatal_calls: number;
+    fatal_rate: number;
+    avg_quality: number;
+  }>(`
+    SELECT
+      q.CallDate                                                             AS date,
+      q.User                                                                 AS agent,
+      COALESCE(c.name, CONCAT('Client ', q.ClientId))                       AS client,
+      COUNT(*)                                                               AS total_calls,
+      SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END)            AS fatal_calls,
+      ROUND(
+        SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0
+          / NULLIF(COUNT(*), 0),
+        2
+      )                                                                      AS fatal_rate,
+      ROUND(AVG(q.quality_percentage), 2)                                    AS avg_quality
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+    WHERE q.CallDate BETWEEN ? AND ? ${clientFilter}
+    GROUP BY q.CallDate, q.User, q.ClientId, c.name
+    ORDER BY q.CallDate DESC, q.User ASC
+    LIMIT ${limit}
+  `, [startDate, endDate, ...(clientIds || [])]);
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -10,7 +11,7 @@ import {
 import {
   PhoneCall, CheckCircle, Shield, Heart, TrendingUp,
   Users, UserCheck, AlertCircle, Calendar,
-  RefreshCw, ChevronDown, Award, ThumbsDown, Lock, X, Info, Download,
+  RefreshCw, ChevronDown, Award, ThumbsDown, Lock, X, Info, Download, Maximize2,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/axios';
@@ -21,6 +22,7 @@ interface KPIs {
   totalCalls: number;
   totalAudited: number;
   qualityScore: number;
+  fatalScore: number;
   customerExperience: number;
   compliance: number;
   salesConversion: number;
@@ -30,12 +32,12 @@ interface KPIs {
 }
 
 interface ClientItem { id: number; name: string; dialdesk_client_id: number }
-interface TrendRow   { period: string; quality: number; calls: number }
+interface TrendRow   { period: string; quality: number; calls: number; fatal: number }
 interface FunnelRow  { stage: string; value: number; pct: number }
 interface CXParamRow { parameter: string; key: string; score: number }
 interface ScenarioRow { name: string; value: number }
 interface CXData { inbound: CXParamRow[]; outbound: CXParamRow[]; scenario: ScenarioRow[] }
-interface AgentRow    { agent: string; calls: number; quality: number; compliance: number }
+interface AgentRow    { agent: string; calls: number; quality: number; compliance: number; fatal_rate: number }
 interface AgentParamRow { parameter: string; key: string; score: number }
 interface HourRow    { hour: string; inbound: number; outbound: number; total: number }
 interface DayRow     { day: string; inbound: number; outbound: number }
@@ -229,54 +231,123 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, des
   downloadData?: { filename: string; rows: Record<string, unknown>[] };
 }) {
   const [tipOpen, setTipOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expanded]);
+
   const handleInfo = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (onInfoClick) { onInfoClick(); return; }
     if (description) setTipOpen(v => !v);
   };
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4 }}
-      className={`bg-[#1E293B] rounded-xl border border-white/5 overflow-hidden ${className}`}
-    >
-      <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
-        <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
-        {downloadData && downloadData.rows.length > 0 && (
-          <button
-            onClick={() => downloadCSV(downloadData.filename, downloadData.rows)}
-            title="Download CSV"
-            className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded"
-          >
-            <Download size={13} />
-          </button>
-        )}
-        {(description || onInfoClick) && (
-          <button onClick={handleInfo} className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
-            <Info size={13} />
-          </button>
-        )}
-      </div>
-      <AnimatePresence>
-        {tipOpen && description && (
+
+  const cardHeader = (onClose?: () => void) => (
+    <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
+      <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
+      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
+      {downloadData && downloadData.rows.length > 0 && (
+        <button
+          onClick={(e) => { e.stopPropagation(); downloadCSV(downloadData.filename, downloadData.rows); }}
+          title="Download CSV"
+          className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded"
+        >
+          <Download size={13} />
+        </button>
+      )}
+      {(description || onInfoClick) && !onClose && (
+        <button onClick={handleInfo} className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
+          <Info size={13} />
+        </button>
+      )}
+      {!onClose && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+          title="Expand chart"
+          className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded"
+        >
+          <Maximize2 size={13} />
+        </button>
+      )}
+      {onClose && (
+        <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-0.5 rounded ml-1">
+          <X size={15} />
+        </button>
+      )}
+    </div>
+  );
+
+  const modal = createPortal(
+    <AnimatePresence>
+      {expanded && (
+        <motion.div
+          key="chart-expand-backdrop"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.18 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/75 backdrop-blur-sm"
+          onClick={() => setExpanded(false)}
+        >
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden"
+            key="chart-expand-card"
+            initial={{ opacity: 0, scale: 0.95, y: 24 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 28 }}
+            className="bg-[#1E293B] rounded-2xl border border-white/10 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
+            style={{ maxHeight: '90vh' }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-5 py-3 bg-blue-500/5 border-b border-blue-500/10 text-xs text-slate-400 leading-relaxed">
-              {description}
+            {cardHeader(() => setExpanded(false))}
+            {description && (
+              <div className="px-5 py-2.5 bg-blue-500/5 border-b border-blue-500/10 text-xs text-slate-400 leading-relaxed">
+                {description}
+              </div>
+            )}
+            <div className="p-6 overflow-auto flex-1 chart-expand-modal">
+              {children}
             </div>
           </motion.div>
-        )}
-      </AnimatePresence>
-      <div className="p-5">
-        {children}
-      </div>
-    </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body
+  );
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className={`bg-[#1E293B] rounded-xl border border-white/5 overflow-hidden ${className}`}
+      >
+        {cardHeader()}
+        <AnimatePresence>
+          {tipOpen && description && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="px-5 py-3 bg-blue-500/5 border-b border-blue-500/10 text-xs text-slate-400 leading-relaxed">
+                {description}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <div className="p-5">
+          {children}
+        </div>
+      </motion.div>
+      {modal}
+    </>
   );
 }
 
@@ -589,6 +660,15 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
   if (scenario.length === 0) return null;
   const total = scenario.reduce((s, r) => s + r.value, 0) || 1;
 
+  // Top 10 + "Other" grouping
+  const sorted = [...scenario].sort((a, b) => b.value - a.value);
+  const top10 = sorted.slice(0, 10);
+  const rest  = sorted.slice(10);
+  const otherValue = rest.reduce((s, r) => s + r.value, 0);
+  const chartData: ScenarioRow[] = otherValue > 0
+    ? [...top10, { name: 'Other', value: otherValue }]
+    : top10;
+
   const scenarioDownload = {
     filename: 'scenario_distribution_inbound',
     rows: scenario.map(r => ({
@@ -600,14 +680,14 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
 
   return (
     <SectionCard title="Scenario Distribution · Inbound" accent={COLOR_BLUE} downloadData={scenarioDownload}>
-      <p className="text-xs text-slate-500 mb-4">Click a slice to drill into sub-scenarios</p>
+      <p className="text-xs text-slate-500 mb-4">Top 10 scenarios shown · click a slice to drill into sub-scenarios</p>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Main pie */}
         <div>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
               <Pie
-                data={scenario}
+                data={chartData}
                 dataKey="value"
                 nameKey="name"
                 cx="50%"
@@ -615,14 +695,15 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
                 outerRadius={85}
                 strokeWidth={2}
                 stroke="#0F172A"
-                onClick={handleClick}
+                onClick={(entry) => { if (entry?.name !== 'Other') handleClick(entry); }}
                 style={{ cursor: 'pointer' }}
               >
-                {scenario.map((r, i) => (
+                {chartData.map((r, i) => (
                   <Cell
                     key={i}
-                    fill={SCENARIO_COLORS[i % SCENARIO_COLORS.length]}
+                    fill={r.name === 'Other' ? '#475569' : SCENARIO_COLORS[i % SCENARIO_COLORS.length]}
                     opacity={selected && selected !== r.name ? 0.35 : 1}
+                    style={{ cursor: r.name === 'Other' ? 'default' : 'pointer' }}
                   />
                 ))}
               </Pie>
@@ -634,16 +715,20 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
           </ResponsiveContainer>
           {/* Legend */}
           <div className="mt-2 space-y-1.5">
-            {scenario.map((r, i) => (
+            {chartData.map((r, i) => (
               <div key={r.name} className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: SCENARIO_COLORS[i % SCENARIO_COLORS.length] }} />
-                <span className="text-xs text-slate-300 flex-1">{r.name}</span>
+                <div className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: r.name === 'Other' ? '#475569' : SCENARIO_COLORS[i % SCENARIO_COLORS.length] }} />
+                <span className={`text-xs flex-1 ${r.name === 'Other' ? 'text-slate-500 italic' : 'text-slate-300'}`}>{r.name}</span>
                 <span className="text-xs text-slate-400">{r.value.toLocaleString()}</span>
                 <span className="text-xs font-semibold text-slate-300 w-12 text-right">
                   {((r.value / total) * 100).toFixed(1)}%
                 </span>
               </div>
             ))}
+            {rest.length > 0 && (
+              <p className="text-[10px] text-slate-600 pt-1">{rest.length} scenario{rest.length > 1 ? 's' : ''} grouped into "Other"</p>
+            )}
           </div>
         </div>
 
@@ -854,6 +939,7 @@ function AgentTable({
               <th className="text-left text-slate-500 py-2 pr-3">Agent</th>
               <th className="text-right text-slate-500 py-2 pr-3">Calls</th>
               <th className="text-right text-slate-500 py-2 pr-3">Quality</th>
+              <th className="text-right text-slate-500 py-2 pr-3">Fatal</th>
               <th className="text-right text-slate-500 py-2">Compliance</th>
             </tr>
           </thead>
@@ -875,6 +961,9 @@ function AgentTable({
                 <td className="py-2 pr-3 text-right font-semibold" style={{ color: pctColor(a.quality) }}>
                   {a.quality.toFixed(1)}%
                 </td>
+                <td className="py-2 pr-3 text-right font-semibold" style={{ color: a.fatal_rate > 0 ? COLOR_RED : '#64748B' }}>
+                  {a.fatal_rate > 0 ? `${a.fatal_rate.toFixed(1)}%` : '—'}
+                </td>
                 <td className="py-2 text-right font-semibold" style={{ color: pctColor(a.compliance) }}>
                   {a.compliance.toFixed(1)}%
                 </td>
@@ -882,7 +971,7 @@ function AgentTable({
             ))}
             {agents.length === 0 && (
               <tr>
-                <td colSpan={5} className="py-6 text-center text-slate-600 text-xs">No data for this period</td>
+                <td colSpan={6} className="py-6 text-center text-slate-600 text-xs">No data for this period</td>
               </tr>
             )}
           </tbody>
@@ -930,6 +1019,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
   const [rowLimit, setRowLimit]             = useState(5000);
   const [selectedCols, setSelectedCols]     = useState<Set<string>>(new Set());
   const [isDownloading, setIsDownloading]   = useState(false);
+  const [isFatalDownloading, setIsFatalDownloading] = useState(false);
 
   // Sync from dashboard filters when modal opens
   useEffect(() => {
@@ -1016,6 +1106,42 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
       alert('Export failed. Please try again.');
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  const handleFatalDownload = async () => {
+    setIsFatalDownloading(true);
+    try {
+      const p = new URLSearchParams({
+        startDate: exportStart.replace('T', ' '),
+        endDate:   exportEnd.replace('T', ' '),
+      });
+      if (exportClientId) p.set('clientId', exportClientId);
+
+      const r = await api.get(`/call-master/fatal-agent-summary?${p}`);
+      const rows: { date: string; agent: string; client: string; total_calls: number; fatal_calls: number; fatal_rate: number; avg_quality: number }[] = r.data?.data?.rows || [];
+
+      if (rows.length === 0) {
+        alert('No fatal data found for the selected filters.');
+        return;
+      }
+
+      const renamed = rows.map(row => ({
+        'Date':              row.date,
+        'Agent':             row.agent,
+        'Client':            row.client,
+        'Total Calls':       row.total_calls,
+        'Fatal Calls':       row.fatal_calls,
+        'Fatal Rate (%)':    row.fatal_rate,
+        'Avg Quality (%)':   row.avg_quality,
+      }));
+
+      downloadCSV(`fatal_agent_report_${new Date().toISOString().slice(0, 10)}`, renamed);
+    } catch (err) {
+      console.error('Fatal export failed:', err);
+      alert('Fatal report export failed. Please try again.');
+    } finally {
+      setIsFatalDownloading(false);
     }
   };
 
@@ -1149,6 +1275,27 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                     {selectedCols.size} col{selectedCols.size !== 1 ? 's' : ''} · max {rowLimit.toLocaleString()} rows
                   </p>
                 </div>
+
+                {/* Fatal Agent Report */}
+                <div className="border-t border-white/8 pt-4 space-y-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-1.5 h-3 rounded-full bg-red-500 shrink-0" />
+                    <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Fatal Agent Report</p>
+                  </div>
+                  <p className="text-[10px] text-slate-600 leading-relaxed">
+                    Agent × date fatal call summary — total calls, fatal calls, fatal rate, avg quality. Uses the date range and client filter above.
+                  </p>
+                  <button
+                    onClick={handleFatalDownload}
+                    disabled={isFatalDownloading}
+                    className="w-full flex items-center justify-center gap-2 bg-red-600/20 hover:bg-red-600/35 border border-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed text-red-400 hover:text-red-300 text-xs font-semibold py-2 rounded-lg transition-colors"
+                  >
+                    {isFatalDownloading
+                      ? <><RefreshCw size={13} className="animate-spin" /> Generating…</>
+                      : <><Download size={13} /> Download Fatal Report</>
+                    }
+                  </button>
+                </div>
               </div>
 
               {/* ── Right panel: column checkboxes ── */}
@@ -1264,7 +1411,7 @@ export default function CallMasterDashboard() {
       ]);
       setKPIs(kRes.data.data);
       setTrend((tRes.data.data || []).map((r: TrendRow) => ({
-        ...r, quality: parseFloat(String(r.quality)) || 0, calls: Number(r.calls) || 0,
+        ...r, quality: parseFloat(String(r.quality)) || 0, calls: Number(r.calls) || 0, fatal: parseFloat(String(r.fatal)) || 0,
       })));
       setByHour(hRes.data.data || []);
       setByDay(dRes.data.data || []);
@@ -1282,9 +1429,10 @@ export default function CallMasterDashboard() {
       const agentData = aRes.data.data || { top: [], bottom: [] };
       const parseAgent = (a: AgentRow) => ({
         ...a,
-        quality: parseFloat(String(a.quality)) || 0,
+        quality:    parseFloat(String(a.quality))    || 0,
         compliance: parseFloat(String(a.compliance)) || 0,
-        calls: Number(a.calls) || 0,
+        calls:      Number(a.calls)                  || 0,
+        fatal_rate: parseFloat(String(a.fatal_rate)) || 0,
       });
       setAgents({ top: agentData.top.map(parseAgent), bottom: agentData.bottom.map(parseAgent) });
     } catch (e: unknown) {
@@ -1349,6 +1497,7 @@ export default function CallMasterDashboard() {
     total_calls:     { title: 'Total Outbound Calls', description: 'Total number of outbound calls dialled during the selected date range. Sourced from db_external.CallDetails. Includes all call outcomes regardless of result.' },
     audited_calls:   { title: 'Audited Inbound Calls', description: 'Total inbound calls reviewed by a quality analyst. Each record in db_audit.call_quality_assessment represents one quality-evaluated call. Only audited calls contribute to the quality score.' },
     quality_score:   { title: 'Overall Quality Score', description: 'Weighted average of quality_percentage across all audited inbound calls. Covers 19 behavioral and process parameters scored 0 or 1 by QA analysts. Target: ≥ 80%.' },
+    fatal_score:     { title: 'Fatal Score', description: 'Percentage of audited inbound calls that scored 0% quality — a complete failure across all parameters. These calls represent the most critical coaching opportunities. Target: < 5%.' },
     compliance:      { title: 'Compliance Score', description: 'Measures adherence to mandatory process steps: professionalism, hold procedure, accurate information, address recording, escalation, and call closure. Non-negotiable parameters with regulatory or legal implications. Target: ≥ 90%.' },
     cx_score:        { title: 'Customer Experience (CX) Score', description: 'Composite score of parameters that directly shape how a customer perceives the interaction: concern acknowledgment, assurance, active listening, politeness, pronunciation, and enthusiasm. Target: ≥ 75%.' },
     sales_conv:      { title: 'Sales Conversion Rate', description: 'Percentage of outbound calls where SaleDone = 1 in CallDetails. Calculated as (successful sales / total calls) × 100. Reflects agent effectiveness in converting outbound pitches to sales.' },
@@ -1392,8 +1541,8 @@ export default function CallMasterDashboard() {
 
   // Agent leaderboard combined download rows
   const agentDownloadRows = [
-    ...agents.top.map(a => ({ Tier: 'Top Performer', Agent: a.agent, Calls: a.calls, 'Quality (%)': a.quality, 'Compliance (%)': a.compliance })),
-    ...agents.bottom.map(a => ({ Tier: 'Needs Coaching', Agent: a.agent, Calls: a.calls, 'Quality (%)': a.quality, 'Compliance (%)': a.compliance })),
+    ...agents.top.map(a => ({ Tier: 'Top Performer', Agent: a.agent, Calls: a.calls, 'Quality (%)': a.quality, 'Fatal (%)': a.fatal_rate, 'Compliance (%)': a.compliance })),
+    ...agents.bottom.map(a => ({ Tier: 'Needs Coaching', Agent: a.agent, Calls: a.calls, 'Quality (%)': a.quality, 'Fatal (%)': a.fatal_rate, 'Compliance (%)': a.compliance })),
   ];
 
   const TOOLTIP_STYLE = { background: '#0F172A', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
@@ -1441,16 +1590,20 @@ export default function CallMasterDashboard() {
           )}
         </AnimatePresence>
 
-        {/* ── Row 1: 5 primary KPI cards ─────────────────────────────────── */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {/* ── Row 1: primary KPI cards ────────────────────────────────────── */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <KPICard index={0} label="Total Calls"    value={kpis?.totalCalls    ?? 0} icon={<PhoneCall  size={15}/>} color={COLOR_BLUE}   sub="Outbound"   onClick={() => openDrawer('total_calls')} />
           <KPICard index={1} label="Audited Calls"  value={kpis?.totalAudited  ?? 0} icon={<CheckCircle size={15}/>} color={COLOR_PURPLE} sub="Inbound QA" onClick={() => openDrawer('audited_calls')} />
           {showInbound
             ? <KPICard index={2} label="Quality Score" value={kpis?.qualityScore ?? 0} suffix="%" dec={1} icon={<Award size={15}/>} color={COLOR_GREEN} onClick={() => openDrawer('quality_score')} />
             : <KPICard index={2} label="OB Quality"    value={kpis?.outboundQuality ?? 0} suffix="%" dec={1} icon={<Award size={15}/>} color={COLOR_PURPLE} sub="7-param score" onClick={() => openDrawer('ob_quality')} />
           }
-          <KPICard index={3} label="Compliance"     value={kpis?.compliance    ?? 0} suffix="%" dec={1} icon={<Shield size={15}/>} color={COLOR_AMBER} onClick={() => openDrawer('compliance')} />
-          <KPICard index={4} label="Soft Score"       value={kpis?.customerExperience ?? 0} suffix="%" dec={1} icon={<Heart size={15}/>} color="#EC4899"   onClick={() => openDrawer('cx_score')} />
+          {showInbound
+            ? <KPICard index={3} label="Fatal Score" value={kpis?.fatalScore ?? 0} suffix="%" dec={1} icon={<ThumbsDown size={15}/>} color={COLOR_RED} sub="0% quality calls" onClick={() => openDrawer('fatal_score')} />
+            : <KPICard index={3} label="Compliance"  value={kpis?.compliance ?? 0} suffix="%" dec={1} icon={<Shield size={15}/>} color={COLOR_AMBER} onClick={() => openDrawer('compliance')} />
+          }
+          {showInbound && <KPICard index={4} label="Compliance" value={kpis?.compliance ?? 0} suffix="%" dec={1} icon={<Shield size={15}/>} color={COLOR_AMBER} onClick={() => openDrawer('compliance')} />}
+          <KPICard index={showInbound ? 5 : 4} label="Soft Score" value={kpis?.customerExperience ?? 0} suffix="%" dec={1} icon={<Heart size={15}/>} color="#EC4899" onClick={() => openDrawer('cx_score')} />
         </div>
 
         {/* ── Row 2: operational KPIs (role-gated) ────────────────────────── */}
@@ -1465,7 +1618,7 @@ export default function CallMasterDashboard() {
           {showInbound && (
             <div className="lg:col-span-3">
               <SectionCard title={`Quality Trend · Inbound (${filters.period})`} accent={COLOR_GREEN} description={CHART_DESC.quality_trend}
-              downloadData={{ filename: `quality_trend_${filters.period}`, rows: trend.map(r => ({ Period: r.period, 'Quality (%)': r.quality, 'Audited Calls': r.calls })) }}>
+              downloadData={{ filename: `quality_trend_${filters.period}`, rows: trend.map(r => ({ Period: r.period, 'Quality (%)': r.quality, 'Fatal (%)': r.fatal, 'Audited Calls': r.calls })) }}>
                 <ResponsiveContainer width="100%" height={270}>
                   <LineChart data={trend} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
                     <defs>
@@ -1480,6 +1633,7 @@ export default function CallMasterDashboard() {
                     <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: '#CBD5E1' }} />
                     <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
                     <Line type="monotone" dataKey="quality" stroke={COLOR_GREEN} strokeWidth={2.5} dot={{ r: 2, fill: COLOR_GREEN }} name="Quality %" />
+                    <Line type="monotone" dataKey="fatal"   stroke={COLOR_RED}   strokeWidth={2}   dot={{ r: 2, fill: COLOR_RED }}   name="Fatal %" />
                     <Line type="monotone" dataKey="calls"   stroke={COLOR_BLUE}  strokeWidth={1.5} dot={false} strokeDasharray="4 2" name="Audited Calls" />
                   </LineChart>
                 </ResponsiveContainer>
@@ -1766,6 +1920,7 @@ export default function CallMasterDashboard() {
                   {drawer === 'total_calls'  && <AnimatedNumber value={kpis?.totalCalls ?? 0} />}
                   {drawer === 'audited_calls'&& <AnimatedNumber value={kpis?.totalAudited ?? 0} />}
                   {drawer === 'quality_score'&& <><AnimatedNumber value={kpis?.qualityScore ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'fatal_score'  && <><AnimatedNumber value={kpis?.fatalScore ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
                   {drawer === 'compliance'   && <><AnimatedNumber value={kpis?.compliance ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
                   {drawer === 'cx_score'     && <><AnimatedNumber value={kpis?.customerExperience ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
                   {drawer === 'sales_conv'   && <><AnimatedNumber value={kpis?.salesConversion ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
