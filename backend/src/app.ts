@@ -13,6 +13,9 @@ import dashboardRoutes from './modules/dashboards/dashboards.routes';
 import auditRoutes from './modules/audit/audit.routes';
 import callMasterRoutes from './modules/call-master/call-master.routes';
 import salesRoutes from './modules/sales/sales.routes';
+import inboundRoutes from './modules/inbound/inbound.routes';
+import qualityRoutes from './modules/quality/quality.routes';
+import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.routes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -33,6 +36,9 @@ app.use('/api/dashboards', dashboardRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/call-master', callMasterRoutes);
 app.use('/api/sales', salesRoutes);
+app.use('/api/inbound', inboundRoutes);
+app.use('/api/quality', qualityRoutes);
+app.use('/api/inbound-quality', inboundQualityRoutes);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date() }));
 

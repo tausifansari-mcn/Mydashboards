@@ -8,7 +8,7 @@ import {
 import {
   ShoppingCart, TrendingUp, DollarSign, CreditCard, RefreshCw,
   Download, ChevronDown, AlertCircle, X, Info, Maximize2,
-  Package, BarChart2, Percent, Calendar,
+  Package, BarChart2, Percent, Calendar, Building2,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/axios';
@@ -46,6 +46,7 @@ interface PaymentRow  { mode: string; count: number; revenue: number }
 interface ProductRow  { product: string; sales: number; revenue: number; avg_value: number }
 interface AgentRow    { masid: string; agent_id: string; total_calls: number; sales: number; revenue: number; conversion: number }
 interface SubRow      { scenario: string; count: number; revenue: number }
+interface ClientRow   { id: number; name: string; dialdesk_client_id: number }
 interface Filters     { startDate: string; endDate: string; clientId: string; lob: string }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -320,6 +321,7 @@ export default function SalesDashboard() {
   const [agents,       setAgents]       = useState<AgentRow[]>([]);
   const [subScenarios, setSubScenarios] = useState<SubRow[]>([]);
   const [lobList,      setLobList]      = useState<string[]>([]);
+  const [clientList,   setClientList]   = useState<ClientRow[]>([]);
 
   const [filters, setFilters] = useState<Filters>({
     startDate: toDateInput(now),
@@ -334,6 +336,9 @@ export default function SalesDashboard() {
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [countdown,     setCountdown]     = useState(120);
   const [lobOpen,       setLobOpen]       = useState(false);
+  const [clientOpen,    setClientOpen]    = useState(false);
+
+  const isSuperAdmin = user?.role === 'super_admin';
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -392,6 +397,14 @@ export default function SalesDashboard() {
       // silently fail for LOB list
     }
   }, [filters.startDate, filters.endDate, filters.clientId]);
+
+  // ── Fetch client list (super admin only, once on mount) ──
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    api.get('/sales/clients')
+      .then(res => setClientList(res.data.data ?? []))
+      .catch(() => {/* silently fail */});
+  }, [isSuperAdmin]);
 
   // ── Initial + filter-driven fetch ──
   useEffect(() => {
@@ -504,11 +517,66 @@ export default function SalesDashboard() {
             />
           </div>
 
+          {/* Client / Process dropdown — super admin only */}
+          {isSuperAdmin && (
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                <Building2 size={9} /> Client / Process
+              </label>
+              <button
+                onClick={() => { setClientOpen(v => !v); setLobOpen(false); }}
+                className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-slate-200 flex items-center gap-2 min-w-[160px] focus:outline-none focus:border-violet-500 transition-colors hover:border-white/20"
+              >
+                <span className="flex-1 text-left truncate">
+                  {filters.clientId
+                    ? clientList.find(c => String(c.dialdesk_client_id) === filters.clientId)?.name ?? `ID ${filters.clientId}`
+                    : 'All Process'}
+                </span>
+                <ChevronDown size={12} className={`shrink-0 transition-transform ${clientOpen ? 'rotate-180' : ''}`} />
+              </button>
+              <AnimatePresence>
+                {clientOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    className="absolute top-full mt-1 left-0 z-50 bg-[#1E293B] border border-white/10 rounded-lg shadow-xl overflow-hidden min-w-[180px] max-h-64 overflow-y-auto"
+                  >
+                    <button
+                      onClick={() => { setFilter('clientId', ''); setFilter('lob', 'All'); setClientOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-violet-500/10 ${
+                        !filters.clientId ? 'text-violet-400 bg-violet-500/5' : 'text-slate-300'
+                      }`}
+                    >
+                      All Process
+                    </button>
+                    {clientList.map(c => (
+                      <button
+                        key={c.id}
+                        onClick={() => {
+                          setFilter('clientId', String(c.dialdesk_client_id));
+                          setFilter('lob', 'All');
+                          setClientOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-violet-500/10 ${
+                          filters.clientId === String(c.dialdesk_client_id) ? 'text-violet-400 bg-violet-500/5' : 'text-slate-300'
+                        }`}
+                      >
+                        <span className="block font-medium">{c.name}</span>
+                        <span className="block text-slate-600 text-[10px]">ID: {c.dialdesk_client_id}</span>
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
           {/* LOB dropdown */}
           <div className="flex flex-col gap-1 relative">
             <label className="text-[10px] text-slate-500 uppercase tracking-wider">LOB</label>
             <button
-              onClick={() => setLobOpen(v => !v)}
+              onClick={() => { setLobOpen(v => !v); setClientOpen(false); }}
               className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-slate-200 flex items-center gap-2 min-w-[120px] focus:outline-none focus:border-violet-500 transition-colors hover:border-white/20"
             >
               <span className="flex-1 text-left">{filters.lob || 'All'}</span>

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import * as svc from './sales.service';
-import { resolveUserScope } from '../call-master/call-master.service';
+import { resolveUserScope, getClientList as fetchClientList } from '../call-master/call-master.service';
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -121,6 +121,16 @@ export async function getLobList(req: Request, res: Response) {
   } catch (err) {
     console.error('sales getLobList error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch LOB list' });
+  }
+}
+
+export async function getClients(req: Request, res: Response) {
+  try {
+    const data = await fetchClientList(req.tenantId ?? null, req.user!.id);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('sales getClients error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch client list' });
   }
 }
 

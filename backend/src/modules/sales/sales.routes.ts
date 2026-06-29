@@ -16,6 +16,7 @@ router.get('/products',      ctrl.getProducts);
 router.get('/agents',        ctrl.getAgents);
 router.get('/sub-scenarios', ctrl.getSubScenarios);
 router.get('/lob-list',      ctrl.getLobList);
+router.get('/clients',       ctrl.getClients);
 router.get('/export',        ctrl.exportSales);
 
 export default router;

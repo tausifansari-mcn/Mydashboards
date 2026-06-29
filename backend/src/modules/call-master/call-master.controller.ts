@@ -253,6 +253,72 @@ export async function exportData(req: Request, res: Response) {
   }
 }
 
+export async function getOBSummary(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    res.json({ success: true, data: await svc.getOBSummary(filters) });
+  } catch (err) { console.error('getOBSummary:', err); res.status(500).json({ success: false, message: 'Failed' }); }
+}
+
+export async function getOBDailyTrend(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    res.json({ success: true, data: await svc.getOBDailyTrend(filters) });
+  } catch (err) { console.error('getOBDailyTrend:', err); res.status(500).json({ success: false, message: 'Failed' }); }
+}
+
+export async function getOBHourly(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    res.json({ success: true, data: await svc.getOBHourly(filters) });
+  } catch (err) { console.error('getOBHourly:', err); res.status(500).json({ success: false, message: 'Failed' }); }
+}
+
+export async function getOBAgentPerf(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    res.json({ success: true, data: await svc.getOBAgentPerf(filters, limit) });
+  } catch (err) { console.error('getOBAgentPerf:', err); res.status(500).json({ success: false, message: 'Failed' }); }
+}
+
+export async function getOBAgentDaily(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    const agentName = req.query.agentName as string;
+    if (!agentName) { res.status(400).json({ success: false, message: 'agentName required' }); return; }
+    res.json({ success: true, data: await svc.getOBAgentDaily(agentName, filters) });
+  } catch (err) { console.error('getOBAgentDaily:', err); res.status(500).json({ success: false, message: 'Failed' }); }
+}
+
+export async function getOBDisposition(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    res.json({ success: true, data: await svc.getOBDisposition(filters) });
+  } catch (err) { console.error('getOBDisposition:', err); res.status(500).json({ success: false, message: 'Failed' }); }
+}
+
+export async function getOBProductMix(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    res.json({ success: true, data: await svc.getOBProductMix(filters) });
+  } catch (err) { console.error('getOBProductMix:', err); res.status(500).json({ success: false, message: 'Failed' }); }
+}
+
+export async function getOBNotInterested(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    res.json({ success: true, data: await svc.getOBNotInterested(filters) });
+  } catch (err) { console.error('getOBNotInterested:', err); res.status(500).json({ success: false, message: 'Failed' }); }
+}
+
+export async function getOBQualityParams(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    res.json({ success: true, data: await svc.getOBQualityParams(filters) });
+  } catch (err) { console.error('getOBQualityParams:', err); res.status(500).json({ success: false, message: 'Failed' }); }
+}
+
 export async function getFatalAgentSummary(req: Request, res: Response) {
   try {
     const { startDate, endDate } = parseDateRange(req);

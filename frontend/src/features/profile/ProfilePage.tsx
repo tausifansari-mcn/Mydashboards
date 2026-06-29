@@ -45,7 +45,7 @@ export default function ProfilePage() {
           <div className="mt-5 grid grid-cols-2 gap-4">
             {[
               { label: 'Role', value: user?.roleDisplay, icon: User },
-              { label: 'Client', value: user?.clientName || 'All Clients', icon: User },
+              { label: 'Client', value: user?.clientName || 'All Process', icon: User },
               { label: 'Last Login', value: user?.lastLogin ? formatDate(user.lastLogin) : '—', icon: User },
               { label: 'Account Status', value: 'Active', icon: User },
             ].map((f) => (

@@ -16,6 +16,7 @@ const slugToRoute: Record<string, string> = {
   'call-master': '/call-master',
   quality: '/quality',
   sales: '/sales',
+  inbound: '/inbound',
   client: '/client',
   operations: '/operations',
   agent: '/agent',
@@ -75,7 +76,7 @@ export default function DashboardLauncher() {
         {[
           { label: 'Dashboards Available', value: dashboards.filter((d) => d.is_active).length, color: 'bg-blue-50 text-blue-700' },
           { label: 'Your Role', value: user?.roleDisplay || '—', color: 'bg-amber-50 text-amber-700' },
-          { label: 'Client', value: user?.clientName || 'All Clients', color: 'bg-emerald-50 text-emerald-700' },
+          { label: 'Client', value: user?.clientName || 'All Process', color: 'bg-emerald-50 text-emerald-700' },
           { label: 'Platform', value: 'My Dashboard', color: 'bg-violet-50 text-violet-700' },
         ].map((s) => (
           <div key={s.label} className={`rounded-xl p-4 ${s.color}`}>
@@ -90,7 +91,7 @@ export default function DashboardLauncher() {
         variants={container} initial="hidden" animate="visible"
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
       >
-        {allDashboards.filter((d) => d.slug !== 'quality').map((dash) => {
+        {allDashboards.map((dash) => {
           const accessible = isAccessible(dash.slug);
           const Icon = iconMap[dash.icon] || BarChart2;
           return (

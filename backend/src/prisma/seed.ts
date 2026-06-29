@@ -53,11 +53,12 @@ const clientNames = [
 
 const dashboards = [
   { name: 'Call Master', slug: 'call-master', icon: 'Phone', description: 'Executive call analytics dashboard', sort_order: 1, is_active: true },
-  { name: 'Quality Dashboard', slug: 'quality', icon: 'Star', description: 'QA analytics and quality scores', sort_order: 2, is_active: false },
   { name: 'Sales Dashboard', slug: 'sales', icon: 'TrendingUp', description: 'Sales funnel and conversion analytics', sort_order: 2, is_active: true },
-  { name: 'Client Dashboard', slug: 'client', icon: 'Users', description: 'Client health and performance', sort_order: 4, is_active: false },
-  { name: 'Operations Dashboard', slug: 'operations', icon: 'BarChart2', description: 'Operational metrics overview', sort_order: 5, is_active: false },
-  { name: 'Agent Dashboard', slug: 'agent', icon: 'UserCheck', description: 'Agent scorecards and analytics', sort_order: 6, is_active: false },
+  { name: 'Inbound Dashboard', slug: 'inbound', icon: 'Phone', description: 'Inbound call center KPIs across all projects', sort_order: 3, is_active: true },
+  { name: 'Quality Dashboard', slug: 'quality', icon: 'Star', description: 'QA analytics and quality scores', sort_order: 4, is_active: false },
+  { name: 'Client Dashboard', slug: 'client', icon: 'Users', description: 'Client health and performance', sort_order: 5, is_active: false },
+  { name: 'Operations Dashboard', slug: 'operations', icon: 'BarChart2', description: 'Operational metrics overview', sort_order: 6, is_active: false },
+  { name: 'Agent Dashboard', slug: 'agent', icon: 'UserCheck', description: 'Agent scorecards and analytics', sort_order: 7, is_active: false },
 ];
 
 async function main() {

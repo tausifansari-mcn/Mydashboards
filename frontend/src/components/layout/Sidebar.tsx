@@ -1,8 +1,10 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Users, Building2, LogOut,
-  ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck, PhoneCall, TrendingUp,
+  ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck,
+  PhoneCall, TrendingUp, Phone, ChevronDown, BarChart3,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -11,8 +13,19 @@ import api from '@/lib/axios';
 
 const mainLinks = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Launcher' },
-  { to: '/call-master', icon: PhoneCall, label: 'Call Master' },
-  { to: '/sales', icon: TrendingUp, label: 'Sales' },
+  // { to: '/call-master', icon: PhoneCall, label: 'Call Master' },  // hidden
+  // { to: '/sales', icon: TrendingUp, label: 'Sales' },             // hidden
+  { to: '/quality', icon: BarChart3, label: 'AI Quality' },
+];
+
+const inboundProjects = [
+  { to: '/inbound/gnc', icon: '🛒', label: 'GNC' },
+  { to: '/inbound/bellavita', icon: '🌸', label: 'Bellavita' },
+  { to: '/inbound/clovia', icon: '👗', label: 'Clovia' },
+  { to: '/inbound/neemans', icon: '👟', label: 'Neemans' },
+  { to: '/inbound/viega', icon: '🚰', label: 'Viega' },
+  { to: '/inbound/exicom', icon: '⚡', label: 'Exicom' },
+  { to: '/inbound/dubangladesh', icon: '🇧🇩', label: 'DU Bangladesh' },
 ];
 
 const adminLinks = [
@@ -69,6 +82,13 @@ export default function Sidebar() {
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
         <SidebarSection label="MAIN" expanded={sidebarExpanded}>
           {mainLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={sidebarExpanded} />)}
+          <SidebarExpandableItem
+            icon={Phone}
+            label="Inbound"
+            parentTo="/inbound"
+            subItems={inboundProjects}
+            sidebarExpanded={sidebarExpanded}
+          />
         </SidebarSection>
 
         {isSuperAdmin && (
@@ -137,6 +157,7 @@ function SidebarLink({ to, icon: Icon, label, expanded }: { to: string; icon: Re
   return (
     <NavLink
       to={to}
+      end
       className={({ isActive }) => cn(
         'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150',
         isActive ? 'bg-primary text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white',
@@ -152,5 +173,107 @@ function SidebarLink({ to, icon: Icon, label, expanded }: { to: string; icon: Re
         )}
       </AnimatePresence>
     </NavLink>
+  );
+}
+
+function SidebarExpandableItem({
+  icon: Icon,
+  label,
+  parentTo,
+  subItems,
+  sidebarExpanded,
+}: {
+  icon: React.ElementType;
+  label: string;
+  parentTo: string;
+  subItems: Array<{ to: string; icon: string; label: string }>;
+  sidebarExpanded: boolean;
+}) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isParentActive = location.pathname.startsWith(parentTo);
+  const [open, setOpen] = useState(isParentActive);
+
+  useEffect(() => {
+    if (isParentActive) setOpen(true);
+  }, [location.pathname, isParentActive]);
+
+  if (!sidebarExpanded) {
+    return (
+      <button
+        onClick={() => navigate(parentTo)}
+        className={cn(
+          'flex w-full justify-center rounded-lg px-3 py-2 transition-colors',
+          isParentActive ? 'bg-primary text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'
+        )}
+      >
+        <Icon className="h-4 w-4 flex-shrink-0" />
+      </button>
+    );
+  }
+
+  return (
+    <div>
+      <div className={cn(
+        'flex items-center rounded-lg transition-all duration-150',
+        isParentActive ? 'bg-primary/20' : 'hover:bg-white/5'
+      )}>
+        <button
+          onClick={() => { navigate(parentTo); setOpen(v => !v); }}
+          className={cn(
+            'flex flex-1 items-center gap-3 px-3 py-2 text-sm',
+            isParentActive ? 'text-white' : 'text-slate-400 hover:text-white'
+          )}
+        >
+          <Icon className="h-4 w-4 flex-shrink-0" />
+          <span className="flex-1 whitespace-nowrap text-left">{label}</span>
+        </button>
+        <button
+          onClick={() => setOpen(v => !v)}
+          className={cn('px-2 py-2 transition-colors', isParentActive ? 'text-white/70' : 'text-slate-500 hover:text-white')}
+        >
+          <ChevronDown className={cn('h-3 w-3 transition-transform duration-200', open && 'rotate-180')} />
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="ml-3 mt-0.5 border-l border-white/10 pl-2 space-y-0.5 py-1">
+              <NavLink
+                to={parentTo}
+                end
+                className={({ isActive }) => cn(
+                  'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-all',
+                  isActive ? 'bg-primary text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'
+                )}
+              >
+                <span className="text-sm">📊</span>
+                <span className="whitespace-nowrap">All Projects</span>
+              </NavLink>
+              {subItems.map((sub) => (
+                <NavLink
+                  key={sub.to}
+                  to={sub.to}
+                  className={({ isActive }) => cn(
+                    'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-all',
+                    isActive ? 'bg-primary text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'
+                  )}
+                >
+                  <span className="text-sm">{sub.icon}</span>
+                  <span className="whitespace-nowrap">{sub.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

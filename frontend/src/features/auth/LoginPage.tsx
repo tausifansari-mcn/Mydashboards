@@ -52,7 +52,7 @@ export default function LoginPage() {
               <LayoutDashboard className="h-7 w-7 text-white" />
             </motion.div>
             <h1 className="text-xl font-bold text-slate-900">My Dashboard</h1>
-            <p className="mt-1 text-sm text-slate-500">Mass Call Net Analytics</p>
+            <p className="mt-1 text-sm text-slate-500">Mas CallNet Analytics</p>
           </div>
 
           {error && (
@@ -105,7 +105,7 @@ export default function LoginPage() {
         </div>
 
         <p className="mt-6 text-center text-xs text-white drop-shadow-md">
-          © {new Date().getFullYear()} Mass Call Net. All rights reserved.
+          © {new Date().getFullYear()} Mas CallNet. All rights reserved.
         </p>
       </motion.div>
     </div>

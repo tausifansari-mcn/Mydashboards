@@ -37,11 +37,11 @@ function branded(title: string, body: string): string {
 <table width="520" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
   <tr><td style="background:linear-gradient(135deg,#1E40AF,#3B82F6);padding:28px 40px;text-align:center;">
     <h1 style="margin:0;color:#fff;font-size:20px;font-weight:700;">My Dashboard</h1>
-    <p style="margin:4px 0 0;color:rgba(255,255,255,.8);font-size:12px;">Mass Call Net Analytics Platform</p>
+    <p style="margin:4px 0 0;color:rgba(255,255,255,.8);font-size:12px;">Mas CallNet Analytics Platform</p>
   </td></tr>
   <tr><td style="padding:36px 40px;">${body}</td></tr>
   <tr><td style="background:#f9fafb;padding:18px 40px;border-top:1px solid #e5e7eb;text-align:center;">
-    <p style="margin:0;color:#9ca3af;font-size:12px;">&copy; ${new Date().getFullYear()} Mass Call Net. All rights reserved.</p>
+    <p style="margin:0;color:#9ca3af;font-size:12px;">&copy; ${new Date().getFullYear()} Mas CallNet. All rights reserved.</p>
   </td></tr>
 </table>
 </td></tr></table></body></html>`;

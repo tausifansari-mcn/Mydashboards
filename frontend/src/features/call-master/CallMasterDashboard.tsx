@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -413,7 +414,7 @@ function FilterBar({
             onChange={(e) => onChange('clientId', e.target.value)}
             className="appearance-none bg-[#1E293B] border border-white/10 text-sm text-slate-200 rounded-lg px-3 py-2 pr-8 outline-none"
           >
-            <option value="">All Clients</option>
+            <option value="">All Process</option>
             {clients.map((c) => (
               <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
             ))}
@@ -1222,7 +1223,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                   <select value={exportClientId} onChange={e => setExportClientId(e.target.value)}
                     className="w-full appearance-none bg-[#1E293B] border border-white/10 text-xs text-slate-200 rounded-lg px-2 py-1.5 outline-none"
                   >
-                    <option value="">All Clients</option>
+                    <option value="">All Process</option>
                     {clients.map(c => (
                       <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
                     ))}
@@ -1351,6 +1352,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function CallMasterDashboard() {
+  const navigate = useNavigate();
   const { user } = useAuthStore();
   const isSuperAdmin = user?.role === 'super_admin';
 
@@ -1561,6 +1563,20 @@ export default function CallMasterDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate('/call-master/opening-intelligence')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 border border-blue-500/30 text-blue-400 hover:bg-blue-600/25 hover:text-blue-300 text-xs font-medium transition-colors"
+            >
+              <TrendingUp size={13} />
+              Opening Intelligence
+            </button>
+            <button
+              onClick={() => navigate('/call-master/customer-intelligence')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-pink-600/15 border border-pink-500/30 text-pink-400 hover:bg-pink-600/25 hover:text-pink-300 text-xs font-medium transition-colors"
+            >
+              <Heart size={13} />
+              Customer Intelligence
+            </button>
             <button
               onClick={() => setExportOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 border border-blue-500/30 text-blue-400 hover:bg-blue-600/25 hover:text-blue-300 text-xs font-medium transition-colors"
