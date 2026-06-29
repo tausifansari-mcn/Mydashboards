@@ -7,6 +7,7 @@ import {
   ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell,
+  ReferenceLine,
   ResponsiveContainer,
 } from 'recharts';
 import {
@@ -46,6 +47,7 @@ interface ClientRow        { client_name: string; audited?: number; quality?: nu
 interface ActiveAgentItem  { agent: string; calls: number; quality: number; clients: string; lob: string }
 interface ProcessListItem  { process_name: string; lob: string; client_name: string; total_calls: number; quality_score: number | null; fatal_calls: number; fatal_rate: number | null }
 interface FatalDayRow      { day: string; fatal_calls: number }
+interface AgentAuditRow    { agent: string; audit_count: number; cq_score: number; fatal_count: number; fatal_pct: number; tq_count: number; mq_count: number; bq_count: number }
 
 // ─── Export Column Metadata ───────────────────────────────────────────────────
 
@@ -1383,6 +1385,8 @@ export default function CallMasterDashboard() {
   const [processList, setProcessList]               = useState<ProcessListItem[]>([]);
   const [processListLoading, setProcessListLoading] = useState(false);
   const [exportOpen, setExportOpen]                 = useState(false);
+  const [agentAudit, setAgentAudit]                 = useState<AgentAuditRow[]>([]);
+  const [last7Days, setLast7Days]                   = useState<TrendRow[]>([]);
 
   const buildParams = useCallback(() => {
     const p: Record<string, string> = {
@@ -1400,7 +1404,10 @@ export default function CallMasterDashboard() {
     setError(null);
     try {
       const qs = buildParams();
-      const [kRes, tRes, hRes, dRes, fdRes, cRes, fRes, xRes, aRes] = await Promise.all([
+      // Build daily QS for "Last 7 Days" chart (always daily regardless of period filter)
+      const dailyQs = (() => { const p = new URLSearchParams(qs); p.set('period', 'daily'); return p.toString(); })();
+
+      const [kRes, tRes, hRes, dRes, fdRes, cRes, fRes, xRes, aRes, auditRes, l7Res] = await Promise.all([
         api.get(`/call-master/kpis?${qs}`),
         api.get(`/call-master/quality-trend?${qs}`),
         api.get(`/call-master/calls-by-hour?${qs}`),
@@ -1410,6 +1417,8 @@ export default function CallMasterDashboard() {
         api.get(`/call-master/sales-funnel?${qs}`),
         api.get(`/call-master/cx-parameters?${qs}`),
         api.get(`/call-master/top-agents?${qs}`),
+        api.get(`/call-master/agent-audit-summary?${qs}`),
+        api.get(`/call-master/quality-trend?${dailyQs}`),
       ]);
       setKPIs(kRes.data.data);
       setTrend((tRes.data.data || []).map((r: TrendRow) => ({
@@ -1437,6 +1446,19 @@ export default function CallMasterDashboard() {
         fatal_rate: parseFloat(String(a.fatal_rate)) || 0,
       });
       setAgents({ top: agentData.top.map(parseAgent), bottom: agentData.bottom.map(parseAgent) });
+      setAgentAudit((auditRes.data.data || []).map((r: AgentAuditRow) => ({
+        agent:       r.agent,
+        audit_count: Number(r.audit_count) || 0,
+        cq_score:    parseFloat(String(r.cq_score)) || 0,
+        fatal_count: Number(r.fatal_count) || 0,
+        fatal_pct:   parseFloat(String(r.fatal_pct)) || 0,
+        tq_count:    Number(r.tq_count) || 0,
+        mq_count:    Number(r.mq_count) || 0,
+        bq_count:    Number(r.bq_count) || 0,
+      })));
+      setLast7Days(((l7Res.data.data || []) as TrendRow[]).slice(-7).map((r: TrendRow) => ({
+        ...r, quality: parseFloat(String(r.quality)) || 0, calls: Number(r.calls) || 0, fatal: parseFloat(String(r.fatal)) || 0,
+      })));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to load dashboard data';
       setError(msg);
@@ -1790,13 +1812,131 @@ export default function CallMasterDashboard() {
         {/* ── Scenario Distribution ────────────────────────────────────────── */}
         {showInbound && <ScenarioSection scenario={cxData.scenario} buildQS={buildParams} />}
 
-        {/* ── Agent Leaderboard ────────────────────────────────────────────── */}
+        {/* ── Agent Leaderboard: Top 5 + Last 7 Days vs Target ───────────── */}
         {showInbound && (
-          <SectionCard title="Agent Leaderboard" accent={COLOR_AMBER} description={CHART_DESC.agent_board}
-            downloadData={{ filename: 'agent_leaderboard', rows: agentDownloadRows }}>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <AgentTable agents={agents.top}    type="top"    buildQS={buildParams} />
-              <AgentTable agents={agents.bottom} type="bottom" buildQS={buildParams} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Top 5 Performers */}
+            <SectionCard title="Top 5 Performers" accent={COLOR_AMBER} description={CHART_DESC.agent_board}
+              downloadData={{ filename: 'top_5_performers', rows: agents.top.slice(0, 5).map(a => ({ Agent: a.agent, Calls: a.calls, 'Quality (%)': a.quality, 'Fatal (%)': a.fatal_rate, 'Compliance (%)': a.compliance })) }}>
+              <AgentTable agents={agents.top.slice(0, 5)} type="top" buildQS={buildParams} />
+            </SectionCard>
+
+            {/* Last 7 Days vs Target */}
+            <SectionCard title="Last 7 Days vs Target" accent={COLOR_GREEN}
+              description="Daily quality score for the last 7 days compared against the 80% target line. Bars coloured green ≥80%, amber 60-79%, red <60%."
+              downloadData={{ filename: 'last_7_days_quality', rows: last7Days.map(r => ({ Date: r.period, 'Quality (%)': r.quality, 'Fatal (%)': r.fatal, 'Target (%)': 80 })) }}>
+              {last7Days.length === 0 ? (
+                <p className="text-slate-600 text-sm text-center py-10">No data for this period</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <ComposedChart data={last7Days} margin={{ top: 8, right: 12, bottom: 24, left: -8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" />
+                    <XAxis dataKey="period" tick={{ fill: '#64748B', fontSize: 10 }} tickLine={false} axisLine={false}
+                      tickFormatter={(v: string) => v.slice(5)} angle={-30} textAnchor="end" />
+                    <YAxis domain={[0, 100]} tick={{ fill: '#64748B', fontSize: 11 }} tickLine={false} axisLine={false} unit="%" />
+                    <Tooltip
+                      contentStyle={{ background: '#0F172A', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+                      formatter={(v: unknown) => `${Number(v).toFixed(1)}%`}
+                    />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
+                    <ReferenceLine y={80} stroke={COLOR_GREEN} strokeDasharray="5 3" strokeWidth={1.5} label={{ value: 'Target 80%', fill: COLOR_GREEN, fontSize: 10, position: 'insideTopRight' }} />
+                    <Bar dataKey="quality" name="Quality %" radius={[3, 3, 0, 0]}>
+                      {last7Days.map((entry, i) => (
+                        <Cell key={i} fill={pctColor(entry.quality)} />
+                      ))}
+                    </Bar>
+                    <Line type="monotone" dataKey="fatal" stroke={COLOR_RED} strokeWidth={1.5} dot={{ r: 3, fill: COLOR_RED }} name="Fatal %" strokeDasharray="4 2" />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              )}
+            </SectionCard>
+          </div>
+        )}
+
+        {/* ── Agent Audit Summary Table ────────────────────────────────────── */}
+        {showInbound && agentAudit.length > 0 && (
+          <SectionCard title="Agent Audit Summary" accent={COLOR_BLUE}
+            description="Per-agent breakdown of audited calls. TQ = Top Quality (≥80%), MQ = Mid Quality (60–79%), BQ = Below Quality (1–59%), Fatal = 0% quality. Sorted by CQ Score descending."
+            downloadData={{ filename: 'agent_audit_summary', rows: agentAudit.map(r => ({
+              Agent: r.agent, 'Audit Count': r.audit_count, 'CQ Score (%)': r.cq_score,
+              'Fatal Count': r.fatal_count, 'Fatal (%)': r.fatal_pct,
+              'TQ (≥80%)': r.tq_count, 'MQ (60-79%)': r.mq_count, 'BQ (<60%)': r.bq_count,
+            })) }}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-white/8">
+                    <th className="text-left text-slate-500 py-2.5 pr-3 font-semibold">#</th>
+                    <th className="text-left text-slate-500 py-2.5 pr-4 font-semibold">Agent</th>
+                    <th className="text-right text-slate-500 py-2.5 pr-4 font-semibold">Audit Count</th>
+                    <th className="text-right text-slate-500 py-2.5 pr-4 font-semibold">CQ Score%</th>
+                    <th className="text-right text-slate-500 py-2.5 pr-4 font-semibold">Fatal Count</th>
+                    <th className="text-right text-slate-500 py-2.5 pr-4 font-semibold">Fatal%</th>
+                    <th className="text-right text-slate-500 py-2.5 pr-4 font-semibold">
+                      <span style={{ color: COLOR_GREEN }}>TQ</span>
+                    </th>
+                    <th className="text-right text-slate-500 py-2.5 pr-4 font-semibold">
+                      <span style={{ color: COLOR_AMBER }}>MQ</span>
+                    </th>
+                    <th className="text-right text-slate-500 py-2.5 font-semibold">
+                      <span style={{ color: COLOR_RED }}>BQ</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {agentAudit.map((r, i) => (
+                    <motion.tr
+                      key={r.agent}
+                      initial={{ opacity: 0, x: -6 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: Math.min(i * 0.02, 0.4) }}
+                      className="border-b border-white/5 hover:bg-white/5 transition-colors"
+                    >
+                      <td className="py-2.5 pr-3 text-slate-600">{i + 1}</td>
+                      <td className="py-2.5 pr-4 font-medium text-slate-200">{r.agent}</td>
+                      <td className="py-2.5 pr-4 text-right text-slate-400">{r.audit_count.toLocaleString()}</td>
+                      <td className="py-2.5 pr-4 text-right font-semibold" style={{ color: pctColor(r.cq_score) }}>
+                        {r.cq_score.toFixed(1)}%
+                      </td>
+                      <td className="py-2.5 pr-4 text-right font-semibold" style={{ color: r.fatal_count > 0 ? COLOR_RED : '#475569' }}>
+                        {r.fatal_count > 0 ? r.fatal_count.toLocaleString() : '—'}
+                      </td>
+                      <td className="py-2.5 pr-4 text-right font-semibold" style={{ color: r.fatal_pct > 0 ? COLOR_RED : '#475569' }}>
+                        {r.fatal_pct > 0 ? `${r.fatal_pct.toFixed(1)}%` : '—'}
+                      </td>
+                      <td className="py-2.5 pr-4 text-right font-semibold" style={{ color: COLOR_GREEN }}>
+                        {r.tq_count > 0 ? r.tq_count.toLocaleString() : <span className="text-slate-600">0</span>}
+                      </td>
+                      <td className="py-2.5 pr-4 text-right font-semibold" style={{ color: COLOR_AMBER }}>
+                        {r.mq_count > 0 ? r.mq_count.toLocaleString() : <span className="text-slate-600">0</span>}
+                      </td>
+                      <td className="py-2.5 text-right font-semibold" style={{ color: r.bq_count > 0 ? COLOR_RED : '#475569' }}>
+                        {r.bq_count > 0 ? r.bq_count.toLocaleString() : <span className="text-slate-600">0</span>}
+                      </td>
+                    </motion.tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-white/10">
+                    <td colSpan={2} className="pt-3 text-[11px] text-slate-600">{agentAudit.length} agents</td>
+                    <td className="pt-3 text-right text-[11px] text-slate-500 font-semibold pr-4">
+                      {agentAudit.reduce((s, r) => s + r.audit_count, 0).toLocaleString()}
+                    </td>
+                    <td className="pt-3 text-right text-[11px] font-semibold pr-4" style={{ color: pctColor(agentAudit.reduce((s, r) => s + r.cq_score, 0) / (agentAudit.length || 1)) }}>
+                      {(agentAudit.reduce((s, r) => s + r.cq_score, 0) / (agentAudit.length || 1)).toFixed(1)}%
+                    </td>
+                    <td className="pt-3 text-right text-[11px] text-red-400 font-semibold pr-4">
+                      {agentAudit.reduce((s, r) => s + r.fatal_count, 0).toLocaleString()}
+                    </td>
+                    <td colSpan={4} className="pt-3 text-right text-[11px] text-slate-600 pr-0">
+                      TQ={agentAudit.reduce((s,r)=>s+r.tq_count,0).toLocaleString()} &nbsp;
+                      MQ={agentAudit.reduce((s,r)=>s+r.mq_count,0).toLocaleString()} &nbsp;
+                      BQ={agentAudit.reduce((s,r)=>s+r.bq_count,0).toLocaleString()}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+              <p className="text-[10px] text-slate-600 mt-2">TQ ≥80% · MQ 60–79% · BQ 1–59% · Fatal = 0% quality calls (inbound only)</p>
             </div>
           </SectionCard>
         )}

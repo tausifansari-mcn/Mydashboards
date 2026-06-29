@@ -24,5 +24,6 @@ router.get('/quality-parameters',        ctrl.getQualityParameters);
 router.get('/week-wise-quality',         ctrl.getWeekWiseQuality);
 router.get('/day-wise-quality',         ctrl.getDayWiseQuality);
 router.get('/repeat-analysis',          ctrl.getRepeatAnalysis);
+router.get('/agent-audit-band',         ctrl.getAgentAuditBandSummary);
 
 export default router;

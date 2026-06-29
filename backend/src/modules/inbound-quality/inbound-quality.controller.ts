@@ -172,3 +172,12 @@ export async function getRepeatAnalysis(req: Request, res: Response) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
   }
 }
+
+export async function getAgentAuditBandSummary(req: Request, res: Response) {
+  try {
+    const data = await svc.getAgentAuditBandSummary(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}

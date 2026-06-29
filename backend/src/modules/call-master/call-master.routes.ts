@@ -27,6 +27,7 @@ router.get('/process-list', ctrl.getProcessList);
 router.get('/fatal-by-day',            ctrl.getFatalByDay);
 router.get('/export',                  ctrl.exportData);
 router.get('/fatal-agent-summary',     ctrl.getFatalAgentSummary);
+router.get('/agent-audit-summary',    ctrl.getAgentAuditSummary);
 
 // ── Outbound Sales Intelligence ──
 router.get('/outbound/summary',        ctrl.getOBSummary);

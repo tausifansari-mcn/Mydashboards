@@ -76,6 +76,7 @@ interface WeekScenarioAuditRow { week_label: string; query_pct: number; complain
 interface DetailAnalysis       { cq_score: number; audit_count: number; fatal_count: number; fatal_pct: number; query_count: number; complaint_count: number; request_count: number; sale_done_count: number; scenario_panels: DetailScenarioPanel[]; day_wise_audit: DayWiseAuditRow[]; week_scenario_audit: WeekScenarioAuditRow[]; }
 
 interface AgentParamRow      { agent_name: string; tq_mq_bq: string; audit_count: number; cq_score: number; fatal_count: number; fatal_pct: number; opening_skill: number; soft_skill: number; hold_procedure: number; resolution: number; closing: number; }
+interface AgentAuditBandRow  { agent: string; audit_count: number; cq_score: number; fatal_count: number; fatal_pct: number; tq_count: number; mq_count: number; bq_count: number; }
 interface DayWiseQualityRow  { call_date: string; audit_count: number; cq_score: number; fatal_count: number; fatal_pct: number; opening_skill: number; soft_skill: number; hold_procedure: number; resolution: number; closing: number; }
 interface WeekWiseQualityRow  { week_label: string; audit_count: number; cq_score: number; fatal_count: number; fatal_pct: number; opening_skill: number; soft_skill: number; hold_procedure: number; resolution: number; closing: number; }
 interface QualityParameterRow { parameter: string; hit_count: number; total_count: number; score_pct: number; }
@@ -217,6 +218,7 @@ export default function InboundQualityDashboard() {
   const [agentParamScenario, setAgentParamScenario] = useState('');
   const [agentParamData, setAgentParamData] = useState<AgentParamRow[]>([]);
   const [agentParamLoading, setAgentParamLoading] = useState(false);
+  const [agentAuditBand, setAgentAuditBand] = useState<AgentAuditBandRow[]>([]);
   const [dayWiseScenario, setDayWiseScenario] = useState('');
   const [dayWiseAgent, setDayWiseAgent] = useState('');
   const [dayWiseData, setDayWiseData] = useState<DayWiseQualityRow[]>([]);
@@ -377,7 +379,11 @@ export default function InboundQualityDashboard() {
     fetchFatalAnalysis();
     fetchDetailAnalysis();
     fetchRepeatAnalysis();
-  }, [fetchKPIs, fetchPerformers, fetchDailyScores, fetchScenarios, fetchAlertTables, fetchFatalAnalysis, fetchDetailAnalysis, fetchRepeatAnalysis]);
+    // Agent audit band for Quality Performance slide
+    api.get<{ data: AgentAuditBandRow[] }>(
+      `/inbound-quality/agent-audit-band?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    ).then(r => setAgentAuditBand(r.data?.data ?? [])).catch(() => setAgentAuditBand([]));
+  }, [fetchKPIs, fetchPerformers, fetchDailyScores, fetchScenarios, fetchAlertTables, fetchFatalAnalysis, fetchDetailAnalysis, fetchRepeatAnalysis, clientId, sd, ed]);
 
   useEffect(() => { fetchAgentParam(); }, [fetchAgentParam]);
   useEffect(() => { fetchDayWiseQuality(); }, [fetchDayWiseQuality]);
@@ -1286,6 +1292,99 @@ export default function InboundQualityDashboard() {
               );
             })()}
 
+
+            {/* ── Agent Audit Summary ───────────────────────────────────── */}
+            {agentAuditBand.length > 0 && (() => {
+              const cq = (v: number) => v >= 80 ? '#10B981' : v >= 60 ? '#F59E0B' : '#EF4444';
+              const total_audits = agentAuditBand.reduce((s, r) => s + r.audit_count, 0);
+              const total_fatals = agentAuditBand.reduce((s, r) => s + r.fatal_count, 0);
+              const total_tq     = agentAuditBand.reduce((s, r) => s + r.tq_count,    0);
+              const total_mq     = agentAuditBand.reduce((s, r) => s + r.mq_count,    0);
+              const total_bq     = agentAuditBand.reduce((s, r) => s + r.bq_count,    0);
+              const avg_cq       = agentAuditBand.reduce((s, r) => s + r.cq_score, 0) / agentAuditBand.length;
+              return (
+                <div className="mt-4 bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 flex-wrap">
+                    <div className="w-1 h-4 rounded-full bg-sky-500 shrink-0" />
+                    <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Agent Audit Summary</h3>
+                    <span className="text-[10px] text-slate-500 ml-1">TQ ≥80% · MQ 60–79% · BQ 1–59% · Fatal = 0%</span>
+                    <ExportBtn onClick={() => downloadCSV(agentAuditBand.map((r, i) => ({
+                      '#': i + 1,
+                      'Agent':         r.agent,
+                      'Audit Count':   r.audit_count,
+                      'CQ Score%':     r.cq_score,
+                      'Fatal Count':   r.fatal_count,
+                      'Fatal%':        r.fatal_pct,
+                      'TQ (≥80%)':     r.tq_count,
+                      'MQ (60-79%)':   r.mq_count,
+                      'BQ (<60%)':     r.bq_count,
+                    })), 'agent-audit-summary.csv')} />
+                  </div>
+                  <div className="overflow-x-auto overflow-y-auto max-h-96">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-[#1E293B] z-10">
+                        <tr className="border-b border-white/5 bg-white/[0.02]">
+                          {[
+                            { label: '#',           cls: 'w-8'  },
+                            { label: 'Agent',        cls: 'text-left' },
+                            { label: 'Audit Count',  cls: 'text-right' },
+                            { label: 'CQ Score%',    cls: 'text-right' },
+                            { label: 'Fatal Count',  cls: 'text-right' },
+                            { label: 'Fatal%',       cls: 'text-right' },
+                            { label: 'TQ',           cls: 'text-right text-emerald-400' },
+                            { label: 'MQ',           cls: 'text-right text-amber-400'   },
+                            { label: 'BQ',           cls: 'text-right text-red-400'     },
+                          ].map(h => (
+                            <th key={h.label} className={`py-2.5 px-3 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap ${h.cls || 'text-slate-500'}`}>
+                              {h.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {agentAuditBand.map((r, i) => (
+                          <tr key={r.agent} className="border-b border-white/5 hover:bg-white/[0.04] transition-colors">
+                            <td className="py-2 px-3 text-slate-600 text-center">{i + 1}</td>
+                            <td className="py-2 px-3 font-medium text-slate-200 whitespace-nowrap">{r.agent}</td>
+                            <td className="py-2 px-3 text-right text-slate-400">{r.audit_count.toLocaleString()}</td>
+                            <td className="py-2 px-3 text-right font-bold" style={{ color: cq(r.cq_score) }}>{r.cq_score.toFixed(1)}%</td>
+                            <td className="py-2 px-3 text-right font-semibold" style={{ color: r.fatal_count > 0 ? '#EF4444' : '#475569' }}>
+                              {r.fatal_count > 0 ? r.fatal_count.toLocaleString() : '—'}
+                            </td>
+                            <td className="py-2 px-3 text-right font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#475569' }}>
+                              {r.fatal_pct > 0 ? `${r.fatal_pct.toFixed(1)}%` : '—'}
+                            </td>
+                            <td className="py-2 px-3 text-right font-semibold text-emerald-400">
+                              {r.tq_count > 0 ? r.tq_count.toLocaleString() : <span className="text-slate-700">0</span>}
+                            </td>
+                            <td className="py-2 px-3 text-right font-semibold text-amber-400">
+                              {r.mq_count > 0 ? r.mq_count.toLocaleString() : <span className="text-slate-700">0</span>}
+                            </td>
+                            <td className="py-2 px-3 text-right font-semibold" style={{ color: r.bq_count > 0 ? '#EF4444' : '#475569' }}>
+                              {r.bq_count > 0 ? r.bq_count.toLocaleString() : <span className="text-slate-700">0</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t border-white/10 bg-white/[0.02]">
+                          <td className="py-2 px-3 text-[10px] text-slate-500 font-semibold" colSpan={2}>
+                            Total ({agentAuditBand.length} agents)
+                          </td>
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-slate-400">{total_audits.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-[10px] font-bold" style={{ color: cq(avg_cq) }}>{avg_cq.toFixed(1)}%</td>
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-red-400">{total_fatals.toLocaleString()}</td>
+                          <td className="py-2 px-3" />
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-emerald-400">{total_tq.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-amber-400">{total_mq.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-red-400">{total_bq.toLocaleString()}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
 
             {!loading && (!kpis || kpis.audit_count === 0) && (
               <div className="flex items-center justify-center py-20 text-slate-600 text-sm">

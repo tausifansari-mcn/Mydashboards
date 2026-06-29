@@ -1032,6 +1032,54 @@ export async function getExportData(
 
 // ─── Fatal Agent Summary (agent × date aggregation for export) ────────────────
 
+// ─── Agent Audit Summary (per-agent quality band breakdown) ──────────────────
+
+export async function getAgentAuditSummary(filters: CallMasterFilters) {
+  const { startDate, endDate, clientIds } = filters;
+  const clientFilter = clientIds?.length
+    ? `AND ClientId IN (${clientIds.map(() => '?').join(',')})`
+    : '';
+
+  const rows = await querySource<{
+    agent: string;
+    audit_count: number;
+    cq_score: number;
+    fatal_count: number;
+    fatal_pct: number;
+    tq_count: number;
+    mq_count: number;
+    bq_count: number;
+  }>(`
+    SELECT
+      User                                                                       AS agent,
+      COUNT(*)                                                                   AS audit_count,
+      ROUND(AVG(quality_percentage), 1)                                          AS cq_score,
+      SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END)                  AS fatal_count,
+      ROUND(
+        SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
+        1
+      )                                                                          AS fatal_pct,
+      SUM(CASE WHEN quality_percentage >= 80 THEN 1 ELSE 0 END)                AS tq_count,
+      SUM(CASE WHEN quality_percentage >= 60 AND quality_percentage < 80 THEN 1 ELSE 0 END) AS mq_count,
+      SUM(CASE WHEN quality_percentage > 0  AND quality_percentage < 60 THEN 1 ELSE 0 END)  AS bq_count
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ? ${clientFilter}
+    GROUP BY User
+    ORDER BY cq_score DESC
+  `, [startDate, endDate, ...(clientIds || [])]);
+
+  return rows.map(r => ({
+    agent:       r.agent,
+    audit_count: Number(r.audit_count) || 0,
+    cq_score:    parseFloat(String(r.cq_score)) || 0,
+    fatal_count: Number(r.fatal_count) || 0,
+    fatal_pct:   parseFloat(String(r.fatal_pct)) || 0,
+    tq_count:    Number(r.tq_count) || 0,
+    mq_count:    Number(r.mq_count) || 0,
+    bq_count:    Number(r.bq_count) || 0,
+  }));
+}
+
 export async function getFatalAgentSummary(filters: CallMasterFilters, limit = 50000) {
   const { startDate, endDate, clientIds } = filters;
   const clientFilter = clientIds?.length

@@ -1685,3 +1685,54 @@ export async function getDayWiseQuality(filters: InboundQualityFilters & { scena
     closing:        Number(r.closing        ?? 0),
   }));
 }
+
+// ─── Agent Audit Band Summary (TQ / MQ / BQ counts per agent) ────────────────
+
+export interface AgentAuditBandRow {
+  agent:       string;
+  audit_count: number;
+  cq_score:    number;
+  fatal_count: number;
+  fatal_pct:   number;
+  tq_count:    number;
+  mq_count:    number;
+  bq_count:    number;
+}
+
+export async function getAgentAuditBandSummary(filters: InboundQualityFilters): Promise<AgentAuditBandRow[]> {
+  const { startDate, endDate, clientId } = filters;
+  const params: (string | number)[] = [startDate, endDate];
+  let extra = '';
+  if (clientId) { extra += ' AND ClientId = ?'; params.push(clientId); }
+
+  const rows = await querySource<{
+    agent: string; audit_count: number; cq_score: number | null;
+    fatal_count: number; fatal_pct: number | null;
+    tq_count: number; mq_count: number; bq_count: number;
+  }>(`
+    SELECT
+      User                                                                                         AS agent,
+      COUNT(*)                                                                                     AS audit_count,
+      ROUND(AVG(quality_percentage), 1)                                                            AS cq_score,
+      SUM(CASE WHEN quality_percentage = 0  THEN 1 ELSE 0 END)                                   AS fatal_count,
+      ROUND(SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0), 1) AS fatal_pct,
+      SUM(CASE WHEN quality_percentage >= 80 THEN 1 ELSE 0 END)                                  AS tq_count,
+      SUM(CASE WHEN quality_percentage >= 60 AND quality_percentage < 80 THEN 1 ELSE 0 END)       AS mq_count,
+      SUM(CASE WHEN quality_percentage >  0  AND quality_percentage < 60 THEN 1 ELSE 0 END)       AS bq_count
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ? ${extra}
+    GROUP BY User
+    ORDER BY cq_score DESC
+  `, params);
+
+  return rows.map(r => ({
+    agent:       String(r.agent),
+    audit_count: Number(r.audit_count) || 0,
+    cq_score:    parseFloat(String(r.cq_score ?? 0)) || 0,
+    fatal_count: Number(r.fatal_count) || 0,
+    fatal_pct:   parseFloat(String(r.fatal_pct ?? 0)) || 0,
+    tq_count:    Number(r.tq_count) || 0,
+    mq_count:    Number(r.mq_count) || 0,
+    bq_count:    Number(r.bq_count) || 0,
+  }));
+}

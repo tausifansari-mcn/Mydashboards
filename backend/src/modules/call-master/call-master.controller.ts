@@ -319,6 +319,17 @@ export async function getOBQualityParams(req: Request, res: Response) {
   } catch (err) { console.error('getOBQualityParams:', err); res.status(500).json({ success: false, message: 'Failed' }); }
 }
 
+export async function getAgentAuditSummary(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    const data = await svc.getAgentAuditSummary(filters);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('getAgentAuditSummary error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch agent audit summary' });
+  }
+}
+
 export async function getFatalAgentSummary(req: Request, res: Response) {
   try {
     const { startDate, endDate } = parseDateRange(req);
