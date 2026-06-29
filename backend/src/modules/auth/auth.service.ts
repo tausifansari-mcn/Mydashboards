@@ -66,10 +66,15 @@ export async function refreshService(token: string) {
 
 export async function forgotPasswordService(email: string, frontendUrl: string) {
   const user = await prisma.md_users.findUnique({ where: { email } });
-  if (!user) return;
+  if (!user) return; // silent — don't reveal whether email exists
   const token = signResetToken(user.id);
   const resetLink = `${frontendUrl}/reset-password/${token}`;
-  await sendPasswordResetEmail(user.email, user.name, resetLink);
+  try {
+    await sendPasswordResetEmail(user.email, user.name, resetLink);
+  } catch (err: unknown) {
+    // Log but don't throw — SMTP failure should not surface a 400 to the user
+    console.error('[auth] Failed to send password reset email to', email, (err instanceof Error ? err.message : err));
+  }
 }
 
 export async function resetPasswordService(token: string, newPassword: string) {

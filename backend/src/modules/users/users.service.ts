@@ -51,8 +51,8 @@ export async function createUser(data: { name: string; email: string; role_id: n
   });
   try {
     await sendWelcomeEmail(user.email, user.name, tempPassword);
-  } catch {
-    // Email failure should not block user creation
+  } catch (err: unknown) {
+    console.error('[users] Welcome email failed for', user.email, (err instanceof Error ? err.message : err));
   }
   return user;
 }
@@ -65,11 +65,23 @@ export async function deleteUser(id: number) {
   return prisma.md_users.update({ where: { id }, data: { is_active: false } });
 }
 
+export async function permanentDeleteUser(id: number) {
+  await prisma.$transaction([
+    prisma.md_dashboard_access.deleteMany({ where: { user_id: id } }),
+    prisma.md_user_process_mapping.deleteMany({ where: { user_id: id } }),
+    prisma.md_login_logs.deleteMany({ where: { user_id: id } }),
+    prisma.md_audit_logs.deleteMany({ where: { user_id: id } }),
+    prisma.md_users.delete({ where: { id } }),
+  ]);
+}
+
 export async function adminResetPassword(id: number) {
   const tempPassword = generateTempPassword();
   const hash = await bcrypt.hash(tempPassword, 12);
   const user = await prisma.md_users.update({ where: { id }, data: { password_hash: hash } });
   try {
     await sendWelcomeEmail(user.email, user.name, tempPassword);
-  } catch { /* ignore */ }
+  } catch (err: unknown) {
+    console.error('[users] Reset password email failed for', user.email, (err instanceof Error ? err.message : err));
+  }
 }

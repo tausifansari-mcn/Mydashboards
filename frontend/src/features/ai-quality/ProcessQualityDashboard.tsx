@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useProcessStore } from '@/store/processStore';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   FunnelChart, Funnel, LabelList,
@@ -544,7 +545,14 @@ function gaugeArc(startDeg: number, endDeg: number): string {
 export default function ProcessQualityDashboard() {
   const navigate = useNavigate();
   const { clientId } = useParams<{ clientId: string }>();
+  const { canAccessOutboundClient, loaded: processLoaded } = useProcessStore();
   const now = new Date();
+
+  useEffect(() => {
+    if (processLoaded && clientId && !canAccessOutboundClient(clientId)) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [processLoaded, clientId, canAccessOutboundClient, navigate]);
   const [startDate, setStartDate] = useState(
     toLocalDT(new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0))
   );

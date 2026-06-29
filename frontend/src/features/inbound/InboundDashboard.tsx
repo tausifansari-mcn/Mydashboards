@@ -10,6 +10,7 @@ import {
   ChevronDown, X, Download, Maximize2, FileDown,
 } from 'lucide-react';
 import api from '@/lib/axios';
+import { useProcessStore } from '@/store/processStore';
 
 // ─── Chart height context (normal vs expanded) ───────────────────────────────
 const ChartHeightCtx = createContext(260);
@@ -376,6 +377,7 @@ function DrillModal({ title, accent = COLOR_BLUE, onClose, loading, onExport, ch
 
 export default function InboundDashboard() {
   const now = new Date();
+  const { canAccessInboundSlug } = useProcessStore();
 
   // ── State ──
   const [projects,           setProjects]           = useState<ProjectRow[]>([]);
@@ -494,21 +496,25 @@ export default function InboundDashboard() {
     };
   }, [fetchAll]);
 
+  // ── Access-filtered views ──
+  const allowedProjects = projects.filter((p) => canAccessInboundSlug(p.key));
+  const allowedMeta     = PROJECT_META.filter((m) => canAccessInboundSlug(m.key));
+
   // ── Summary KPIs ──
-  const totalOffered  = projects.reduce((s, p) => s + p.offered,  0);
-  const totalAnswered = projects.reduce((s, p) => s + p.answered, 0);
+  const totalOffered  = allowedProjects.reduce((s, p) => s + p.offered,  0);
+  const totalAnswered = allowedProjects.reduce((s, p) => s + p.answered, 0);
   const avgAL = totalOffered > 0 ? Math.round(totalAnswered * 10000 / totalOffered) / 100 : 0;
-  const totalSlNum = projects.reduce((s, p) => s + Math.round(p.sl * p.offered / 100), 0);
+  const totalSlNum = allowedProjects.reduce((s, p) => s + Math.round(p.sl * p.offered / 100), 0);
   const avgSL = totalOffered > 0 ? Math.round(totalSlNum * 10000 / totalOffered) / 100 : 0;
 
   // ── Chart data ──
-  const alChartData     = projects.map((p) => ({ name: p.name, icon: p.icon, al: p.al,             color: p.color }));
-  const slChartData     = projects.map((p) => ({ name: p.name, icon: p.icon, sl: p.sl,             color: p.color }));
-  const volumeChartData = projects.map((p) => ({ name: p.name, color: p.color, offered: p.offered, answered: p.answered, abandoned: Math.max(0, p.offered - p.answered) }));
-  const achtChartData   = projects.map((p) => ({ name: `${p.icon} ${p.name}`, acht: p.acht,         color: p.color }));
-  const repeatChartData = projects.map((p) => ({ name: `${p.icon} ${p.name}`, repeat: parseFloat(p.repeat_pct.toFixed(1)), color: p.color }));
+  const alChartData     = allowedProjects.map((p) => ({ name: p.name, icon: p.icon, al: p.al,             color: p.color }));
+  const slChartData     = allowedProjects.map((p) => ({ name: p.name, icon: p.icon, sl: p.sl,             color: p.color }));
+  const volumeChartData = allowedProjects.map((p) => ({ name: p.name, color: p.color, offered: p.offered, answered: p.answered, abandoned: Math.max(0, p.offered - p.answered) }));
+  const achtChartData   = allowedProjects.map((p) => ({ name: `${p.icon} ${p.name}`, acht: p.acht,         color: p.color }));
+  const repeatChartData = allowedProjects.map((p) => ({ name: `${p.icon} ${p.name}`, repeat: parseFloat(p.repeat_pct.toFixed(1)), color: p.color }));
 
-  const hasAnyData = projects.some(p => p.offered > 0);
+  const hasAnyData = allowedProjects.some(p => p.offered > 0);
 
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -688,7 +694,7 @@ export default function InboundDashboard() {
                     <td colSpan={11} className="py-8 text-center text-slate-600">No data for this period</td>
                   </tr>
                 )}
-                {projects.map((p, i) => (
+                {allowedProjects.map((p, i) => (
                   <tr
                     key={p.key}
                     onClick={() => fetchProjectDrill(p)}
@@ -760,7 +766,7 @@ export default function InboundDashboard() {
         <SectionCard title="Call Volume · Offered vs Answered vs Abandoned" accent={COLOR_BLUE}
           onDownload={() => exportTableCSV(
             ['Project','Offered','Answered','Abandoned'],
-            projects.map(p => [p.name, p.offered, p.answered, Math.max(0, p.offered - p.answered)]),
+            allowedProjects.map(p => [p.name, p.offered, p.answered, Math.max(0, p.offered - p.answered)]),
             'call_volume'
           )}>
           {!hasAnyData ? (
@@ -791,7 +797,7 @@ export default function InboundDashboard() {
           <SectionCard title="Answer Level % by Project" accent={COLOR_TEAL}
             onDownload={() => exportTableCSV(
               ['Project','AL%'],
-              projects.map(p => [p.name, p.al.toFixed(2)]),
+              allowedProjects.map(p => [p.name, p.al.toFixed(2)]),
               'answer_level_pct'
             )}>
             {!hasAnyData ? (
@@ -827,7 +833,7 @@ export default function InboundDashboard() {
           <SectionCard title="Service Level % by Project" accent={COLOR_AMBER}
             onDownload={() => exportTableCSV(
               ['Project','SL%'],
-              projects.map(p => [p.name, p.sl.toFixed(2)]),
+              allowedProjects.map(p => [p.name, p.sl.toFixed(2)]),
               'service_level_pct'
             )}>
             {!hasAnyData ? (
@@ -867,7 +873,7 @@ export default function InboundDashboard() {
           <SectionCard title="Average Call Handling Time (ACHT)" accent={COLOR_AMBER}
             onDownload={() => exportTableCSV(
               ['Project','ACHT(s)'],
-              projects.map(p => [p.name, p.acht]),
+              allowedProjects.map(p => [p.name, p.acht]),
               'acht'
             )}>
             {!hasAnyData ? (
@@ -899,7 +905,7 @@ export default function InboundDashboard() {
           <SectionCard title="Repeat Call % by Project" accent={COLOR_RED}
             onDownload={() => exportTableCSV(
               ['Project','Repeat%'],
-              projects.map(p => [p.name, p.repeat_pct.toFixed(2)]),
+              allowedProjects.map(p => [p.name, p.repeat_pct.toFixed(2)]),
               'repeat_pct'
             )}>
             {!hasAnyData ? (
@@ -932,11 +938,11 @@ export default function InboundDashboard() {
         <SectionCard title="Agent Login vs Mandate" accent={COLOR_BLUE}
           onDownload={() => exportTableCSV(
             ['Project','Login Count','Mandate','Required','Deficit'],
-            projects.map(p => [p.name, p.login_count, p.mandate, p.required, p.deficit]),
+            allowedProjects.map(p => [p.name, p.login_count, p.mandate, p.required, p.deficit]),
             'agent_login_mandate'
           )}>
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-            {projects.map((p) => {
+            {allowedProjects.map((p) => {
               const pctFilled = p.mandate > 0 ? Math.min(100, Math.round(p.login_count * 100 / p.mandate)) : 0;
               const dc = deficitColor(p.deficit);
               return (
@@ -985,7 +991,7 @@ export default function InboundDashboard() {
           <SectionCard title="First Call Resolution — Neemans" accent={COLOR_GREEN}
             onDownload={() => exportTableCSV(
               ['Project','FCR%'],
-              projects.filter(p => p.fcr_pct !== null).map(p => [p.name, p.fcr_pct!.toFixed(2)]),
+              allowedProjects.filter(p => p.fcr_pct !== null).map(p => [p.name, p.fcr_pct!.toFixed(2)]),
               'fcr'
             )}>
             <div className="flex flex-wrap gap-6 items-center">
@@ -1019,8 +1025,8 @@ export default function InboundDashboard() {
 
         {/* ── Date-wise Overall Performance Table ── */}
         {(() => {
-          const TOTAL_MANDATE  = PROJECT_META.reduce((s, m) => s + m.mandate,  0); // 49
-          const TOTAL_REQUIRED = PROJECT_META.reduce((s, m) => s + m.required, 0); // 44
+          const TOTAL_MANDATE  = allowedMeta.reduce((s, m) => s + m.mandate,  0);
+          const TOTAL_REQUIRED = allowedMeta.reduce((s, m) => s + m.required, 0);
           const exportConsolidatedPerf = () => exportTableCSV(
             ['Date','Offered','Answered','AL%','SL%','ACHT(s)'],
             consolidatedTrend.map(r => [fmtDate(r.date), r.offered, r.answered, r.al.toFixed(2), r.sl.toFixed(2), r.acht]),
@@ -1278,7 +1284,7 @@ export default function InboundDashboard() {
           sl:       { label: 'Service Level %',  key: 'sl',       unit: '%', refY: 80, refColor: COLOR_AMBER, colorFn: slColor },
         };
         const meta = metaMap[metricDrill];
-        const chartData = projects.map(p => ({
+        const chartData = allowedProjects.map(p => ({
           name: `${p.icon} ${p.name}`,
           value: Number(p[meta.key]),
           color: meta.colorFn ? meta.colorFn(Number(p[meta.key])) : p.color,
@@ -1289,7 +1295,7 @@ export default function InboundDashboard() {
             onClose={() => setMetricDrill(null)}
             onExport={() => exportTableCSV(
               ['Project', meta.label],
-              projects.map(p => [p.name, Number(p[meta.key]).toFixed(meta.unit === '%' ? 1 : 0)]),
+              allowedProjects.map(p => [p.name, Number(p[meta.key]).toFixed(meta.unit === '%' ? 1 : 0)]),
               `${metricDrill}_breakdown`
             )}
           >
@@ -1320,7 +1326,7 @@ export default function InboundDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {projects.filter(p => p.offered > 0).sort((a,b) => Number(a[meta.key]) - Number(b[meta.key])).map((p, i) => (
+                  {allowedProjects.filter(p => p.offered > 0).sort((a,b) => Number(a[meta.key]) - Number(b[meta.key])).map((p, i) => (
                     <tr key={p.key} className={`border-b border-white/[0.04] hover:bg-white/[0.04] cursor-pointer ${i%2===0?'':'bg-white/[0.01]'}`}
                       onClick={() => { setMetricDrill(null); fetchProjectDrill(p); }}>
                       <td className="py-2 px-3 text-slate-200 font-medium">{p.icon} {p.name}</td>

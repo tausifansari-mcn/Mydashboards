@@ -5,8 +5,13 @@ import { requireRole } from '../../middleware/requireRole';
 import * as ctrl from './processes.controller';
 
 const router = Router();
-router.use(verifyToken, injectTenant, requireRole('super_admin'));
 
+// All authenticated users can fetch their own allowed processes
+router.use(verifyToken, injectTenant);
+router.get('/my', ctrl.myProcesses);
+
+// Everything below is super_admin only
+router.use(requireRole('super_admin'));
 router.get('/', ctrl.list);
 router.get('/:id', ctrl.getOne);
 router.post('/', ctrl.create);

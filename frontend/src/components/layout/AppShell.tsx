@@ -1,9 +1,23 @@
+import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import Sidebar from './Sidebar';
+import api from '@/lib/axios';
+import { useAuthStore } from '@/store/authStore';
+import { useProcessStore } from '@/store/processStore';
 
 export default function AppShell() {
   const location = useLocation();
+  const { user } = useAuthStore();
+  const { loaded, setProcesses } = useProcessStore();
+
+  useEffect(() => {
+    if (user && !loaded) {
+      api.get('/processes/my')
+        .then((r) => setProcesses(r.data, user.role === 'super_admin'))
+        .catch(() => setProcesses([], user?.role === 'super_admin'));
+    }
+  }, [user, loaded, setProcesses]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#F8FAFC]">

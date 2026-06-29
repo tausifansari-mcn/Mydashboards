@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
+import { useProcessStore } from '@/store/processStore';
 import { cn } from '@/lib/utils';
 import api from '@/lib/axios';
 
@@ -18,14 +19,14 @@ const mainLinks = [
   { to: '/quality', icon: BarChart3, label: 'AI Quality' },
 ];
 
-const inboundProjects = [
-  { to: '/inbound/gnc', icon: '🛒', label: 'GNC' },
-  { to: '/inbound/bellavita', icon: '🌸', label: 'Bellavita' },
-  { to: '/inbound/clovia', icon: '👗', label: 'Clovia' },
-  { to: '/inbound/neemans', icon: '👟', label: 'Neemans' },
-  { to: '/inbound/viega', icon: '🚰', label: 'Viega' },
-  { to: '/inbound/exicom', icon: '⚡', label: 'Exicom' },
-  { to: '/inbound/dubangladesh', icon: '🇧🇩', label: 'DU Bangladesh' },
+const ALL_INBOUND_PROJECTS = [
+  { to: '/inbound/gnc',          slug: 'gnc',          icon: '🛒', label: 'GNC' },
+  { to: '/inbound/bellavita',    slug: 'bellavita',    icon: '🌸', label: 'Bellavita' },
+  { to: '/inbound/clovia',       slug: 'clovia',       icon: '👗', label: 'Clovia' },
+  { to: '/inbound/neemans',      slug: 'neemans',      icon: '👟', label: 'Neemans' },
+  { to: '/inbound/viega',        slug: 'viega',        icon: '🚰', label: 'Viega' },
+  { to: '/inbound/exicom',       slug: 'exicom',       icon: '⚡', label: 'Exicom' },
+  { to: '/inbound/dubangladesh', slug: 'dubangladesh', icon: '🇧🇩', label: 'DU Bangladesh' },
 ];
 
 const adminLinks = [
@@ -43,8 +44,11 @@ const accountLinks = [
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
   const { sidebarExpanded, toggleSidebar } = useUIStore();
+  const { canAccessInboundSlug } = useProcessStore();
   const navigate = useNavigate();
   const isSuperAdmin = user?.role === 'super_admin';
+
+  const inboundProjects = ALL_INBOUND_PROJECTS.filter((p) => canAccessInboundSlug(p.slug));
 
   const handleLogout = async () => {
     try { await api.post('/auth/logout'); } catch { /* ignore */ }

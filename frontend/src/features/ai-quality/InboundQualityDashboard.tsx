@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useProcessStore } from '@/store/processStore';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
   ComposedChart, Bar, XAxis, YAxis, CartesianGrid, ReferenceLine, Legend,
@@ -8,7 +9,7 @@ import {
 import {
   ChevronLeft, Phone, ClipboardCheck, TrendingUp, Star,
   ThumbsUp, ThumbsDown, Minus, AlertTriangle, Trophy, Target,
-  ShieldAlert, AlertOctagon, Download, Maximize2, Minimize2, X, Info,
+  ShieldAlert, AlertOctagon, Download, Maximize2, Minimize2, X, Info, Loader2,
 } from 'lucide-react';
 import api from '@/lib/axios';
 
@@ -151,7 +152,7 @@ function ExpandBtn({ expanded, onToggle }: { expanded: boolean; onToggle: () => 
 function ExportBtn({ onClick, title = 'Export CSV' }: { onClick: () => void; title?: string }) {
   return (
     <button onClick={onClick} title={title}
-      className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-slate-500 hover:text-emerald-400 border border-white/5 hover:border-emerald-500/30 transition-colors shrink-0">
+      className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-slate-400 hover:text-emerald-400 border border-white/5 hover:border-emerald-500/30 transition-colors shrink-0">
       <Download size={11} /> CSV
     </button>
   );
@@ -191,7 +192,7 @@ function MetricCard({ label, value, subValue, icon: Icon, accentColor, loading }
           <p className="text-2xl font-bold text-white leading-none">{value}</p>
         )}
         {subValue && !loading && (
-          <p className="text-[11px] text-slate-500 mt-1">{subValue}</p>
+          <p className="text-[11px] text-slate-400 mt-1">{subValue}</p>
         )}
       </div>
     </div>
@@ -208,7 +209,14 @@ const SLIDES = [
 export default function InboundQualityDashboard() {
   const { clientId } = useParams<{ clientId: string }>();
   const navigate = useNavigate();
+  const { canAccessInboundClient, loaded: processLoaded } = useProcessStore();
   const now = new Date();
+
+  useEffect(() => {
+    if (processLoaded && clientId && !canAccessInboundClient(clientId)) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [processLoaded, clientId, canAccessInboundClient, navigate]);
 
   const [activeSlide, setActiveSlide] = useState(0);
   const [fatalData, setFatalData] = useState<FatalAnalysis | null>(null);
@@ -237,6 +245,7 @@ export default function InboundQualityDashboard() {
   // ── Deep analysis state ──────────────────────────────────────────────────
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [drillModal, setDrillModal] = useState<{ title: string; accent: string; rows: Record<string,unknown>[]; columns: { key: string; label: string }[] } | null>(null);
+  const [drillLoading, setDrillLoading] = useState(false);
 
   const toggleExpand = (key: string) => setExpandedSection(prev => prev === key ? null : key);
 
@@ -257,6 +266,33 @@ export default function InboundQualityDashboard() {
 
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
+
+  const openBandDetail = async (band: string, title: string, accent: string) => {
+    const cols = [
+      { key: 'Agent',       label: 'Agent' },
+      { key: 'Scenario',    label: 'Scenario' },
+      { key: 'Count',       label: 'Count' },
+      { key: 'Avg Score%',  label: 'Avg Score%' },
+    ];
+    setDrillModal({ title, accent, rows: [], columns: cols });
+    setDrillLoading(true);
+    try {
+      const q = `clientId=${clientId}&startDate=${sd}&endDate=${ed}&band=${band}`;
+      const { data } = await api.get<{ data: { agent: string; scenario: string; count: number; avg_score: number }[] }>(
+        `/inbound-quality/band-detail?${q}`
+      );
+      setDrillModal({ title, accent, columns: cols, rows: data.data.map(r => ({
+        Agent:        r.agent,
+        Scenario:     r.scenario,
+        Count:        r.count,
+        'Avg Score%': `${r.avg_score}%`,
+      })) });
+    } catch {
+      setDrillModal(prev => prev ? { ...prev, rows: [] } : null);
+    } finally {
+      setDrillLoading(false);
+    }
+  };
 
   const fetchKPIs = useCallback(() => {
     setLoading(true);
@@ -418,12 +454,47 @@ export default function InboundQualityDashboard() {
 
         {/* Date filter */}
         <div className="flex items-center gap-3 flex-wrap mb-6">
-          <label className="text-[11px] text-slate-500 uppercase tracking-wider">From</label>
+          <label className="text-[11px] text-slate-400 uppercase tracking-wider">From</label>
           <input type="datetime-local" value={startDate} onChange={e => setStartDate(e.target.value)}
             className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500" />
-          <label className="text-[11px] text-slate-500 uppercase tracking-wider">To</label>
+          <label className="text-[11px] text-slate-400 uppercase tracking-wider">To</label>
           <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
             className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500" />
+          <button
+            onClick={async () => {
+              setDrillLoading(true);
+              try {
+                const { data } = await api.get<{ data: Record<string, string | number>[] }>(
+                  `/inbound-quality/raw-data?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+                );
+                const rows = data.data;
+                if (!rows.length) { alert('No data found for selected period.'); return; }
+                const cols = Object.keys(rows[0]);
+                const header = cols.join(',');
+                const body = rows.map(r =>
+                  cols.map(k => {
+                    const v = String(r[k] ?? '');
+                    return v.includes(',') || v.includes('"') || v.includes('\n') ? `"${v.replace(/"/g, '""')}"` : v;
+                  }).join(',')
+                ).join('\n');
+                const csv = `${header}\n${body}`;
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const clientLabel = clientId || 'ALL';
+                const dateFrom = sd.slice(0, 10);
+                const dateTo = ed.slice(0, 10);
+                a.href = url;
+                a.download = `raw-data-${clientLabel}-${dateFrom}-to-${dateTo}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch { alert('Failed to export raw data. Please try again.'); }
+              finally { setDrillLoading(false); }
+            }}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors">
+            {drillLoading ? <span className="animate-spin w-3 h-3 border border-emerald-400 border-t-transparent rounded-full inline-block" /> : <Download size={12} />}
+            Export Raw Data
+          </button>
         </div>
 
         {/* Slide tabs */}
@@ -464,14 +535,17 @@ export default function InboundQualityDashboard() {
                 loading={loading}
               />
               </div>
+              <div className="cursor-pointer" title="Click for breakdown excluding fatal calls"
+                onClick={() => openBandDetail('no_fatal', 'W/O Fatal — Agent & Scenario Breakdown', '#38BDF8')}>
               <MetricCard
                 label="W/O Fatal CQ Score%"
                 value={loading ? '—' : kpis?.cq_score_no_fatal ? `${kpis.cq_score_no_fatal}%` : 'No data'}
-                subValue="Excl. fatal calls"
+                subValue="Click for breakdown"
                 icon={TrendingUp}
                 accentColor="#38BDF8"
                 loading={loading}
               />
+              </div>
               <div className="cursor-pointer" title="Click to see score components breakdown"
                 onClick={() => kpis && setDrillModal({ title: 'Score Components — Parameter Breakdown', accent: '#A78BFA', columns: [{ key: 'Parameter', label: 'Parameter' }, { key: 'Score%', label: 'Score%' }, { key: 'Status', label: 'Status' }], rows: [{ Parameter: 'Opening Skill', 'Score%': `${kpis.opening_skill}%`, Status: kpis.opening_skill >= 90 ? '✅ On Target' : kpis.opening_skill >= 85 ? '⚠️ Amber' : '❌ Below Target' }, { Parameter: 'Soft Skill', 'Score%': `${kpis.soft_skill}%`, Status: kpis.soft_skill >= 90 ? '✅ On Target' : kpis.soft_skill >= 85 ? '⚠️ Amber' : '❌ Below Target' }, { Parameter: 'Hold Procedure', 'Score%': `${kpis.hold_procedure}%`, Status: kpis.hold_procedure >= 90 ? '✅ On Target' : kpis.hold_procedure >= 85 ? '⚠️ Amber' : '❌ Below Target' }, { Parameter: 'Resolution', 'Score%': `${kpis.resolution}%`, Status: kpis.resolution >= 90 ? '✅ On Target' : kpis.resolution >= 85 ? '⚠️ Amber' : '❌ Below Target' }, { Parameter: 'Closing', 'Score%': `${kpis.closing}%`, Status: kpis.closing >= 90 ? '✅ On Target' : kpis.closing >= 85 ? '⚠️ Amber' : '❌ Below Target' }] })}>
               <MetricCard
@@ -483,38 +557,50 @@ export default function InboundQualityDashboard() {
                 loading={loading}
               />
               </div>
+              <div className="cursor-pointer" title="Click for Excellent call breakdown"
+                onClick={() => openBandDetail('excellent', 'Excellent Calls — Agent & Scenario Breakdown (98–100%)', '#22C55E')}>
               <MetricCard
                 label="Excellent Call"
                 value={loading ? '—' : (kpis?.excellent ?? 0).toLocaleString()}
-                subValue={loading ? '' : `${pct(kpis?.excellent ?? 0)} · 98–100%`}
+                subValue={loading ? '' : `${pct(kpis?.excellent ?? 0)} · Click to drill`}
                 icon={ThumbsUp}
                 accentColor="#22C55E"
                 loading={loading}
               />
+              </div>
+              <div className="cursor-pointer" title="Click for Good call breakdown"
+                onClick={() => openBandDetail('good', 'Good Calls — Agent & Scenario Breakdown (90–97%)', '#3B82F6')}>
               <MetricCard
                 label="Good Call"
                 value={loading ? '—' : (kpis?.good ?? 0).toLocaleString()}
-                subValue={loading ? '' : `${pct(kpis?.good ?? 0)} · 90–97%`}
+                subValue={loading ? '' : `${pct(kpis?.good ?? 0)} · Click to drill`}
                 icon={ThumbsUp}
                 accentColor="#3B82F6"
                 loading={loading}
               />
+              </div>
+              <div className="cursor-pointer" title="Click for Average call breakdown"
+                onClick={() => openBandDetail('average', 'Average Calls — Agent & Scenario Breakdown (85–89%)', '#F59E0B')}>
               <MetricCard
                 label="Average Call"
                 value={loading ? '—' : (kpis?.average_count ?? 0).toLocaleString()}
-                subValue={loading ? '' : `${pct(kpis?.average_count ?? 0)} · 85–89%`}
+                subValue={loading ? '' : `${pct(kpis?.average_count ?? 0)} · Click to drill`}
                 icon={Minus}
                 accentColor="#F59E0B"
                 loading={loading}
               />
+              </div>
+              <div className="cursor-pointer" title="Click for Below Average breakdown"
+                onClick={() => openBandDetail('below_average', 'Below Average Calls — Agent & Scenario Breakdown (<85%)', '#EF4444')}>
               <MetricCard
                 label="Below Average"
                 value={loading ? '—' : (kpis?.below_average ?? 0).toLocaleString()}
-                subValue={loading ? '' : `${pct(kpis?.below_average ?? 0)} · <85%`}
+                subValue={loading ? '' : `${pct(kpis?.below_average ?? 0)} · Click to drill`}
                 icon={ThumbsDown}
                 accentColor="#EF4444"
                 loading={loading}
               />
+              </div>
             </div>
 
             {/* Score Components + ACHT Categorization — side by side below KPI cards */}
@@ -549,7 +635,7 @@ export default function InboundQualityDashboard() {
                             {value}%
                           </span>
                         )}
-                        <span className={`text-[10px] font-semibold uppercase tracking-widest text-center leading-tight ${isAvg ? 'text-violet-400' : 'text-slate-500'}`}>
+                        <span className={`text-[10px] font-semibold uppercase tracking-widest text-center leading-tight ${isAvg ? 'text-violet-400' : 'text-slate-300'}`}>
                           {label}
                         </span>
                       </div>
@@ -578,7 +664,7 @@ export default function InboundQualityDashboard() {
                         <thead>
                           <tr className="border-b border-white/5 bg-white/[0.02]">
                             {['ACHT Categorization', 'Audit Count', 'Score%', 'Fatal Count', 'Fatal%'].map(h => (
-                              <th key={h} className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap">
+                              <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider whitespace-nowrap">
                                 {h}
                               </th>
                             ))}
@@ -645,13 +731,21 @@ export default function InboundQualityDashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
 
               {/* Social Media & Consumer Court Threat */}
-              <div className="relative flex items-center gap-4 bg-[#1E293B] border border-orange-500/20 rounded-xl px-5 py-4 overflow-hidden">
+              <div
+                className="relative flex items-center gap-4 bg-[#1E293B] border border-orange-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-white/[0.03] transition-colors"
+                title="Click to view detail breakdown"
+                onClick={() => socialThreats.length > 0 && setDrillModal({
+                  title: 'Social Media & Consumer Court Threat — Detail Breakdown',
+                  accent: '#F97316',
+                  columns: [{ key: 'Scenario', label: 'Scenario' }, { key: 'Scenario1', label: 'Scenario1' }, { key: 'Count', label: 'Count' }, { key: 'Count%', label: 'Count%' }],
+                  rows: socialThreats.map(r => ({ Scenario: r.scenario, Scenario1: r.scenario1, Count: r.count, 'Count%': `${r.pct}%` })),
+                })}>
                 <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-orange-500" />
                 <div className="p-3 rounded-xl bg-orange-500/10 shrink-0">
                   <ShieldAlert size={22} className="text-orange-400" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest leading-tight mb-1">
+                  <p className="text-[10px] font-semibold text-slate-200 uppercase tracking-widest leading-tight mb-1">
                     Social Media &amp; Consumer Court Threat
                   </p>
                   {loading ? (
@@ -661,27 +755,35 @@ export default function InboundQualityDashboard() {
                       <span className="text-3xl font-black text-orange-400 tabular-nums leading-none">
                         {(kpis?.social_media_court_threat ?? 0).toLocaleString()}
                       </span>
-                      <span className="text-xs text-slate-500 mb-0.5">
+                      <span className="text-xs text-slate-300 mb-0.5">
                         calls ({kpis && kpis.audit_count > 0
                           ? ((kpis.social_media_court_threat / kpis.audit_count) * 100).toFixed(1)
-                          : 0}%)
+                          : 0}%) · Click to view
                       </span>
                     </div>
                   )}
-                  <p className="text-[10px] text-slate-600 mt-1">
+                  <p className="text-[10px] text-slate-300 mt-1">
                     sensetive_word: social / court / consumer / legal / fir
                   </p>
                 </div>
               </div>
 
               {/* Potential Scam */}
-              <div className="relative flex items-center gap-4 bg-[#1E293B] border border-red-500/20 rounded-xl px-5 py-4 overflow-hidden">
+              <div
+                className="relative flex items-center gap-4 bg-[#1E293B] border border-red-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-white/[0.03] transition-colors"
+                title="Click to view detail breakdown"
+                onClick={() => potentialScams.length > 0 && setDrillModal({
+                  title: 'Potential Scam Leads — Detail Breakdown',
+                  accent: '#EF4444',
+                  columns: [{ key: 'Scenario', label: 'Scenario' }, { key: 'Scenario1', label: 'Scenario1' }, { key: 'Count', label: 'Count' }, { key: 'Count%', label: 'Count%' }],
+                  rows: potentialScams.map(r => ({ Scenario: r.scenario, Scenario1: r.scenario1, Count: r.count, 'Count%': `${r.pct}%` })),
+                })}>
                 <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-red-500" />
                 <div className="p-3 rounded-xl bg-red-500/10 shrink-0">
                   <AlertOctagon size={22} className="text-red-400" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest leading-tight mb-1">
+                  <p className="text-[10px] font-semibold text-slate-200 uppercase tracking-widest leading-tight mb-1">
                     Potential Scam
                   </p>
                   {loading ? (
@@ -691,14 +793,14 @@ export default function InboundQualityDashboard() {
                       <span className="text-3xl font-black text-red-400 tabular-nums leading-none">
                         {(kpis?.potential_scam ?? 0).toLocaleString()}
                       </span>
-                      <span className="text-xs text-slate-500 mb-0.5">
+                      <span className="text-xs text-slate-300 mb-0.5">
                         calls ({kpis && kpis.audit_count > 0
                           ? ((kpis.potential_scam / kpis.audit_count) * 100).toFixed(1)
-                          : 0}%)
+                          : 0}%) · Click to view
                       </span>
                     </div>
                   )}
-                  <p className="text-[10px] text-slate-600 mt-1">
+                  <p className="text-[10px] text-slate-300 mt-1">
                     Sys. manipulation / Financial fraud / Collusion / Policy failure = Yes
                   </p>
                 </div>
@@ -710,8 +812,8 @@ export default function InboundQualityDashboard() {
             <div className="mb-6">
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-1 h-4 rounded-full bg-rose-500" />
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Top Negative Signals</h3>
-                <span className="ml-auto text-[10px] text-slate-600">Based on top_negative_words categorisation</span>
+                <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Top Negative Signals</h3>
+                <span className="ml-auto text-[10px] text-slate-400">Based on top_negative_words categorisation</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                 {[
@@ -725,10 +827,23 @@ export default function InboundQualityDashboard() {
                   const pct   = kpis && kpis.audit_count > 0
                     ? ((count / kpis.audit_count) * 100).toFixed(1)
                     : '0.0';
+                  const filtered = negSignalDetails.filter(r => r.neg_signal === label);
                   return (
                     <div key={label}
-                      className="relative flex flex-col gap-2 rounded-xl border border-white/5 px-4 py-4 overflow-hidden"
-                      style={{ backgroundColor: bg }}>
+                      className="relative flex flex-col gap-2 rounded-xl border border-white/5 px-4 py-4 overflow-hidden cursor-pointer hover:brightness-110 transition-all"
+                      style={{ backgroundColor: bg }}
+                      title={`Click to view ${label} signal details`}
+                      onClick={() => filtered.length > 0 && setDrillModal({
+                        title: `${label} Signal — Scenario Breakdown`,
+                        accent: color,
+                        columns: [
+                          { key: 'Scenario',  label: 'Scenario'  },
+                          { key: 'Scenario1', label: 'Scenario1' },
+                          { key: 'Count',     label: 'Count'     },
+                          { key: 'Count%',    label: 'Count%'    },
+                        ],
+                        rows: filtered.map(r => ({ Scenario: r.scenario, Scenario1: r.scenario1, Count: r.count, 'Count%': `${r.pct}%` })),
+                      })}>
                       <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-xl" style={{ backgroundColor: color }} />
                       <div className="flex items-center justify-between">
                         <span className="text-base">{icon}</span>
@@ -744,7 +859,7 @@ export default function InboundQualityDashboard() {
                           {count.toLocaleString()}
                         </span>
                       )}
-                      <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+                      <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-300">
                         {label}
                       </span>
                     </div>
@@ -798,7 +913,10 @@ export default function InboundQualityDashboard() {
                       {performers.length === 0 ? (
                         <p className="text-xs text-slate-600 py-6 text-center">No agent data found</p>
                       ) : performers.map((p, i) => (
-                        <div key={p.user} className="flex items-center gap-3">
+                        <div key={p.user}
+                          className="flex items-center gap-3 cursor-pointer hover:bg-white/[0.03] rounded-lg px-1 transition-colors"
+                          title={`Click to drill into ${p.user}'s performance`}
+                          onClick={() => openBandDetail('no_fatal', `${p.user} — Performance Breakdown`, RANK_COLORS[i])}>
                           <div className="flex items-center justify-center w-8 h-8 rounded-lg text-[10px] font-black shrink-0"
                             style={{ backgroundColor: `${RANK_COLORS[i]}20`, color: RANK_COLORS[i] }}>
                             {RANK_LABELS[i]}
@@ -818,7 +936,7 @@ export default function InboundQualityDashboard() {
                                   backgroundColor: cqColor(p.avg_score),
                                 }} />
                             </div>
-                            <span className="text-[10px] text-slate-600 mt-0.5">{p.audit_count} audits</span>
+                            <span className="text-[10px] text-slate-400 mt-0.5">{p.audit_count} audits · Click to drill</span>
                           </div>
                         </div>
                       ))}
@@ -830,6 +948,7 @@ export default function InboundQualityDashboard() {
                     <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
                       <Target size={13} className="text-sky-400" />
                       <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Last 7 Days vs Target</h3>
+                      <ExportBtn onClick={() => downloadCSV(chartData.map(d => ({ Date: d.date, 'Avg Score%': d.score ?? 'No data', 'Audit Count': d.audits, Target: d.target })), 'last-7-days.csv')} />
                       <span className="ml-auto flex items-center gap-1.5 text-[10px] text-red-400 font-semibold">
                         <span className="w-4 h-0.5 bg-red-400 rounded inline-block" />
                         Target 95%
@@ -899,10 +1018,125 @@ export default function InboundQualityDashboard() {
               );
             })()}
 
+            {/* ── Agent Audit Summary ───────────────────────────────────── */}
+            {agentAuditBand.length > 0 && (() => {
+              const cq = (v: number) => v >= 80 ? '#10B981' : v >= 60 ? '#F59E0B' : '#EF4444';
+              const stackBadge = (score: number) => {
+                const label = score > 95 ? 'TQ' : score > 85 ? 'MQ' : 'BQ';
+                const c = label === 'TQ'
+                  ? { bg: '#22C55E1A', text: '#22C55E', border: '#22C55E40' }
+                  : label === 'MQ'
+                  ? { bg: '#F59E0B1A', text: '#F59E0B', border: '#F59E0B40' }
+                  : { bg: '#EF44441A', text: '#EF4444', border: '#EF444440' };
+                return (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border"
+                    style={{ backgroundColor: c.bg, color: c.text, borderColor: c.border }}>
+                    {label}
+                  </span>
+                );
+              };
+              const total_audits = agentAuditBand.reduce((s, r) => s + r.audit_count, 0);
+              const total_fatals = agentAuditBand.reduce((s, r) => s + r.fatal_count, 0);
+              const total_tq     = agentAuditBand.reduce((s, r) => s + r.tq_count,    0);
+              const total_mq     = agentAuditBand.reduce((s, r) => s + r.mq_count,    0);
+              const total_bq     = agentAuditBand.reduce((s, r) => s + r.bq_count,    0);
+              const avg_cq       = agentAuditBand.reduce((s, r) => s + r.cq_score, 0) / agentAuditBand.length;
+              return (
+                <div className="mb-6 bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 flex-wrap">
+                    <div className="w-1 h-4 rounded-full bg-sky-500 shrink-0" />
+                    <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Agent Audit Summary</h3>
+                    <span className="text-[10px] text-slate-300 ml-1">TQ ≥80% · MQ 60–79% · BQ &lt;60% · Stack Ranking: &gt;95% TQ · &gt;85% MQ · else BQ</span>
+                    <ExportBtn onClick={() => downloadCSV(agentAuditBand.map((r, i) => ({
+                      '#': i + 1,
+                      'Agent':           r.agent,
+                      'Audit Count':     r.audit_count,
+                      'CQ Score%':       r.cq_score,
+                      'Stack Ranking':   r.cq_score > 95 ? 'TQ' : r.cq_score > 85 ? 'MQ' : 'BQ',
+                      'Fatal Count':     r.fatal_count,
+                      'Fatal%':          r.fatal_pct,
+                      'TQ (≥80%)':       r.tq_count,
+                      'MQ (60-79%)':     r.mq_count,
+                      'BQ (<60%)':       r.bq_count,
+                    })), 'agent-audit-summary.csv')} />
+                  </div>
+                  <div className="overflow-x-auto overflow-y-auto max-h-96">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-[#1E293B] z-10">
+                        <tr className="border-b border-white/5 bg-white/[0.02]">
+                          {[
+                            { label: '#',              cls: 'w-8 text-center' },
+                            { label: 'Agent',           cls: 'text-left' },
+                            { label: 'Audit Count',     cls: 'text-right' },
+                            { label: 'CQ Score%',       cls: 'text-right' },
+                            { label: 'Stack Ranking',   cls: 'text-center text-violet-400' },
+                            { label: 'Fatal Count',     cls: 'text-right' },
+                            { label: 'Fatal%',          cls: 'text-right' },
+                            { label: 'TQ',              cls: 'text-right text-emerald-400' },
+                            { label: 'MQ',              cls: 'text-right text-amber-400'   },
+                            { label: 'BQ',              cls: 'text-right text-red-400'     },
+                          ].map(h => (
+                            <th key={h.label} className={`py-2.5 px-3 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap ${h.cls || 'text-slate-300'}`}>
+                              {h.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {agentAuditBand.map((r, i) => (
+                          <tr key={r.agent}
+                            className="border-b border-white/5 hover:bg-white/[0.04] transition-colors cursor-pointer"
+                            title={`Click to drill into ${r.agent}'s band detail`}
+                            onClick={() => openBandDetail('no_fatal', `${r.agent} — Band Detail`, r.cq_score > 95 ? '#22C55E' : r.cq_score > 85 ? '#F59E0B' : '#EF4444')}>
+                            <td className="py-2 px-3 text-slate-400 text-center">{i + 1}</td>
+                            <td className="py-2 px-3 font-medium text-white whitespace-nowrap">{r.agent}</td>
+                            <td className="py-2 px-3 text-right text-slate-200">{r.audit_count.toLocaleString()}</td>
+                            <td className="py-2 px-3 text-right font-bold" style={{ color: cq(r.cq_score) }}>{r.cq_score.toFixed(1)}%</td>
+                            <td className="py-2 px-3 text-center">{stackBadge(r.cq_score)}</td>
+                            <td className="py-2 px-3 text-right font-semibold" style={{ color: r.fatal_count > 0 ? '#EF4444' : '#94A3B8' }}>
+                              {r.fatal_count > 0 ? r.fatal_count.toLocaleString() : '—'}
+                            </td>
+                            <td className="py-2 px-3 text-right font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#94A3B8' }}>
+                              {r.fatal_pct > 0 ? `${r.fatal_pct.toFixed(1)}%` : '—'}
+                            </td>
+                            <td className="py-2 px-3 text-right font-semibold text-emerald-400">
+                              {r.tq_count > 0 ? r.tq_count.toLocaleString() : <span className="text-slate-400">0</span>}
+                            </td>
+                            <td className="py-2 px-3 text-right font-semibold text-amber-400">
+                              {r.mq_count > 0 ? r.mq_count.toLocaleString() : <span className="text-slate-400">0</span>}
+                            </td>
+                            <td className="py-2 px-3 text-right font-semibold" style={{ color: r.bq_count > 0 ? '#EF4444' : '#94A3B8' }}>
+                              {r.bq_count > 0 ? r.bq_count.toLocaleString() : <span className="text-slate-400">0</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t border-white/10 bg-white/[0.02]">
+                          <td className="py-2 px-3 text-[10px] text-slate-200 font-semibold" colSpan={2}>
+                            Total ({agentAuditBand.length} agents)
+                          </td>
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-slate-200">{total_audits.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-[10px] font-bold" style={{ color: cq(avg_cq) }}>{avg_cq.toFixed(1)}%</td>
+                          <td className="py-2 px-3 text-center">{stackBadge(avg_cq)}</td>
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-red-400">{total_fatals.toLocaleString()}</td>
+                          <td className="py-2 px-3" />
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-emerald-400">{total_tq.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-amber-400">{total_mq.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-red-400">{total_bq.toLocaleString()}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Scenario Distribution */}
             {scenarios.length > 0 && (() => {
+              const filteredScenarios = scenarios.filter(s => s.scenario.trim().toLowerCase() !== 'unknown');
               const activeChildren = selectedScenario
-                ? (scenarios.find(s => s.scenario === selectedScenario)?.children ?? [])
+                ? (filteredScenarios.find(s => s.scenario === selectedScenario)?.children ?? [])
                 : null;
 
               return (
@@ -913,6 +1147,7 @@ export default function InboundQualityDashboard() {
                     <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">
                       Scenario Distribution
                     </h3>
+                    <ExportBtn onClick={() => downloadCSV(filteredScenarios.map(s => ({ Scenario: s.scenario, Count: s.count, 'Count%': `${s.pct}%` })), 'scenario-distribution.csv')} />
                     {selectedScenario && (
                       <>
                         <span className="text-slate-600 text-xs">→</span>
@@ -925,7 +1160,7 @@ export default function InboundQualityDashboard() {
                       </>
                     )}
                     {!selectedScenario && (
-                      <span className="ml-auto text-[10px] text-slate-600">Click a slice or row to drill down</span>
+                      <span className="ml-auto text-[10px] text-slate-400">Click a slice or row to drill down</span>
                     )}
                   </div>
 
@@ -935,7 +1170,7 @@ export default function InboundQualityDashboard() {
                       <ResponsiveContainer width="100%" height={260}>
                         <PieChart>
                           <Pie
-                            data={scenarios}
+                            data={filteredScenarios}
                             dataKey="count"
                             nameKey="scenario"
                             cx="50%"
@@ -964,7 +1199,7 @@ export default function InboundQualityDashboard() {
                               );
                             }}
                           >
-                            {scenarios.map((s, i) => (
+                            {filteredScenarios.map((s, i) => (
                               <Cell
                                 key={i}
                                 fill={SCENARIO_COLORS[i % SCENARIO_COLORS.length]}
@@ -977,7 +1212,7 @@ export default function InboundQualityDashboard() {
                           <Tooltip
                             contentStyle={{ background: '#0F172A', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 11 }}
                             formatter={(v: unknown, n: unknown) => [
-                              `${Number(v).toLocaleString()} calls (${scenarios.find(s => s.scenario === n)?.pct ?? 0}%)`,
+                              `${Number(v).toLocaleString()} calls (${filteredScenarios.find(s => s.scenario === n)?.pct ?? 0}%)`,
                               String(n),
                             ]}
                           />
@@ -986,7 +1221,7 @@ export default function InboundQualityDashboard() {
 
                       {/* Legend */}
                       <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-1">
-                        {scenarios.map((s, i) => (
+                        {filteredScenarios.map((s, i) => (
                           <button
                             key={s.scenario}
                             onClick={() => setSelectedScenario(prev => prev === s.scenario ? null : s.scenario)}
@@ -1008,14 +1243,14 @@ export default function InboundQualityDashboard() {
                           <thead>
                             <tr className="border-b border-white/5 bg-white/[0.02]">
                               {['Scenario', 'Count', 'Count %'].map(h => (
-                                <th key={h} className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider">
+                                <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">
                                   {h}
                                 </th>
                               ))}
                             </tr>
                           </thead>
                           <tbody>
-                            {scenarios.map((s, i) => (
+                            {filteredScenarios.map((s, i) => (
                               <tr key={s.scenario}
                                 onClick={() => setSelectedScenario(s.scenario)}
                                 className="border-b border-white/[0.04] hover:bg-white/[0.04] cursor-pointer transition-colors">
@@ -1044,7 +1279,7 @@ export default function InboundQualityDashboard() {
                         /* Scenario1 drill-down */
                         <div>
                           <div className="px-4 py-2.5 border-b border-white/5 bg-white/[0.02]">
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                            <p className="text-[10px] text-slate-300 uppercase tracking-wider font-semibold">
                               {selectedScenario} — Sub-scenario breakdown
                             </p>
                           </div>
@@ -1052,7 +1287,7 @@ export default function InboundQualityDashboard() {
                             <thead>
                               <tr className="border-b border-white/5">
                                 {['Scenario 1', 'Count', 'Count %'].map(h => (
-                                  <th key={h} className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider">
+                                  <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">
                                     {h}
                                   </th>
                                 ))}
@@ -1060,7 +1295,7 @@ export default function InboundQualityDashboard() {
                             </thead>
                             <tbody>
                               {(activeChildren ?? []).map((c, i) => {
-                                const scenIdx = scenarios.findIndex(s => s.scenario === selectedScenario);
+                                const scenIdx = filteredScenarios.findIndex(s => s.scenario === selectedScenario);
                                 const color   = SCENARIO_COLORS[scenIdx % SCENARIO_COLORS.length];
                                 return (
                                   <tr key={i}
@@ -1113,6 +1348,7 @@ export default function InboundQualityDashboard() {
                   <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
                     <div className="w-1 h-4 rounded-full" style={{ background: accentColor }} />
                     <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">{title}</h3>
+                    <ExportBtn onClick={() => downloadCSV(rows.map(r => ({ Scenario: r.scenario, Scenario1: r.scenario1, ...(extraCol ? { [extraCol]: r.extra } : {}), Count: r.count, 'Count%': `${r.pct}%` })), `${title.replace(/\s+/g,'-').toLowerCase()}.csv`)} />
                     <span className="ml-auto text-xs font-bold" style={{ color: accentColor }}>
                       {rows.reduce((s, r) => s + r.count, 0).toLocaleString()} calls
                     </span>
@@ -1124,11 +1360,11 @@ export default function InboundQualityDashboard() {
                       <table className="w-full text-xs">
                         <thead className="sticky top-0 bg-[#1E293B] z-10">
                           <tr className="border-b border-white/5 bg-white/[0.02]">
-                            <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider">Scenario</th>
-                            <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider">Scenario1</th>
-                            {extraCol && <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider">{extraCol}</th>}
-                            <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider">Count</th>
-                            <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider">Count%</th>
+                            <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">Scenario</th>
+                            <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">Scenario1</th>
+                            {extraCol && <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">{extraCol}</th>}
+                            <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">Count</th>
+                            <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">Count%</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1161,7 +1397,7 @@ export default function InboundQualityDashboard() {
                         </tbody>
                         <tfoot className="border-t border-white/10">
                           <tr className="bg-white/[0.03]">
-                            <td colSpan={extraCol ? 3 : 2} className="py-2.5 px-4 text-slate-500 font-semibold text-[10px] uppercase">Total</td>
+                            <td colSpan={extraCol ? 3 : 2} className="py-2.5 px-4 text-slate-300 font-semibold text-[10px] uppercase">Total</td>
                             <td className="py-2.5 px-4 text-white font-bold tabular-nums">{rows.reduce((s, r) => s + r.count, 0).toLocaleString()}</td>
                             <td className="py-2.5 px-4 text-white font-bold">100%</td>
                           </tr>
@@ -1198,7 +1434,7 @@ export default function InboundQualityDashboard() {
                             <thead>
                               <tr className="border-b border-white/5 bg-white/[0.02]">
                                 {['Sensitive Word Use', 'Count', 'Count%'].map(h => (
-                                  <th key={h} className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider">
+                                  <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">
                                     {h}
                                   </th>
                                 ))}
@@ -1222,7 +1458,7 @@ export default function InboundQualityDashboard() {
                             </tbody>
                             <tfoot className="border-t border-white/10">
                               <tr className="bg-white/[0.03]">
-                                <td className="py-2.5 px-4 text-slate-500 font-semibold text-[10px] uppercase">Total</td>
+                                <td className="py-2.5 px-4 text-slate-300 font-semibold text-[10px] uppercase">Total</td>
                                 <td className="py-2.5 px-4 text-white font-bold tabular-nums">
                                   {sensitiveWordAnalysis.distribution.reduce((s, r) => s + r.count, 0).toLocaleString()}
                                 </td>
@@ -1234,7 +1470,7 @@ export default function InboundQualityDashboard() {
 
                         {/* Right — Dimension counts */}
                         <div className="lg:w-[35%] border-t lg:border-t-0 lg:border-l border-white/5 p-4 flex flex-col gap-3 justify-center">
-                          <p className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold mb-1">
+                          <p className="text-[10px] text-slate-300 uppercase tracking-widest font-semibold mb-1">
                             Dimension
                           </p>
                           {[
@@ -1245,8 +1481,8 @@ export default function InboundQualityDashboard() {
                             <div key={d.label} className="flex items-center gap-3 bg-white/[0.03] rounded-lg px-3 py-3 border border-white/5">
                               <div className="w-1 self-stretch rounded-full shrink-0" style={{ background: d.color }} />
                               <div className="flex-1 min-w-0">
-                                <p className="text-[10px] text-slate-500 uppercase tracking-widest">{d.label}</p>
-                                <p className="text-slate-600 text-[9px] leading-tight">{d.note}</p>
+                                <p className="text-[10px] text-slate-300 uppercase tracking-widest">{d.label}</p>
+                                <p className="text-slate-400 text-[9px] leading-tight">{d.note}</p>
                               </div>
                               <span className="text-xl font-bold tabular-nums" style={{ color: d.color }}>
                                 {d.count.toLocaleString()}
@@ -1282,7 +1518,7 @@ export default function InboundQualityDashboard() {
                       <div key={s.label} className="flex-1 bg-[#1E293B] border border-white/5 rounded-xl px-4 py-3 flex items-center gap-3">
                         <div className="w-1 self-stretch rounded-full" style={{ background: s.color }} />
                         <div>
-                          <p className="text-[10px] text-slate-500 uppercase tracking-widest">{s.label}</p>
+                          <p className="text-[10px] text-slate-300 uppercase tracking-widest">{s.label}</p>
                           <p className="text-xl font-bold text-white">{s.count.toLocaleString()}</p>
                         </div>
                       </div>
@@ -1293,98 +1529,6 @@ export default function InboundQualityDashboard() {
             })()}
 
 
-            {/* ── Agent Audit Summary ───────────────────────────────────── */}
-            {agentAuditBand.length > 0 && (() => {
-              const cq = (v: number) => v >= 80 ? '#10B981' : v >= 60 ? '#F59E0B' : '#EF4444';
-              const total_audits = agentAuditBand.reduce((s, r) => s + r.audit_count, 0);
-              const total_fatals = agentAuditBand.reduce((s, r) => s + r.fatal_count, 0);
-              const total_tq     = agentAuditBand.reduce((s, r) => s + r.tq_count,    0);
-              const total_mq     = agentAuditBand.reduce((s, r) => s + r.mq_count,    0);
-              const total_bq     = agentAuditBand.reduce((s, r) => s + r.bq_count,    0);
-              const avg_cq       = agentAuditBand.reduce((s, r) => s + r.cq_score, 0) / agentAuditBand.length;
-              return (
-                <div className="mt-4 bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                  <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 flex-wrap">
-                    <div className="w-1 h-4 rounded-full bg-sky-500 shrink-0" />
-                    <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Agent Audit Summary</h3>
-                    <span className="text-[10px] text-slate-500 ml-1">TQ ≥80% · MQ 60–79% · BQ 1–59% · Fatal = 0%</span>
-                    <ExportBtn onClick={() => downloadCSV(agentAuditBand.map((r, i) => ({
-                      '#': i + 1,
-                      'Agent':         r.agent,
-                      'Audit Count':   r.audit_count,
-                      'CQ Score%':     r.cq_score,
-                      'Fatal Count':   r.fatal_count,
-                      'Fatal%':        r.fatal_pct,
-                      'TQ (≥80%)':     r.tq_count,
-                      'MQ (60-79%)':   r.mq_count,
-                      'BQ (<60%)':     r.bq_count,
-                    })), 'agent-audit-summary.csv')} />
-                  </div>
-                  <div className="overflow-x-auto overflow-y-auto max-h-96">
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-[#1E293B] z-10">
-                        <tr className="border-b border-white/5 bg-white/[0.02]">
-                          {[
-                            { label: '#',           cls: 'w-8'  },
-                            { label: 'Agent',        cls: 'text-left' },
-                            { label: 'Audit Count',  cls: 'text-right' },
-                            { label: 'CQ Score%',    cls: 'text-right' },
-                            { label: 'Fatal Count',  cls: 'text-right' },
-                            { label: 'Fatal%',       cls: 'text-right' },
-                            { label: 'TQ',           cls: 'text-right text-emerald-400' },
-                            { label: 'MQ',           cls: 'text-right text-amber-400'   },
-                            { label: 'BQ',           cls: 'text-right text-red-400'     },
-                          ].map(h => (
-                            <th key={h.label} className={`py-2.5 px-3 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap ${h.cls || 'text-slate-500'}`}>
-                              {h.label}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {agentAuditBand.map((r, i) => (
-                          <tr key={r.agent} className="border-b border-white/5 hover:bg-white/[0.04] transition-colors">
-                            <td className="py-2 px-3 text-slate-600 text-center">{i + 1}</td>
-                            <td className="py-2 px-3 font-medium text-slate-200 whitespace-nowrap">{r.agent}</td>
-                            <td className="py-2 px-3 text-right text-slate-400">{r.audit_count.toLocaleString()}</td>
-                            <td className="py-2 px-3 text-right font-bold" style={{ color: cq(r.cq_score) }}>{r.cq_score.toFixed(1)}%</td>
-                            <td className="py-2 px-3 text-right font-semibold" style={{ color: r.fatal_count > 0 ? '#EF4444' : '#475569' }}>
-                              {r.fatal_count > 0 ? r.fatal_count.toLocaleString() : '—'}
-                            </td>
-                            <td className="py-2 px-3 text-right font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#475569' }}>
-                              {r.fatal_pct > 0 ? `${r.fatal_pct.toFixed(1)}%` : '—'}
-                            </td>
-                            <td className="py-2 px-3 text-right font-semibold text-emerald-400">
-                              {r.tq_count > 0 ? r.tq_count.toLocaleString() : <span className="text-slate-700">0</span>}
-                            </td>
-                            <td className="py-2 px-3 text-right font-semibold text-amber-400">
-                              {r.mq_count > 0 ? r.mq_count.toLocaleString() : <span className="text-slate-700">0</span>}
-                            </td>
-                            <td className="py-2 px-3 text-right font-semibold" style={{ color: r.bq_count > 0 ? '#EF4444' : '#475569' }}>
-                              {r.bq_count > 0 ? r.bq_count.toLocaleString() : <span className="text-slate-700">0</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr className="border-t border-white/10 bg-white/[0.02]">
-                          <td className="py-2 px-3 text-[10px] text-slate-500 font-semibold" colSpan={2}>
-                            Total ({agentAuditBand.length} agents)
-                          </td>
-                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-slate-400">{total_audits.toLocaleString()}</td>
-                          <td className="py-2 px-3 text-right text-[10px] font-bold" style={{ color: cq(avg_cq) }}>{avg_cq.toFixed(1)}%</td>
-                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-red-400">{total_fatals.toLocaleString()}</td>
-                          <td className="py-2 px-3" />
-                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-emerald-400">{total_tq.toLocaleString()}</td>
-                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-amber-400">{total_mq.toLocaleString()}</td>
-                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-red-400">{total_bq.toLocaleString()}</td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                </div>
-              );
-            })()}
 
             {!loading && (!kpis || kpis.audit_count === 0) && (
               <div className="flex items-center justify-center py-20 text-slate-600 text-sm">
@@ -1470,23 +1614,29 @@ export default function InboundQualityDashboard() {
                     color: fd.cq_score >= 90 ? '#22C55E' : '#EF4444',
                     onClick: () => setDrillModal({ title: 'Fatal Analysis — Scenario Fatal Breakdown', accent: '#EF4444', columns: [{ key: 'Scenario', label: 'Scenario' }, { key: 'Fatal Count', label: 'Fatal Count' }, { key: 'Fatal%', label: 'Fatal%' }], rows: [{ Scenario: 'Query', 'Fatal Count': fd.query_fatal, 'Fatal%': fd.audit_count > 0 ? `${((fd.query_fatal / fd.audit_count) * 100).toFixed(1)}%` : '0%' }, { Scenario: 'Complaint', 'Fatal Count': fd.complaint_fatal, 'Fatal%': fd.audit_count > 0 ? `${((fd.complaint_fatal / fd.audit_count) * 100).toFixed(1)}%` : '0%' }, { Scenario: 'Request', 'Fatal Count': fd.request_fatal, 'Fatal%': fd.audit_count > 0 ? `${((fd.request_fatal / fd.audit_count) * 100).toFixed(1)}%` : '0%' }, { Scenario: 'Sale Done', 'Fatal Count': fd.sale_done_fatal, 'Fatal%': fd.audit_count > 0 ? `${((fd.sale_done_fatal / fd.audit_count) * 100).toFixed(1)}%` : '0%' }] }),
                   },
-                  { label: 'Audit Count', value: fd.audit_count.toLocaleString(), sub: null, color: '#38BDF8', onClick: undefined },
+                  {
+                    label: 'Audit Count', value: fd.audit_count.toLocaleString(), sub: null, color: '#38BDF8',
+                    onClick: () => setDrillModal({ title: 'Fatal Analysis — Day Wise Audit Count', accent: '#38BDF8', columns: [{ key: 'Date', label: 'Date' }, { key: 'Total', label: 'Total' }, { key: 'Null Fatal', label: 'Null Fatal' }, { key: 'Query Fatal', label: 'Query Fatal' }, { key: 'Complaint Fatal', label: 'Complaint Fatal' }, { key: 'Request Fatal', label: 'Request Fatal' }], rows: fd.day_wise.map(r => ({ Date: r.call_date, Total: r.total_count, 'Null Fatal': r.null_fatal, 'Query Fatal': r.query_fatal, 'Complaint Fatal': r.complaint_fatal, 'Request Fatal': r.request_fatal })) }),
+                  },
                   {
                     label: 'Fatal Count', value: fd.fatal_count.toLocaleString(), sub: null, color: '#EF4444',
                     onClick: () => setDrillModal({ title: 'Top Fatal Contributors', accent: '#EF4444', columns: [{ key: 'Agent', label: 'Agent' }, { key: 'Audits', label: 'Audits' }, { key: 'Fatals', label: 'Fatals' }, { key: 'Fatal%', label: 'Fatal%' }], rows: fd.top_contributors.map(r => ({ Agent: r.agent_name, Audits: r.audit_count, Fatals: r.fatal_count, 'Fatal%': `${r.fatal_pct}%` })) }),
                   },
-                  { label: 'Fatal%', value: `${fd.fatal_pct}%`, sub: null, color: fd.fatal_pct >= 20 ? '#EF4444' : '#F59E0B', onClick: undefined },
+                  {
+                    label: 'Fatal%', value: `${fd.fatal_pct}%`, sub: null, color: fd.fatal_pct >= 20 ? '#EF4444' : '#F59E0B',
+                    onClick: () => setDrillModal({ title: 'Fatal% — Week & Scenario Breakdown', accent: '#F59E0B', columns: [{ key: 'Week', label: 'Week' }, { key: 'Query Fatal%', label: 'Query%' }, { key: 'Complaint Fatal%', label: 'Complaint%' }, { key: 'Request Fatal%', label: 'Request%' }, { key: 'Sale Done Fatal%', label: 'Sale Done%' }, { key: 'Total Fatal', label: 'Total' }], rows: fd.week_scenario.map(r => ({ Week: r.week_label, 'Query Fatal%': `${r.query_fatal_pct}%`, 'Complaint Fatal%': `${r.complaint_fatal_pct}%`, 'Request Fatal%': `${r.request_fatal_pct}%`, 'Sale Done Fatal%': `${r.sale_done_fatal_pct}%`, 'Total Fatal': r.total_fatal })) }),
+                  },
                 ].map(c => (
                   <div key={c.label}
-                    className={`relative bg-[#1E293B] border border-white/5 rounded-xl px-4 py-4 overflow-hidden ${c.onClick ? 'cursor-pointer hover:bg-white/[0.03] transition-colors' : ''}`}
+                    className="relative bg-[#1E293B] border border-white/5 rounded-xl px-4 py-4 overflow-hidden cursor-pointer hover:bg-white/[0.03] transition-colors"
                     onClick={c.onClick}
-                    title={c.onClick ? 'Click for detail analysis' : undefined}>
+                    title="Click for detail analysis">
                     <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ background: c.color }} />
                     <div className="pl-2">
                       <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">{c.label}</p>
                       <p className="text-2xl font-bold text-white leading-none">{c.value}</p>
                       {c.sub && <div className="mt-1">{c.sub}</div>}
-                      {c.onClick && <p className="text-[9px] text-slate-600 mt-1">Click to analyse</p>}
+                      <p className="text-[9px] text-slate-400 mt-1">Click to analyse</p>
                     </div>
                   </div>
                 ))}
@@ -1509,7 +1659,7 @@ export default function InboundQualityDashboard() {
                       <thead>
                         <tr className="border-b border-white/5 bg-white/[0.02]">
                           {['Agent Name','Audit Count','Fatal Count','Fatal%'].map(h => (
-                            <th key={h} className="py-2 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider text-[10px]">{h}</th>
+                            <th key={h} className="py-2 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[10px]">{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -1580,7 +1730,7 @@ export default function InboundQualityDashboard() {
                         { label: 'Sale Done Fatal',  value: fd.sale_done_fatal },
                       ].map(c => (
                         <div key={c.label} className="px-3 py-4 text-center">
-                          <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">{c.label}</p>
+                          <p className="text-[9px] text-slate-300 uppercase tracking-wider mb-1">{c.label}</p>
                           <p className={`text-2xl font-bold ${c.value > 0 ? 'text-red-400' : 'text-slate-400'}`}>{c.value}</p>
                         </div>
                       ))}
@@ -1600,7 +1750,7 @@ export default function InboundQualityDashboard() {
                           <thead className="sticky top-0 bg-[#1E293B] z-10">
                             <tr className="border-b border-white/5 bg-white/[0.02]">
                               {['Date','(null)','Query','Complaint','Request','Total'].map(h => (
-                                <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                                <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                               ))}
                             </tr>
                           </thead>
@@ -1647,7 +1797,7 @@ export default function InboundQualityDashboard() {
                         <thead>
                           <tr className="border-b border-white/5 bg-white/[0.02]">
                             {['Week','Query','Complaint','Request','Sale Done','Total'].map(h => (
-                              <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                              <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -1695,13 +1845,16 @@ export default function InboundQualityDashboard() {
                       <thead className="sticky top-0 bg-[#1E293B] z-10">
                         <tr className="border-b border-white/5 bg-white/[0.02]">
                           {['Agent Name','Audit Count','CQ Score%','Fatal Count','Fatal%','Below Avg Call','Average Calls','Good Calls','Excellent Calls'].map(h => (
-                            <th key={h} className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
+                            <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {fd.agent_performance.map((r, i) => (
-                          <tr key={i} className={`border-b border-white/[0.04] ${i % 2 === 0 ? '' : 'bg-white/[0.01]'}`}>
+                          <tr key={i}
+                            className={`border-b border-white/[0.04] ${i % 2 === 0 ? '' : 'bg-white/[0.01]'} cursor-pointer hover:bg-white/[0.04] transition-colors`}
+                            title={`Click to drill into ${r.agent_name}'s calls`}
+                            onClick={() => openBandDetail('no_fatal', `${r.agent_name} — Call Breakdown`, r.cq_score >= 90 ? '#22C55E' : '#F59E0B')}>
                             <td className="py-2.5 px-4 text-slate-200 whitespace-nowrap">{r.agent_name}</td>
                             <td className="py-2.5 px-4 tabular-nums text-slate-300">{r.audit_count}</td>
                             <td className="py-2.5 px-4">
@@ -1809,17 +1962,31 @@ export default function InboundQualityDashboard() {
                       {Number(deltaVsTarget) < 0 ? '▼' : '▲'} {deltaVsTarget}%
                     </span>,
                     color: dd.cq_score >= 90 ? '#22C55E' : '#EF4444',
+                    onClick: () => setDrillModal({ title: 'Detail Analysis — Scenario Panels', accent: dd.cq_score >= 90 ? '#22C55E' : '#EF4444', columns: [{ key: 'Scenario', label: 'Scenario' }, { key: 'Sub-Scenario', label: 'Sub-Scenario' }, { key: 'Count', label: 'Count' }, { key: '%', label: '%' }], rows: dd.scenario_panels.flatMap(p => p.items.map(it => ({ Scenario: p.scenario, 'Sub-Scenario': it.scenario1, Count: it.count, '%': `${it.pct}%` }))) }),
                   },
-                  { label: 'Audit Count', value: dd.audit_count.toLocaleString(), sub: null, color: '#38BDF8' },
-                  { label: 'Fatal Count', value: dd.fatal_count.toLocaleString(), sub: null, color: '#EF4444' },
-                  { label: 'Fatal%',      value: `${dd.fatal_pct}%`,              sub: null, color: dd.fatal_pct >= 20 ? '#EF4444' : '#F59E0B' },
+                  {
+                    label: 'Audit Count', value: dd.audit_count.toLocaleString(), sub: null, color: '#38BDF8',
+                    onClick: () => setDrillModal({ title: 'Detail Analysis — Day Wise Audit Count', accent: '#38BDF8', columns: [{ key: 'Date', label: 'Date' }, { key: 'Complaint', label: 'Complaint' }, { key: 'Request', label: 'Request' }, { key: 'Query', label: 'Query' }, { key: 'Total', label: 'Total' }], rows: dd.day_wise_audit.map(r => ({ Date: r.call_date, Complaint: r.complaint, Request: r.request, Query: r.query, Total: r.total })) }),
+                  },
+                  {
+                    label: 'Fatal Count', value: dd.fatal_count.toLocaleString(), sub: null, color: '#EF4444',
+                    onClick: () => setDrillModal({ title: 'Detail Analysis — Scenario Count Breakdown', accent: '#EF4444', columns: [{ key: 'Scenario', label: 'Scenario' }, { key: 'Count', label: 'Count' }], rows: [{ Scenario: 'Query', Count: dd.query_count }, { Scenario: 'Complaint', Count: dd.complaint_count }, { Scenario: 'Request', Count: dd.request_count }, { Scenario: 'Sale Done', Count: dd.sale_done_count }] }),
+                  },
+                  {
+                    label: 'Fatal%',      value: `${dd.fatal_pct}%`, sub: null, color: dd.fatal_pct >= 20 ? '#EF4444' : '#F59E0B',
+                    onClick: () => setDrillModal({ title: 'Detail Analysis — Week & Scenario Audit%', accent: '#F59E0B', columns: [{ key: 'Week', label: 'Week' }, { key: 'Query%', label: 'Query%' }, { key: 'Complaint%', label: 'Complaint%' }, { key: 'Request%', label: 'Request%' }, { key: 'Sale Done%', label: 'Sale Done%' }, { key: 'Total', label: 'Total' }], rows: dd.week_scenario_audit.map(r => ({ Week: r.week_label, 'Query%': `${r.query_pct}%`, 'Complaint%': `${r.complaint_pct}%`, 'Request%': `${r.request_pct}%`, 'Sale Done%': `${r.sale_done_pct}%`, Total: r.total })) }),
+                  },
                 ].map(c => (
-                  <div key={c.label} className="relative bg-[#1E293B] border border-white/5 rounded-xl px-4 py-4 overflow-hidden">
+                  <div key={c.label}
+                    className="relative bg-[#1E293B] border border-white/5 rounded-xl px-4 py-4 overflow-hidden cursor-pointer hover:bg-white/[0.03] transition-colors"
+                    onClick={c.onClick}
+                    title="Click for detail analysis">
                     <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ background: c.color }} />
                     <div className="pl-2">
                       <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">{c.label}</p>
                       <p className="text-2xl font-bold text-white leading-none">{c.value}</p>
                       {c.sub && <div className="mt-1">{c.sub}</div>}
+                      <p className="text-[9px] text-slate-400 mt-1">Click to analyse</p>
                     </div>
                   </div>
                 ))}
@@ -1852,7 +2019,7 @@ export default function InboundQualityDashboard() {
                               <thead>
                                 <tr className="border-b border-white/5 bg-white/[0.02]">
                                   {['Scenario 1','Count','%'].map(h => (
-                                    <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                                    <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                                   ))}
                                 </tr>
                               </thead>
@@ -1917,7 +2084,7 @@ export default function InboundQualityDashboard() {
                               {pieData.map((d, pi) => (
                                 <div key={pi} className="flex items-center gap-1 text-[9px]">
                                   <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: PIE_COLORS[pi % PIE_COLORS.length] }} />
-                                  <span className="text-slate-500 truncate max-w-[80px]">{d.name}</span>
+                                  <span className="text-slate-300 truncate max-w-[80px]">{d.name}</span>
                                 </div>
                               ))}
                             </div>
@@ -1966,7 +2133,7 @@ export default function InboundQualityDashboard() {
                           <thead className="sticky top-0 bg-[#1E293B] z-10">
                             <tr className="border-b border-white/5 bg-white/[0.02]">
                               {['Date','Complaint','Request','Query','Total'].map(h => (
-                                <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                                <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                               ))}
                             </tr>
                           </thead>
@@ -2013,7 +2180,7 @@ export default function InboundQualityDashboard() {
                         <thead>
                           <tr className="border-b border-white/5 bg-white/[0.02]">
                             {['Week','Query%','Complaint%','Request%','Sale Done%','Total'].map(h => (
-                              <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                              <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -2059,7 +2226,7 @@ export default function InboundQualityDashboard() {
                   <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Agent &amp; Parameter Wise CQ Score%</h3>
                   <ExportBtn onClick={() => downloadCSV(agentParamData.map(r => ({ Agent: r.agent_name, 'TQ/MQ/BQ': r.cq_score > 95 ? 'TQ' : r.cq_score > 85 ? 'MQ' : 'BQ', Audits: r.audit_count, 'CQ Score%': r.cq_score, Fatals: r.fatal_count, 'Fatal%': r.fatal_pct, 'Opening%': r.opening_skill, 'Soft Skill%': r.soft_skill, 'Hold%': r.hold_procedure, 'Resolution%': r.resolution, 'Closing%': r.closing })), 'agent-param.csv')} />
                   <div className="ml-auto flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider">Scenario Wise</span>
+                    <span className="text-[10px] text-slate-300 uppercase tracking-wider">Scenario Wise</span>
                     <select
                       value={agentParamScenario}
                       onChange={e => setAgentParamScenario(e.target.value)}
@@ -2113,7 +2280,7 @@ export default function InboundQualityDashboard() {
                         <thead className="sticky top-0 bg-[#1E293B] z-10">
                           <tr className="border-b border-white/5 bg-white/[0.02]">
                             {['Agent Name','TQ/MQ/BQ','Audit Count','CQ Score%','Fatal Count','Fatal%','Opening Score%','Soft Skills Score%','Hold Procedure%','Resolution Score%','Closing Score%'].map(h => (
-                              <th key={h} className="py-2.5 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
+                              <th key={h} className="py-2.5 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -2166,7 +2333,7 @@ export default function InboundQualityDashboard() {
                   <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Week Wise Quality Performance</h3>
                   <div className="ml-auto flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 uppercase tracking-wider">Scenario Wise</span>
+                      <span className="text-[10px] text-slate-300 uppercase tracking-wider">Scenario Wise</span>
                       <select
                         value={weekWiseScenario}
                         onChange={e => setWeekWiseScenario(e.target.value)}
@@ -2179,7 +2346,7 @@ export default function InboundQualityDashboard() {
                       </select>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 uppercase tracking-wider">Agent Username</span>
+                      <span className="text-[10px] text-slate-300 uppercase tracking-wider">Agent Username</span>
                       <select
                         value={weekWiseAgent}
                         onChange={e => setWeekWiseAgent(e.target.value)}
@@ -2220,7 +2387,7 @@ export default function InboundQualityDashboard() {
                         <thead>
                           <tr className="border-b border-white/5 bg-white/[0.02]">
                             {['Week','Audit Count','CQ Score%','Fatal Count','Fatal%','Opening Score%','Soft Skills Score%','Hold Procedure Score%','Resolution Score%','Closing Score%'].map(h => (
-                              <th key={h} className="py-2.5 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
+                              <th key={h} className="py-2.5 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -2284,7 +2451,7 @@ export default function InboundQualityDashboard() {
                       </select>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 uppercase tracking-wider">Agent</span>
+                      <span className="text-[10px] text-slate-300 uppercase tracking-wider">Agent</span>
                       <select
                         value={dayWiseAgent}
                         onChange={e => setDayWiseAgent(e.target.value)}
@@ -2325,7 +2492,7 @@ export default function InboundQualityDashboard() {
                         <thead className="sticky top-0 bg-[#1E293B] z-10">
                           <tr className="border-b border-white/5 bg-white/[0.02]">
                             {['Date','Audit Count','CQ Score%','Fatal Count','Fatal%','Opening Score%','Soft Skills Score%','Hold Procedure%','Resolution Score%','Closing Score%'].map(h => (
-                              <th key={h} className="py-2.5 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
+                              <th key={h} className="py-2.5 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -2373,7 +2540,7 @@ export default function InboundQualityDashboard() {
                 <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 flex-wrap">
                   <div className="w-1 h-4 rounded-full bg-purple-500 shrink-0" />
                   <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Quality Parameters</h3>
-                  <span className="text-[10px] text-slate-600 ml-1">count &amp; score by parameter</span>
+                  <span className="text-[10px] text-slate-400 ml-1">count &amp; score by parameter</span>
                   <ExportBtn onClick={() => downloadCSV(qualityParamData.map(r => ({ Parameter: r.parameter, 'Hit Count': r.hit_count, 'Applicable Count': r.total_count, 'Score%': r.score_pct })), 'quality-parameters.csv')} />
                   <div className="ml-auto flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
@@ -2390,7 +2557,7 @@ export default function InboundQualityDashboard() {
                       </select>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 uppercase tracking-wider">Agent</span>
+                      <span className="text-[10px] text-slate-300 uppercase tracking-wider">Agent</span>
                       <select
                         value={qualityParamAgent}
                         onChange={e => setQualityParamAgent(e.target.value)}
@@ -2415,11 +2582,11 @@ export default function InboundQualityDashboard() {
                     <table className="w-full text-xs">
                       <thead className="sticky top-0 bg-[#1E293B] z-10">
                         <tr className="border-b border-white/5 bg-white/[0.02]">
-                          <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">#</th>
-                          <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Parameter</th>
-                          <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Hit Count</th>
-                          <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Applicable Count</th>
-                          <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px] min-w-[180px]">Score%</th>
+                          <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">#</th>
+                          <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">Parameter</th>
+                          <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">Hit Count</th>
+                          <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">Applicable Count</th>
+                          <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] min-w-[180px]">Score%</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2427,12 +2594,14 @@ export default function InboundQualityDashboard() {
                           const color = r.score_pct >= 90 ? '#22C55E' : r.score_pct >= 70 ? '#F59E0B' : r.score_pct > 0 ? '#EF4444' : '#64748B';
                           return (
                             <tr key={i}
-                              className={`border-b border-white/[0.04] ${i % 2 ? 'bg-white/[0.01]' : ''} ${i === 9 ? 'border-b-2 border-purple-500/30' : ''}`}>
-                              <td className="py-3 px-4 text-slate-600 tabular-nums font-medium">{i + 1}</td>
+                              className={`border-b border-white/[0.04] ${i % 2 ? 'bg-white/[0.01]' : ''} ${i === 9 ? 'border-b-2 border-purple-500/30' : ''} cursor-pointer hover:bg-white/[0.04] transition-colors`}
+                              title={`Click to view ${r.parameter} detail`}
+                              onClick={() => setDrillModal({ title: `Quality Parameter — ${r.parameter}`, accent: color, columns: [{ key: 'Parameter', label: 'Parameter' }, { key: 'Hit Count', label: 'Hit Count' }, { key: 'Applicable Count', label: 'Applicable Count' }, { key: 'Score%', label: 'Score%' }], rows: [{ Parameter: r.parameter, 'Hit Count': r.hit_count, 'Applicable Count': r.total_count, 'Score%': `${r.score_pct}%` }] })}>
+                              <td className="py-3 px-4 text-slate-400 tabular-nums font-medium">{i + 1}</td>
                               <td className="py-3 px-4 text-slate-200 font-medium">{r.parameter}</td>
                               <td className="py-3 px-4 tabular-nums">
                                 <span className="font-bold text-white">{r.hit_count.toLocaleString()}</span>
-                                <span className="text-slate-600 text-[10px] ml-1">hits</span>
+                                <span className="text-slate-400 text-[10px] ml-1">hits</span>
                               </td>
                               <td className="py-3 px-4 text-slate-400 tabular-nums">{r.total_count.toLocaleString()}</td>
                               <td className="py-3 px-4">
@@ -2452,7 +2621,7 @@ export default function InboundQualityDashboard() {
                       </tbody>
                     </table>
                     {qualityParamData.length > 10 && (
-                      <div className="px-4 py-2 border-t border-white/5 text-[10px] text-slate-600 text-center">
+                      <div className="px-4 py-2 border-t border-white/5 text-[10px] text-slate-400 text-center">
                         Showing {qualityParamData.length} parameters · scroll to see all
                       </div>
                     )}
@@ -2478,19 +2647,31 @@ export default function InboundQualityDashboard() {
                 <>
                   {/* KPI strip */}
                   <div className="grid grid-cols-3 gap-4 mb-6">
-                    <div className="bg-[#1E293B] border border-white/5 rounded-xl px-5 py-4">
-                      <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Total Unique Callers</p>
+                    <div
+                      className="bg-[#1E293B] border border-white/5 rounded-xl px-5 py-4 cursor-pointer hover:bg-white/[0.03] transition-colors"
+                      title="Click to view all unique callers"
+                      onClick={() => setDrillModal({ title: 'Repeat Analysis — All Unique Callers', accent: '#14B8A6', columns: [{ key: 'Mobile No', label: 'Mobile No' }, { key: 'Total Calls', label: 'Total Calls' }], rows: rd.pivot_rows.map(r => ({ 'Mobile No': maskPhone(r.mobile_no), 'Total Calls': r.grand_total })) })}>
+                      <p className="text-[10px] text-slate-300 uppercase tracking-widest mb-1">Total Unique Callers</p>
                       <p className="text-2xl font-bold text-white">{rd.grand_unique.toLocaleString()}</p>
+                      <p className="text-[9px] text-slate-400 mt-1">Click to view unique callers</p>
                     </div>
-                    <div className="bg-[#1E293B] border border-white/5 rounded-xl px-5 py-4">
-                      <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Repeat Callers</p>
+                    <div
+                      className="bg-[#1E293B] border border-white/5 rounded-xl px-5 py-4 cursor-pointer hover:bg-white/[0.03] transition-colors"
+                      title="Click to view repeat callers breakdown"
+                      onClick={() => setDrillModal({ title: 'Repeat Analysis — Repeat Callers by Day', accent: '#14B8A6', columns: [{ key: 'Date', label: 'Date' }, { key: 'Repeat Calls', label: 'Repeat Calls' }, { key: 'Unique Calls', label: 'Unique Calls' }, { key: 'Repeat%', label: 'Repeat%' }], rows: rd.day_wise.filter(r => r.repeat_calls > 0).map(r => ({ Date: r.call_date, 'Repeat Calls': r.repeat_calls, 'Unique Calls': r.unique_calls, 'Repeat%': `${r.repeat_pct}%` })) })}>
+                      <p className="text-[10px] text-slate-300 uppercase tracking-widest mb-1">Repeat Calls</p>
                       <p className="text-2xl font-bold text-teal-400">{rd.grand_repeat.toLocaleString()}</p>
+                      <p className="text-[9px] text-slate-400 mt-1">Click to view day-wise</p>
                     </div>
-                    <div className="bg-[#1E293B] border border-white/5 rounded-xl px-5 py-4">
-                      <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Repeat%</p>
+                    <div
+                      className="bg-[#1E293B] border border-white/5 rounded-xl px-5 py-4 cursor-pointer hover:bg-white/[0.03] transition-colors"
+                      title="Click to view repeat rate by day"
+                      onClick={() => setDrillModal({ title: 'Repeat Analysis — Repeat% by Day', accent: '#EF4444', columns: [{ key: 'Date', label: 'Date' }, { key: 'Repeat%', label: 'Repeat%' }, { key: 'Repeat Calls', label: 'Repeat Calls' }, { key: 'Unique Calls', label: 'Unique Calls' }], rows: rd.day_wise.map(r => ({ Date: r.call_date, 'Repeat%': `${r.repeat_pct}%`, 'Repeat Calls': r.repeat_calls, 'Unique Calls': r.unique_calls })) })}>
+                      <p className="text-[10px] text-slate-300 uppercase tracking-widest mb-1">Repeat%</p>
                       <p className="text-2xl font-bold" style={{ color: rd.grand_pct > 0 ? '#EF4444' : '#22C55E' }}>
                         {rd.grand_pct}%
                       </p>
+                      <p className="text-[9px] text-slate-500 mt-1">Click to view day-wise</p>
                     </div>
                   </div>
 
@@ -2505,7 +2686,7 @@ export default function InboundQualityDashboard() {
                         <thead className="bg-[#0F172A]">
                           <tr>
                             {['Date', 'Unique Calls', 'Repeat Calls', 'Repeat%'].map(h => (
-                              <th key={h} className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                              <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -2568,9 +2749,9 @@ export default function InboundQualityDashboard() {
                         <table className="text-xs border-collapse" style={{ minWidth: `${Math.max(600, 160 + rd.pivot_dates.length * 80)}px` }}>
                           <thead className="sticky top-0 z-10 bg-[#0F172A]">
                             <tr>
-                              <th className="py-2.5 px-4 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px] sticky left-0 bg-[#0F172A] z-20 min-w-[140px]">Phone No</th>
+                              <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] sticky left-0 bg-[#0F172A] z-20 min-w-[140px]">Phone No</th>
                               {rd.pivot_dates.map(d => (
-                                <th key={d} className="py-2.5 px-3 text-center text-slate-500 font-semibold uppercase tracking-wider text-[9px] min-w-[70px]">
+                                <th key={d} className="py-2.5 px-3 text-center text-slate-300 font-semibold uppercase tracking-wider text-[9px] min-w-[70px]">
                                   {d.slice(5)}
                                 </th>
                               ))}
@@ -2588,8 +2769,21 @@ export default function InboundQualityDashboard() {
                                   return (
                                     <td key={d} className="py-2 px-3 text-center tabular-nums">
                                       {val > 0 ? (
-                                        <span className="inline-block px-2 py-0.5 rounded font-bold text-[11px]"
-                                          style={{ background: 'rgba(20,184,166,0.15)', color: '#2DD4BF' }}>
+                                        <span
+                                          className="inline-block px-2 py-0.5 rounded font-bold text-[11px] cursor-pointer hover:opacity-70 transition-opacity"
+                                          style={{ background: 'rgba(20,184,166,0.15)', color: '#2DD4BF' }}
+                                          title={`Click to see scenarios for ${maskPhone(row.mobile_no)} on ${d}`}
+                                          onClick={async () => {
+                                            setDrillLoading(true);
+                                            setDrillModal({ title: `${maskPhone(row.mobile_no)} — ${d}`, accent: '#14B8A6', rows: [], columns: [{ key: 'Date', label: 'Date' }, { key: 'Scenario', label: 'Scenario' }, { key: 'Scenario1', label: 'Scenario 1' }, { key: 'Score%', label: 'Score%' }] });
+                                            try {
+                                              const { data } = await api.get<{ data: { CallDate: string; scenario: string; scenario1: string; quality_percentage: number }[] }>(
+                                                `/inbound-quality/repeat-call-detail?mobileNo=${encodeURIComponent(row.mobile_no)}&callDate=${d}&clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+                                              );
+                                              setDrillModal(prev => prev ? { ...prev, rows: data.data.map(r => ({ Date: r.CallDate, Scenario: r.scenario, Scenario1: r.scenario1, 'Score%': `${r.quality_percentage}%` })) } : null);
+                                            } catch { setDrillModal(prev => prev ? { ...prev, rows: [] } : null); }
+                                            finally { setDrillLoading(false); }
+                                          }}>
                                           {val}
                                         </span>
                                       ) : (
@@ -2598,7 +2792,22 @@ export default function InboundQualityDashboard() {
                                     </td>
                                   );
                                 })}
-                                <td className="py-2 px-4 text-center font-bold text-teal-300 tabular-nums">{row.grand_total}</td>
+                                <td
+                                  className="py-2 px-4 text-center font-bold text-teal-300 tabular-nums cursor-pointer hover:opacity-70 transition-opacity"
+                                  title={`Click to see all scenarios for ${maskPhone(row.mobile_no)}`}
+                                  onClick={async () => {
+                                    setDrillLoading(true);
+                                    setDrillModal({ title: `${maskPhone(row.mobile_no)} — All Calls`, accent: '#14B8A6', rows: [], columns: [{ key: 'Date', label: 'Date' }, { key: 'Scenario', label: 'Scenario' }, { key: 'Scenario1', label: 'Scenario 1' }, { key: 'Score%', label: 'Score%' }] });
+                                    try {
+                                      const { data } = await api.get<{ data: { CallDate: string; scenario: string; scenario1: string; quality_percentage: number }[] }>(
+                                        `/inbound-quality/repeat-call-detail?mobileNo=${encodeURIComponent(row.mobile_no)}&clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+                                      );
+                                      setDrillModal(prev => prev ? { ...prev, rows: data.data.map(r => ({ Date: r.CallDate, Scenario: r.scenario, Scenario1: r.scenario1, 'Score%': `${r.quality_percentage}%` })) } : null);
+                                    } catch { setDrillModal(prev => prev ? { ...prev, rows: [] } : null); }
+                                    finally { setDrillLoading(false); }
+                                  }}>
+                                  {row.grand_total}
+                                </td>
                               </tr>
                             ))}
                             {/* Grand total column row */}
@@ -2630,34 +2839,46 @@ export default function InboundQualityDashboard() {
 
       {/* ── Drill-down Modal ─────────────────────────────────────────────────── */}
       {drillModal && (
-        <DrillModal title={drillModal.title} accent={drillModal.accent} onClose={() => setDrillModal(null)}>
-          <div className="overflow-auto" style={{ maxHeight: '70vh' }}>
-            <table className="w-full text-xs">
-              <thead className="sticky top-0">
-                <tr className="border-b border-white/10 bg-[#0F172A]">
-                  {drillModal.columns.map(c => (
-                    <th key={c.key} className="py-2.5 px-4 text-left text-slate-400 font-semibold uppercase tracking-wider text-[10px] whitespace-nowrap">
-                      {c.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {drillModal.rows.map((row, i) => (
-                  <tr key={i} className={i % 2 ? 'bg-white/[0.01]' : ''}>
-                    {drillModal.columns.map(c => (
-                      <td key={c.key} className="py-2.5 px-4 text-slate-200 tabular-nums">
-                        {String(row[c.key] ?? '—')}
-                      </td>
+        <DrillModal title={drillModal.title} accent={drillModal.accent} onClose={() => { setDrillModal(null); setDrillLoading(false); }}>
+          {drillLoading ? (
+            <div className="flex items-center justify-center py-16 gap-3">
+              <Loader2 className="h-6 w-6 animate-spin text-sky-400" />
+              <span className="text-sm text-slate-400">Loading data…</span>
+            </div>
+          ) : drillModal.rows.length === 0 ? (
+            <div className="flex items-center justify-center py-16 text-slate-500 text-sm">No data found for this period.</div>
+          ) : (
+            <>
+              <div className="overflow-auto" style={{ maxHeight: '70vh' }}>
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0">
+                    <tr className="border-b border-white/10 bg-[#0F172A]">
+                      {drillModal.columns.map(c => (
+                        <th key={c.key} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[10px] whitespace-nowrap">
+                          {c.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {drillModal.rows.map((row, i) => (
+                      <tr key={i} className={i % 2 ? 'bg-white/[0.01]' : ''}>
+                        {drillModal.columns.map(c => (
+                          <td key={c.key} className="py-2.5 px-4 text-white tabular-nums">
+                            {String(row[c.key] ?? '—')}
+                          </td>
+                        ))}
+                      </tr>
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-4 flex justify-end">
-            <ExportBtn onClick={() => downloadCSV(drillModal.rows, `${drillModal.title.replace(/\s+/g, '-').toLowerCase()}.csv`)} title="Export this table" />
-          </div>
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-4 flex items-center justify-between">
+                <span className="text-[11px] text-slate-500">{drillModal.rows.length} records</span>
+                <ExportBtn onClick={() => downloadCSV(drillModal.rows, `${drillModal.title.replace(/\s+/g, '-').toLowerCase()}.csv`)} title="Export this table" />
+              </div>
+            </>
+          )}
         </DrillModal>
       )}
     </div>

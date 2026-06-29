@@ -181,3 +181,37 @@ export async function getAgentAuditBandSummary(req: Request, res: Response) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
   }
 }
+
+export async function getBandDetail(req: Request, res: Response) {
+  try {
+    const filters = { ...parseFilters(req), band: (req.query.band as string) || 'excellent' };
+    const data = await svc.getBandDetail(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getRepeatCallDetail(req: Request, res: Response) {
+  try {
+    const filters = {
+      ...parseFilters(req),
+      mobileNo: req.query.mobileNo as string,
+      callDate: req.query.callDate as string | undefined,
+    };
+    if (!filters.mobileNo) { res.status(400).json({ message: 'mobileNo is required' }); return; }
+    const data = await svc.getRepeatCallDetail(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getRawData(req: Request, res: Response) {
+  try {
+    const data = await svc.getRawData(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}

@@ -1402,27 +1402,28 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters): Promise
         FROM db_audit.call_quality_assessment
         WHERE CallDate BETWEEN ? AND ? ${subClient}
           AND MobileNo IS NOT NULL AND TRIM(MobileNo) != ''
+          AND quality_percentage IS NOT NULL
         GROUP BY MobileNo
-        HAVING COUNT(DISTINCT DATE(CallDate)) > 1
+        HAVING COUNT(*) > 1
       ) r ON q.MobileNo = r.MobileNo
       WHERE q.CallDate BETWEEN ? AND ? ${mainClient}
         AND q.MobileNo IS NOT NULL AND TRIM(q.MobileNo) != ''
+        AND q.quality_percentage IS NOT NULL
       GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
       ORDER BY call_date ASC
     `, [...base, ...base]),
 
-    // Grand totals
+    // Grand totals:
+    //   grand_unique = COUNT(DISTINCT MobileNo)        — first-occurrence rows (like COUNTIF=1)
+    //   grand_repeat = COUNT(*) - COUNT(DISTINCT MobileNo) — subsequent calls (like COUNTIF>1)
     querySource<{ grand_unique: number; grand_repeat: number }>(`
       SELECT
-        COUNT(DISTINCT MobileNo) AS grand_unique,
-        SUM(CASE WHEN day_cnt > 1 THEN 1 ELSE 0 END) AS grand_repeat
-      FROM (
-        SELECT MobileNo, COUNT(DISTINCT DATE(CallDate)) AS day_cnt
-        FROM db_audit.call_quality_assessment
-        WHERE CallDate BETWEEN ? AND ? ${subClient}
-          AND MobileNo IS NOT NULL AND TRIM(MobileNo) != ''
-        GROUP BY MobileNo
-      ) sub
+        COUNT(DISTINCT MobileNo)                       AS grand_unique,
+        COUNT(*) - COUNT(DISTINCT MobileNo)            AS grand_repeat
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ? ${subClient}
+        AND MobileNo IS NOT NULL AND TRIM(MobileNo) != ''
+        AND quality_percentage IS NOT NULL
     `, base),
 
     // Pivot: all phones × all dates (call count per combination)
@@ -1434,6 +1435,7 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters): Promise
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? ${mainClient}
         AND q.MobileNo IS NOT NULL AND TRIM(q.MobileNo) != ''
+        AND q.quality_percentage IS NOT NULL
       GROUP BY q.MobileNo, DATE_FORMAT(q.CallDate, '%Y-%m-%d')
       ORDER BY q.MobileNo ASC, call_date ASC
     `, base),
@@ -1480,6 +1482,48 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters): Promise
     pivot_dates,
     pivot_rows,
   };
+}
+
+// ─── Repeat Call Detail (pivot cell drill-down) ───────────────────────────────
+
+export interface RepeatCallDetailRow {
+  CallDate:           string;
+  scenario:           string;
+  scenario1:          string;
+  quality_percentage: number;
+}
+
+export async function getRepeatCallDetail(
+  filters: InboundQualityFilters & { mobileNo: string; callDate?: string }
+): Promise<RepeatCallDetailRow[]> {
+  const { startDate, endDate, clientId, mobileNo, callDate } = filters;
+  const params: (string | number)[] = [startDate, endDate, mobileNo];
+  let extra = '';
+  if (clientId) { extra += ' AND q.ClientId = ?'; params.push(clientId); }
+  if (callDate) { extra += ' AND DATE(q.CallDate) = ?'; params.push(callDate); }
+
+  const rows = await querySource<{
+    CallDate: string; scenario: string; scenario1: string; quality_percentage: number;
+  }>(`
+    SELECT
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d')                         AS CallDate,
+      COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')          AS scenario,
+      COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')          AS scenario1,
+      COALESCE(q.quality_percentage, 0)                           AS quality_percentage
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.MobileNo = ?
+      AND q.quality_percentage IS NOT NULL
+      ${extra}
+    ORDER BY q.CallDate ASC
+  `, params);
+
+  return rows.map(r => ({
+    CallDate:           String(r.CallDate),
+    scenario:           String(r.scenario),
+    scenario1:          String(r.scenario1),
+    quality_percentage: Number(r.quality_percentage),
+  }));
 }
 
 // ─── Quality Parameters ────────────────────────────────────────────────────────
@@ -1699,6 +1743,59 @@ export interface AgentAuditBandRow {
   bq_count:    number;
 }
 
+// ─── Score Band Detail (agent × scenario breakdown for a given score band) ────
+
+export interface BandDetailRow {
+  agent:     string;
+  scenario:  string;
+  count:     number;
+  avg_score: number;
+}
+
+export async function getBandDetail(
+  filters: InboundQualityFilters & { band?: string }
+): Promise<BandDetailRow[]> {
+  const { startDate, endDate, clientId, band } = filters;
+  const params: (string | number)[] = [startDate, endDate];
+
+  const bandCondition =
+    band === 'excellent'     ? 'q.quality_percentage >= 98'
+    : band === 'good'        ? 'q.quality_percentage >= 90 AND q.quality_percentage < 98'
+    : band === 'average'     ? 'q.quality_percentage >= 85 AND q.quality_percentage < 90'
+    : band === 'below_average' ? 'q.quality_percentage > 0 AND q.quality_percentage < 85'
+    : band === 'fatal'       ? 'q.quality_percentage = 0'
+    : band === 'no_fatal'    ? 'q.quality_percentage > 0'
+    : 'q.quality_percentage IS NOT NULL';
+
+  const extra = clientId ? ' AND q.ClientId = ?' : '';
+  if (clientId) params.push(clientId);
+
+  const rows = await querySource<{
+    agent: string; scenario: string; count: number; avg_score: number | null;
+  }>(`
+    SELECT
+      COALESCE(NULLIF(TRIM(q.User),     ''), 'Unknown') AS agent,
+      COALESCE(NULLIF(TRIM(q.scenario), ''), 'Unknown') AS scenario,
+      COUNT(*)                                           AS count,
+      ROUND(AVG(q.quality_percentage),  1)              AS avg_score
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      AND (${bandCondition})
+      ${extra}
+    GROUP BY q.User, q.scenario
+    ORDER BY count DESC
+    LIMIT 300
+  `, params);
+
+  return rows.map(r => ({
+    agent:     String(r.agent),
+    scenario:  String(r.scenario),
+    count:     Number(r.count),
+    avg_score: parseFloat(String(r.avg_score ?? 0)) || 0,
+  }));
+}
+
 export async function getAgentAuditBandSummary(filters: InboundQualityFilters): Promise<AgentAuditBandRow[]> {
   const { startDate, endDate, clientId } = filters;
   const params: (string | number)[] = [startDate, endDate];
@@ -1734,5 +1831,114 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters): 
     tq_count:    Number(r.tq_count) || 0,
     mq_count:    Number(r.mq_count) || 0,
     bq_count:    Number(r.bq_count) || 0,
+  }));
+}
+
+// ─── Raw Data Export ──────────────────────────────────────────────────────────
+
+export interface RawDataRow {
+  CallDate: string;
+  User: string;
+  ClientId: string;
+  MobileNo: string;
+  scenario: string;
+  scenario1: string;
+  quality_percentage: number;
+  top_negative_words: string;
+  call_answered_within_5_seconds: string;
+  customer_concern_acknowledged: string;
+  professionalism_maintained: string;
+  assurance_or_appreciation_provided: string;
+  pronunciation_and_clarity: string;
+  enthusiasm_and_no_fumbling: string;
+  active_listening: string;
+  politeness_and_no_sarcasm: string;
+  proper_grammar: string;
+  accurate_issue_probing: string;
+  proper_hold_procedure: string;
+  proper_transfer_and_language: string;
+  dead_air_under_10_seconds: string;
+  case_escalated_correctly: string;
+  address_recorded_completely: string;
+  correct_and_complete_information: string;
+  upselling_or_offers_suggested: string;
+  further_assistance_offered: string;
+  proper_call_closure: string;
+  express_empathy: string;
+}
+
+export async function getRawData(filters: InboundQualityFilters): Promise<RawDataRow[]> {
+  const { startDate, endDate, clientId } = filters;
+  const params: (string | number)[] = [startDate, endDate];
+  const extra = clientId ? ' AND q.ClientId = ?' : '';
+  if (clientId) params.push(clientId);
+
+  const rows = await querySource<RawDataRow>(`
+    SELECT
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d')                         AS CallDate,
+      COALESCE(NULLIF(TRIM(q.User),''), 'Unknown')                AS User,
+      COALESCE(q.ClientId, '')                                    AS ClientId,
+      COALESCE(q.MobileNo, '')                                    AS MobileNo,
+      COALESCE(NULLIF(TRIM(q.scenario),''), 'Unknown')            AS scenario,
+      COALESCE(NULLIF(TRIM(q.scenario1),''), 'Unknown')           AS scenario1,
+      COALESCE(q.quality_percentage, 0)                           AS quality_percentage,
+      COALESCE(q.top_negative_words, '')                          AS top_negative_words,
+      COALESCE(q.call_answered_within_5_seconds, '')              AS call_answered_within_5_seconds,
+      COALESCE(q.customer_concern_acknowledged, '')               AS customer_concern_acknowledged,
+      COALESCE(q.professionalism_maintained, '')                  AS professionalism_maintained,
+      COALESCE(q.assurance_or_appreciation_provided, '')          AS assurance_or_appreciation_provided,
+      COALESCE(q.pronunciation_and_clarity, '')                   AS pronunciation_and_clarity,
+      COALESCE(q.enthusiasm_and_no_fumbling, '')                  AS enthusiasm_and_no_fumbling,
+      COALESCE(q.active_listening, '')                            AS active_listening,
+      COALESCE(q.politeness_and_no_sarcasm, '')                   AS politeness_and_no_sarcasm,
+      COALESCE(q.proper_grammar, '')                              AS proper_grammar,
+      COALESCE(q.accurate_issue_probing, '')                      AS accurate_issue_probing,
+      COALESCE(q.proper_hold_procedure, '')                       AS proper_hold_procedure,
+      COALESCE(q.proper_transfer_and_language, '')                AS proper_transfer_and_language,
+      COALESCE(q.dead_air_under_10_seconds, '')                   AS dead_air_under_10_seconds,
+      COALESCE(q.case_escalated_correctly, '')                    AS case_escalated_correctly,
+      COALESCE(q.address_recorded_completely, '')                 AS address_recorded_completely,
+      COALESCE(q.correct_and_complete_information, '')            AS correct_and_complete_information,
+      COALESCE(q.upselling_or_offers_suggested, '')               AS upselling_or_offers_suggested,
+      COALESCE(q.further_assistance_offered, '')                  AS further_assistance_offered,
+      COALESCE(q.proper_call_closure, '')                         AS proper_call_closure,
+      COALESCE(q.express_empathy, '')                             AS express_empathy
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${extra}
+    ORDER BY q.CallDate DESC
+    LIMIT 10000
+  `, params);
+
+  return rows.map(r => ({
+    CallDate:                           String(r.CallDate),
+    User:                               String(r.User),
+    ClientId:                           String(r.ClientId),
+    MobileNo:                           String(r.MobileNo),
+    scenario:                           String(r.scenario),
+    scenario1:                          String(r.scenario1),
+    quality_percentage:                 Number(r.quality_percentage),
+    top_negative_words:                 String(r.top_negative_words),
+    call_answered_within_5_seconds:     String(r.call_answered_within_5_seconds),
+    customer_concern_acknowledged:      String(r.customer_concern_acknowledged),
+    professionalism_maintained:         String(r.professionalism_maintained),
+    assurance_or_appreciation_provided: String(r.assurance_or_appreciation_provided),
+    pronunciation_and_clarity:          String(r.pronunciation_and_clarity),
+    enthusiasm_and_no_fumbling:         String(r.enthusiasm_and_no_fumbling),
+    active_listening:                   String(r.active_listening),
+    politeness_and_no_sarcasm:          String(r.politeness_and_no_sarcasm),
+    proper_grammar:                     String(r.proper_grammar),
+    accurate_issue_probing:             String(r.accurate_issue_probing),
+    proper_hold_procedure:              String(r.proper_hold_procedure),
+    proper_transfer_and_language:       String(r.proper_transfer_and_language),
+    dead_air_under_10_seconds:          String(r.dead_air_under_10_seconds),
+    case_escalated_correctly:           String(r.case_escalated_correctly),
+    address_recorded_completely:        String(r.address_recorded_completely),
+    correct_and_complete_information:   String(r.correct_and_complete_information),
+    upselling_or_offers_suggested:      String(r.upselling_or_offers_suggested),
+    further_assistance_offered:         String(r.further_assistance_offered),
+    proper_call_closure:                String(r.proper_call_closure),
+    express_empathy:                    String(r.express_empathy),
   }));
 }

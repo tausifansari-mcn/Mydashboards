@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useRef, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useProcessStore } from '@/store/processStore';
 import {
   BarChart, Bar, LineChart, Line, ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
@@ -197,7 +199,14 @@ function KPICard({ label, value, sub, color, icon: Icon }: {
 export default function InboundProjectDashboard() {
   const { projectKey = '' } = useParams<{ projectKey: string }>();
   const navigate = useNavigate();
+  const { canAccessInboundSlug, loaded } = useProcessStore();
   const meta = PROJECT_META[projectKey];
+
+  useEffect(() => {
+    if (loaded && !canAccessInboundSlug(projectKey)) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [loaded, projectKey, canAccessInboundSlug, navigate]);
 
   const [range, setRange]     = useState<'today'|'7d'|'30d'>('today');
   const [summary, setSummary] = useState<ProjectSummary | null>(null);

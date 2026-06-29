@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Plus, Search, Pencil, Trash2, Loader2, X, KeyRound } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Loader2, X, KeyRound, AlertTriangle } from 'lucide-react';
 import api from '@/lib/axios';
 import { User, Client, PaginatedResponse } from '@/types';
 
@@ -17,6 +17,8 @@ export default function UsersPage() {
   const [form, setForm] = useState({ name: '', email: '', role_id: '2', client_id: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<UserRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const roles = [
     { id: 1, name: 'Super Admin' }, { id: 2, name: 'Client Admin' }, { id: 3, name: 'Manager' }, { id: 4, name: 'QA' },
@@ -53,10 +55,18 @@ export default function UsersPage() {
     } finally { setSaving(false); }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Deactivate this user?')) return;
-    await api.delete(`/users/${id}`);
-    fetchUsers();
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/users/${deleteTarget.id}/permanent`);
+      setDeleteTarget(null);
+      fetchUsers();
+    } catch {
+      /* ignore */
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleResetPassword = async (id: number) => {
@@ -116,7 +126,7 @@ export default function UsersPage() {
                   <div className="flex items-center gap-1">
                     <button onClick={() => openEdit(u)} className="rounded p-1 hover:bg-blue-50 text-slate-400 hover:text-primary"><Pencil className="h-4 w-4" /></button>
                     <button onClick={() => handleResetPassword(u.id)} className="rounded p-1 hover:bg-amber-50 text-slate-400 hover:text-amber-600"><KeyRound className="h-4 w-4" /></button>
-                    <button onClick={() => handleDelete(u.id)} className="rounded p-1 hover:bg-red-50 text-slate-400 hover:text-danger"><Trash2 className="h-4 w-4" /></button>
+                    <button onClick={() => setDeleteTarget(u)} className="rounded p-1 hover:bg-red-50 text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
                   </div>
                 </td>
               </motion.tr>
@@ -124,6 +134,38 @@ export default function UsersPage() {
           </tbody>
         </table>
       </div>
+
+      {/* ── Delete confirmation modal ── */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+            className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex flex-col items-center text-center gap-3 mb-5">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100">
+                <AlertTriangle className="h-6 w-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-800">Delete User</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Permanently delete <span className="font-semibold text-slate-700">{deleteTarget.name}</span>?<br />
+                  <span className="text-xs text-slate-400">{deleteTarget.email}</span>
+                </p>
+                <p className="mt-2 text-xs text-red-500 font-medium">This action cannot be undone.</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteTarget(null)}
+                className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-medium hover:bg-slate-50">
+                Cancel
+              </button>
+              <motion.button whileTap={{ scale: 0.97 }} onClick={handleDelete} disabled={deleting}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-70">
+                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Trash2 className="h-4 w-4" /> Delete</>}
+              </motion.button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">

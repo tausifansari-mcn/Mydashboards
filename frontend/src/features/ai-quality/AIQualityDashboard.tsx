@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
 } from 'lucide-react';
 import api from '@/lib/axios';
+import { useProcessStore } from '@/store/processStore';
 
 function toLocalDT(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -103,6 +104,7 @@ function KPIChip({ icon: Icon, label, value, valueColor = '#fff' }: KPIChipProps
 
 export default function AIQualityDashboard() {
   const navigate = useNavigate();
+  const { canAccessInboundClient, canAccessOutboundClient } = useProcessStore();
   const now = new Date();
   const [activeSlide, setActiveSlide] = useState(0);
 
@@ -227,7 +229,7 @@ export default function AIQualityDashboard() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 w-full">
-                  {ibClients.map((c, i) => {
+                  {ibClients.filter((c) => canAccessInboundClient(c.client_id)).map((c, i) => {
                     const accentColor = CARD_COLORS[i % CARD_COLORS.length];
                     const total = c.audit_count;
                     const pct = (n: number) => total > 0 ? `${((n / total) * 100).toFixed(0)}%` : '—';
@@ -306,7 +308,7 @@ export default function AIQualityDashboard() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 w-full">
-                  {clients.map((c, i) => {
+                  {clients.filter((c) => canAccessOutboundClient(c.client_id)).map((c, i) => {
                     const accentColor = CARD_COLORS[i % CARD_COLORS.length];
                     const rate = opsRate(c);
                     return (

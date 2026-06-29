@@ -12,6 +12,7 @@ router.get('/:id', ctrl.getOne);
 router.post('/', ctrl.create);
 router.patch('/:id', ctrl.update);
 router.delete('/:id', ctrl.remove);
+router.delete('/:id/permanent', ctrl.permanentDelete);
 router.post('/:id/reset-password', ctrl.resetPassword);
 
 export default router;

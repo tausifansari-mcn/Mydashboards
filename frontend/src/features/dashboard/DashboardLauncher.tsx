@@ -2,15 +2,18 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  Phone, Star, TrendingUp, Users, BarChart2, UserCheck, Lock,
+  Phone, Star, TrendingUp, Users, BarChart2, UserCheck, Lock, BarChart3,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/axios';
 import { Dashboard } from '@/types';
 
 const iconMap: Record<string, React.ElementType> = {
-  Phone, Star, TrendingUp, Users, BarChart2, UserCheck,
+  Phone, Star, TrendingUp, Users, BarChart2, UserCheck, BarChart3,
 };
+
+// Slugs hidden from the launcher
+const HIDDEN_SLUGS = ['call-master', 'sales'];
 
 const slugToRoute: Record<string, string> = {
   'call-master': '/call-master',
@@ -91,38 +94,59 @@ export default function DashboardLauncher() {
         variants={container} initial="hidden" animate="visible"
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
       >
-        {allDashboards.map((dash) => {
-          const accessible = isAccessible(dash.slug);
-          const Icon = iconMap[dash.icon] || BarChart2;
-          return (
-            <motion.div key={dash.id} variants={item}>
-              <motion.div
-                whileHover={accessible ? { y: -4, boxShadow: '0 12px 32px rgba(30,64,175,0.12)' } : {}}
-                whileTap={accessible ? { scale: 0.98 } : {}}
-                onClick={() => accessible && navigate(slugToRoute[dash.slug] || '/dashboard')}
-                className={`relative rounded-xl border bg-white p-6 transition-all duration-200 ${
-                  accessible
-                    ? 'cursor-pointer border-primary/30 hover:border-primary shadow-sm'
-                    : 'cursor-not-allowed border-slate-200 opacity-50'
-                }`}
-              >
-                <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-xl ${accessible ? 'bg-primary/10' : 'bg-slate-100'}`}>
-                  <Icon className={`h-6 w-6 ${accessible ? 'text-primary' : 'text-slate-400'}`} />
-                </div>
-                <h3 className="font-bold text-slate-800">{dash.name}</h3>
-                <p className="mt-1 text-xs text-slate-500">{dash.description}</p>
-                {!accessible && (
-                  <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-400">
-                    <Lock className="h-3 w-3" /> No access assigned
-                  </div>
-                )}
-                {accessible && (
-                  <div className="mt-3 text-xs font-semibold text-primary">Open dashboard →</div>
-                )}
-              </motion.div>
+        {/* AI Quality — always shown if not coming from API */}
+        {!allDashboards.some(d => d.slug === 'quality') && (
+          <motion.div variants={item}>
+            <motion.div
+              whileHover={{ y: -4, boxShadow: '0 12px 32px rgba(30,64,175,0.12)' }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => navigate('/quality')}
+              className="relative rounded-xl border bg-white p-6 transition-all duration-200 cursor-pointer border-primary/30 hover:border-primary shadow-sm"
+            >
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+                <BarChart3 className="h-6 w-6 text-primary" />
+              </div>
+              <h3 className="font-bold text-slate-800">AI Quality</h3>
+              <p className="mt-1 text-xs text-slate-500">Inbound &amp; outbound quality scoring, fatal analysis, and agent performance.</p>
+              <div className="mt-3 text-xs font-semibold text-primary">Open dashboard →</div>
             </motion.div>
-          );
-        })}
+          </motion.div>
+        )}
+
+        {allDashboards
+          .filter(d => !HIDDEN_SLUGS.includes(d.slug))
+          .map((dash) => {
+            const accessible = isAccessible(dash.slug) || dash.slug === 'quality';
+            const Icon = iconMap[dash.icon] || BarChart2;
+            return (
+              <motion.div key={dash.id} variants={item}>
+                <motion.div
+                  whileHover={accessible ? { y: -4, boxShadow: '0 12px 32px rgba(30,64,175,0.12)' } : {}}
+                  whileTap={accessible ? { scale: 0.98 } : {}}
+                  onClick={() => accessible && navigate(slugToRoute[dash.slug] || '/dashboard')}
+                  className={`relative rounded-xl border bg-white p-6 transition-all duration-200 ${
+                    accessible
+                      ? 'cursor-pointer border-primary/30 hover:border-primary shadow-sm'
+                      : 'cursor-not-allowed border-slate-200 opacity-50'
+                  }`}
+                >
+                  <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-xl ${accessible ? 'bg-primary/10' : 'bg-slate-100'}`}>
+                    <Icon className={`h-6 w-6 ${accessible ? 'text-primary' : 'text-slate-400'}`} />
+                  </div>
+                  <h3 className="font-bold text-slate-800">{dash.name}</h3>
+                  <p className="mt-1 text-xs text-slate-500">{dash.description}</p>
+                  {!accessible && (
+                    <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-400">
+                      <Lock className="h-3 w-3" /> No access assigned
+                    </div>
+                  )}
+                  {accessible && (
+                    <div className="mt-3 text-xs font-semibold text-primary">Open dashboard →</div>
+                  )}
+                </motion.div>
+              </motion.div>
+            );
+          })}
       </motion.div>
     </div>
   );

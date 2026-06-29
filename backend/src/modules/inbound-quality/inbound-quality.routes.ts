@@ -25,5 +25,8 @@ router.get('/week-wise-quality',         ctrl.getWeekWiseQuality);
 router.get('/day-wise-quality',         ctrl.getDayWiseQuality);
 router.get('/repeat-analysis',          ctrl.getRepeatAnalysis);
 router.get('/agent-audit-band',         ctrl.getAgentAuditBandSummary);
+router.get('/band-detail',              ctrl.getBandDetail);
+router.get('/repeat-call-detail',       ctrl.getRepeatCallDetail);
+router.get('/raw-data',                 ctrl.getRawData);
 
 export default router;
