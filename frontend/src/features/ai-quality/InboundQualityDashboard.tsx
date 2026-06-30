@@ -65,7 +65,7 @@ interface NegSignalDetailRow { scenario: string; scenario1: string; neg_signal: 
 interface SensitiveWordUseRow { label: string; count: number; pct: number; }
 interface SensitiveWordAnalysis { distribution: SensitiveWordUseRow[]; akash_count: number; akash_label: string; social_count: number; court_count: number; }
 interface FatalContributorRow  { agent_name: string; audit_count: number; fatal_count: number; fatal_pct: number; }
-interface DayWiseFatalRow      { call_date: string; total_count: number; total_fatal: number; fatal_pct: number; null_fatal: number; query_fatal: number; complaint_fatal: number; request_fatal: number; }
+interface DayWiseFatalRow      { call_date: string; total_count: number; total_fatal: number; fatal_pct: number; query_fatal: number; complaint_fatal: number; request_fatal: number; }
 interface WeekScenarioFatalRow { week_label: string; query_fatal_pct: number; complaint_fatal_pct: number; request_fatal_pct: number; sale_done_fatal_pct: number; total_fatal: number; }
 interface AgentPerformanceRow  { agent_name: string; audit_count: number; cq_score: number; fatal_count: number; fatal_pct: number; below_avg_pct: number; avg_pct: number; good_pct: number; excellent_pct: number; }
 interface FatalAnalysis        { audit_count: number; cq_score: number; fatal_count: number; fatal_pct: number; query_fatal: number; complaint_fatal: number; request_fatal: number; sale_done_fatal: number; top_contributors: FatalContributorRow[]; day_wise: DayWiseFatalRow[]; week_scenario: WeekScenarioFatalRow[]; agent_performance: AgentPerformanceRow[]; }
@@ -727,8 +727,16 @@ export default function InboundQualityDashboard() {
               )}
             </div>
 
+            {/* Portfolio Insight */}
+            <div className="bg-[#1E293B]/60 border border-white/5 rounded-2xl px-5 py-5 mb-6">
+              {/* Section header */}
+              <div className="flex items-center gap-2 mb-5">
+                <div className="w-1 h-5 rounded-full bg-violet-500" />
+                <h2 className="text-sm font-bold text-white uppercase tracking-widest">Portfolio Insight</h2>
+              </div>
+
             {/* Threat & Scam Metrics */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
 
               {/* Social Media & Consumer Court Threat */}
               <div
@@ -809,7 +817,7 @@ export default function InboundQualityDashboard() {
             </div>
 
             {/* Top Negative Signals */}
-            <div className="mb-6">
+            <div>
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-1 h-4 rounded-full bg-rose-500" />
                 <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Top Negative Signals</h3>
@@ -867,6 +875,7 @@ export default function InboundQualityDashboard() {
                 })}
               </div>
             </div>
+            </div> {/* /Portfolio Insight */}
 
             {/* Fatal count banner (if any) */}
             {!loading && (kpis?.fatal_count ?? 0) > 0 && (
@@ -1743,13 +1752,13 @@ export default function InboundQualityDashboard() {
                       <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
                         <div className="w-1 h-4 rounded-full bg-red-500" />
                         <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Day Wise / Fatal</h3>
-                        <ExportBtn onClick={() => downloadCSV(fd.day_wise.map(r => ({ Date: r.call_date, 'Null Fatal': r.null_fatal, 'Query Fatal': r.query_fatal, 'Complaint Fatal': r.complaint_fatal, 'Request Fatal': r.request_fatal, 'Total Fatal': r.total_fatal, 'Fatal%': r.fatal_pct })), 'day-wise-fatal.csv')} />
+                        <ExportBtn onClick={() => downloadCSV(fd.day_wise.map(r => ({ Date: r.call_date, 'Query Fatal': r.query_fatal, 'Complaint Fatal': r.complaint_fatal, 'Request Fatal': r.request_fatal, 'Total Fatal': r.total_fatal, 'Fatal%': r.fatal_pct })), 'day-wise-fatal.csv')} />
                       </div>
                       <div className="overflow-y-auto max-h-52">
                         <table className="w-full text-xs">
                           <thead className="sticky top-0 bg-[#1E293B] z-10">
                             <tr className="border-b border-white/5 bg-white/[0.02]">
-                              {['Date','(null)','Query','Complaint','Request','Total'].map(h => (
+                              {['Date','Query','Complaint','Request','Total'].map(h => (
                                 <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                               ))}
                             </tr>
@@ -1760,7 +1769,7 @@ export default function InboundQualityDashboard() {
                                 <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
                                   {r.call_date.slice(5).replace('-','/')}
                                 </td>
-                                {[r.null_fatal, r.query_fatal, r.complaint_fatal, r.request_fatal].map((v, ci) => (
+                                {[r.query_fatal, r.complaint_fatal, r.request_fatal].map((v, ci) => (
                                   <td key={ci} className="py-2 px-3 tabular-nums text-center font-semibold"
                                     style={{ background: heatBg(v, dayMaxFatal), color: v > 0 ? '#fff' : '#475569' }}>
                                     {v > 0 ? v : '—'}
@@ -1773,7 +1782,7 @@ export default function InboundQualityDashboard() {
                           <tfoot className="border-t border-white/10">
                             <tr className="bg-white/[0.03]">
                               <td className="py-2 px-3 text-slate-400 font-semibold text-[10px]">Grand total</td>
-                              {(['null_fatal','query_fatal','complaint_fatal','request_fatal'] as const).map(k => (
+                              {(['query_fatal','complaint_fatal','request_fatal'] as const).map(k => (
                                 <td key={k} className="py-2 px-3 text-white font-bold tabular-nums text-center">
                                   {fd.day_wise.reduce((s,r) => s + r[k], 0)}
                                 </td>

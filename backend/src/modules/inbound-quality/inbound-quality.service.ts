@@ -867,7 +867,6 @@ export interface DayWiseFatalRow {
   total_count:     number;
   total_fatal:     number;
   fatal_pct:       number;
-  null_fatal:      number;
   query_fatal:     number;
   complaint_fatal: number;
   request_fatal:   number;
@@ -945,18 +944,19 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
 
     querySource<{
       call_date: string; total_count: number; total_fatal: number;
-      null_fatal: number; query_fatal: number; complaint_fatal: number; request_fatal: number;
+      query_fatal: number; complaint_fatal: number; request_fatal: number;
     }>(`
       SELECT
         DATE_FORMAT(q.CallDate,'%Y-%m-%d') AS call_date,
         COUNT(*) AS total_count,
-        SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS total_fatal,
-        SUM(CASE WHEN (q.scenario IS NULL OR TRIM(q.scenario)='') AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS null_fatal,
+        SUM(CASE WHEN q.quality_percentage=0 AND q.scenario IS NOT NULL AND TRIM(q.scenario)!='' THEN 1 ELSE 0 END) AS total_fatal,
         SUM(CASE WHEN TRIM(q.scenario)='Query'     AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS query_fatal,
         SUM(CASE WHEN TRIM(q.scenario)='Complaint' AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS complaint_fatal,
         SUM(CASE WHEN TRIM(q.scenario)='Request'   AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS request_fatal
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${clientFilter}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
+        AND q.scenario IS NOT NULL AND TRIM(q.scenario) != ''
+        ${clientFilter}
       GROUP BY DATE_FORMAT(q.CallDate,'%Y-%m-%d')
       HAVING total_fatal > 0 ORDER BY call_date DESC
     `, params),
@@ -1034,7 +1034,6 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
       fatal_pct:       Number(r.total_count) > 0
         ? Math.round(Number(r.total_fatal) / Number(r.total_count) * 1000) / 10
         : 0,
-      null_fatal:      Number(r.null_fatal),
       query_fatal:     Number(r.query_fatal),
       complaint_fatal: Number(r.complaint_fatal),
       request_fatal:   Number(r.request_fatal),
