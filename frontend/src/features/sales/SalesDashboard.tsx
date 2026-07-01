@@ -135,22 +135,32 @@ function KPICard({ label, value, prefix = '', suffix = '', dec = 0, icon, color,
       initial={{ opacity: 0, y: 22 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.06, duration: 0.4, ease: 'easeOut' }}
-      className="relative bg-gradient-to-br from-[#1E293B] to-[#16213a] rounded-xl p-4 flex flex-col gap-1.5 border border-white/5 overflow-hidden hover:border-white/15 hover:shadow-lg transition-all duration-200 group"
+      className={`relative bg-white rounded-2xl overflow-hidden group transition-colors duration-200`}
+      style={{ border: `2px solid ${color}30`, borderTopWidth: 4, borderTopColor: color }}
+      whileHover={{ y: -4, boxShadow: `0 16px 40px ${color}28` }}
     >
-      <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
-      <div className="absolute bottom-0 left-0 right-0 h-px" style={{ background: `linear-gradient(90deg, ${color}50, transparent)` }} />
-      <div className="pl-2">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest leading-none">{label}</span>
-          <div className="p-1.5 rounded-lg group-hover:scale-110 transition-transform" style={{ backgroundColor: `${color}18` }}>
-            <div style={{ color }}>{icon}</div>
+      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+           style={{ background: `linear-gradient(145deg, ${color}0a, transparent)` }} />
+      <div className="relative p-4">
+        <div className="flex items-start justify-between mb-3">
+          <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.12em] leading-none pr-2">{label}</span>
+          <div className="p-2 rounded-xl shrink-0 group-hover:scale-110 transition-transform duration-200 shadow-sm"
+               style={{ backgroundColor: `${color}18`, color }}>
+            {icon}
           </div>
         </div>
-        <div className="text-2xl font-bold text-white tracking-tight leading-none">
+        <div className="text-[28px] font-black text-slate-900 tracking-tight leading-none mb-2">
           <AnimatedNumber value={value} prefix={prefix} suffix={suffix} dec={dec} />
         </div>
-        {sub && <div className="text-[11px] text-slate-500 mt-1.5">{sub}</div>}
+        {sub && (
+          <div className="flex items-center gap-1.5">
+            <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: color }} />
+            <span className="text-[11px] text-slate-600 font-semibold">{sub}</span>
+          </div>
+        )}
       </div>
+      <div className="absolute bottom-0 left-0 right-0 h-[3px] opacity-60 group-hover:opacity-100 transition-opacity duration-200"
+           style={{ background: `linear-gradient(90deg, ${color}, ${color}40)` }} />
     </motion.div>
   );
 }
@@ -176,20 +186,21 @@ function SectionCard({ title, children, className = '', accent = COLOR_VIOLET, d
   }, [expanded]);
 
   const header = (onClose?: () => void) => (
-    <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
-      <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
+    <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-100"
+         style={{ background: `linear-gradient(90deg, ${accent}08, transparent)` }}>
+      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: accent }} />
+      <h3 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.1em] flex-1">{title}</h3>
       {downloadData && downloadData.rows.length > 0 && (
         <button
           onClick={(e) => { e.stopPropagation(); downloadCSV(downloadData.filename, downloadData.rows); }}
           title="Download CSV"
-          className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded"
+          className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded"
         >
           <Download size={13} />
         </button>
       )}
       {description && !onClose && (
-        <button onClick={() => setTipOpen(v => !v)} className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
+        <button onClick={() => setTipOpen(v => !v)} className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded">
           <Info size={13} />
         </button>
       )}
@@ -197,13 +208,13 @@ function SectionCard({ title, children, className = '', accent = COLOR_VIOLET, d
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
           title="Expand"
-          className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded"
+          className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded"
         >
           <Maximize2 size={13} />
         </button>
       )}
       {onClose && (
-        <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-0.5 rounded ml-1">
+        <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition-colors p-0.5 rounded ml-1">
           <X size={15} />
         </button>
       )}
@@ -228,7 +239,7 @@ function SectionCard({ title, children, className = '', accent = COLOR_VIOLET, d
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 16 }}
             transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-            className="bg-[#1E293B] rounded-2xl border border-white/10 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
+            className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
             style={{ maxHeight: '90vh' }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -254,7 +265,9 @@ function SectionCard({ title, children, className = '', accent = COLOR_VIOLET, d
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        className={`bg-[#1E293B] rounded-xl border border-white/5 overflow-hidden ${className}`}
+        className={`bg-white rounded-2xl overflow-hidden transition-shadow duration-200 ${className}`}
+        style={{ border: `2px solid ${accent}22`, borderTopWidth: 4, borderTopColor: accent }}
+        whileHover={{ boxShadow: `0 8px 30px ${accent}18` }}
       >
         {header()}
         <AnimatePresence>
@@ -469,16 +482,16 @@ export default function SalesDashboard() {
   }));
 
   return (
-    <div className="min-h-screen bg-[#0B1120] text-white">
+    <div className="min-h-screen bg-slate-50 text-slate-900">
       {/* ── Header ── */}
-      <div className="sticky top-0 z-30 bg-[#0B1120]/90 backdrop-blur-md border-b border-white/5 px-6 py-3">
+      <div className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200 px-6 py-3">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg" style={{ background: `${COLOR_VIOLET}20` }}>
               <TrendingUp size={18} style={{ color: COLOR_VIOLET }} />
             </div>
             <div>
-              <h1 className="text-base font-bold text-white leading-none">Sales Dashboard</h1>
+              <h1 className="text-base font-bold text-slate-900 leading-none">Sales Dashboard</h1>
               <p className="text-[11px] text-slate-500 mt-0.5">Real-time sales performance</p>
             </div>
           </div>
@@ -502,7 +515,7 @@ export default function SalesDashboard() {
               type="datetime-local"
               value={filters.startDate}
               onChange={e => setFilter('startDate', e.target.value)}
-              className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500 transition-colors"
+              className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-violet-500 transition-colors"
             />
           </div>
 
@@ -513,7 +526,7 @@ export default function SalesDashboard() {
               type="datetime-local"
               value={filters.endDate}
               onChange={e => setFilter('endDate', e.target.value)}
-              className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500 transition-colors"
+              className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-violet-500 transition-colors"
             />
           </div>
 
@@ -525,7 +538,7 @@ export default function SalesDashboard() {
               </label>
               <button
                 onClick={() => { setClientOpen(v => !v); setLobOpen(false); }}
-                className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-slate-200 flex items-center gap-2 min-w-[160px] focus:outline-none focus:border-violet-500 transition-colors hover:border-white/20"
+                className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-700 flex items-center gap-2 min-w-[160px] focus:outline-none focus:border-violet-500 transition-colors hover:border-slate-300"
               >
                 <span className="flex-1 text-left truncate">
                   {filters.clientId
@@ -540,12 +553,12 @@ export default function SalesDashboard() {
                     initial={{ opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -4 }}
-                    className="absolute top-full mt-1 left-0 z-50 bg-[#1E293B] border border-white/10 rounded-lg shadow-xl overflow-hidden min-w-[180px] max-h-64 overflow-y-auto"
+                    className="absolute top-full mt-1 left-0 z-50 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden min-w-[180px] max-h-64 overflow-y-auto"
                   >
                     <button
                       onClick={() => { setFilter('clientId', ''); setFilter('lob', 'All'); setClientOpen(false); }}
                       className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-violet-500/10 ${
-                        !filters.clientId ? 'text-violet-400 bg-violet-500/5' : 'text-slate-300'
+                        !filters.clientId ? 'text-violet-400 bg-violet-500/5' : 'text-slate-600'
                       }`}
                     >
                       All Process
@@ -559,7 +572,7 @@ export default function SalesDashboard() {
                           setClientOpen(false);
                         }}
                         className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-violet-500/10 ${
-                          filters.clientId === String(c.dialdesk_client_id) ? 'text-violet-400 bg-violet-500/5' : 'text-slate-300'
+                          filters.clientId === String(c.dialdesk_client_id) ? 'text-violet-400 bg-violet-500/5' : 'text-slate-600'
                         }`}
                       >
                         <span className="block font-medium">{c.name}</span>
@@ -577,7 +590,7 @@ export default function SalesDashboard() {
             <label className="text-[10px] text-slate-500 uppercase tracking-wider">LOB</label>
             <button
               onClick={() => { setLobOpen(v => !v); setClientOpen(false); }}
-              className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-slate-200 flex items-center gap-2 min-w-[120px] focus:outline-none focus:border-violet-500 transition-colors hover:border-white/20"
+              className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-700 flex items-center gap-2 min-w-[120px] focus:outline-none focus:border-violet-500 transition-colors hover:border-slate-300"
             >
               <span className="flex-1 text-left">{filters.lob || 'All'}</span>
               <ChevronDown size={12} className={`transition-transform ${lobOpen ? 'rotate-180' : ''}`} />
@@ -588,14 +601,14 @@ export default function SalesDashboard() {
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -4 }}
-                  className="absolute top-full mt-1 left-0 z-50 bg-[#1E293B] border border-white/10 rounded-lg shadow-xl overflow-hidden min-w-[140px]"
+                  className="absolute top-full mt-1 left-0 z-50 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden min-w-[140px]"
                 >
                   {['All', ...lobList].map(l => (
                     <button
                       key={l}
                       onClick={() => { setFilter('lob', l); setLobOpen(false); }}
                       className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-violet-500/10 ${
-                        filters.lob === l ? 'text-violet-400 bg-violet-500/5' : 'text-slate-300'
+                        filters.lob === l ? 'text-violet-400 bg-violet-500/5' : 'text-slate-600'
                       }`}
                     >
                       {l}
@@ -610,7 +623,7 @@ export default function SalesDashboard() {
           <button
             onClick={() => fetchAll()}
             disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-all disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-900 transition-all disabled:opacity-50"
             style={{ background: `${COLOR_VIOLET}30`, border: `1px solid ${COLOR_VIOLET}50` }}
           >
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
@@ -620,7 +633,7 @@ export default function SalesDashboard() {
           <button
             onClick={handleExport}
             disabled={exporting || loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-all disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-900 transition-all disabled:opacity-50"
             style={{ background: `${COLOR_GREEN}25`, border: `1px solid ${COLOR_GREEN}45` }}
           >
             <Download size={12} className={exporting ? 'animate-bounce' : ''} />
@@ -750,21 +763,21 @@ export default function SalesDashboard() {
           ) : (
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={trendRows} margin={{ top: 4, right: 60, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
                 <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} />
                 <YAxis yAxisId="left" tick={{ fill: '#64748b', fontSize: 10 }} />
                 <YAxis yAxisId="right" orientation="right" tick={{ fill: '#64748b', fontSize: 10 }}
                   tickFormatter={v => fmtCurrency(v)} />
                 <Tooltip
-                  contentStyle={{ background: '#1E293B', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: '#94a3b8' }}
+                  contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: '#64748B' }}
                   formatter={(value: unknown, name: unknown) => {
                     const v = Number(value); const n = String(name);
                     if (n === 'revenue') return [fmtCurrency(v), 'Revenue'];
                     return [v.toLocaleString(), n === 'calls' ? 'Calls' : 'Sales'];
                   }}
                 />
-                <Legend wrapperStyle={{ fontSize: 11, color: '#94a3b8', paddingTop: 8 }} />
+                <Legend wrapperStyle={{ fontSize: 11, color: '#64748B', paddingTop: 8 }} />
                 <Area
                   yAxisId="left"
                   type="monotone"
@@ -835,7 +848,7 @@ export default function SalesDashboard() {
                         ))}
                       </Pie>
                       <Tooltip
-                        contentStyle={{ background: '#1E293B', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                        contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
                         formatter={(v: unknown, name: unknown) => [`${Number(v).toLocaleString()} orders`, String(name)]}
                       />
                     </PieChart>
@@ -874,19 +887,19 @@ export default function SalesDashboard() {
                     layout="vertical"
                     margin={{ top: 0, right: 16, left: 0, bottom: 0 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" horizontal={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
                     <XAxis type="number" tick={{ fill: '#64748b', fontSize: 10 }} />
                     <YAxis
                       type="category"
                       dataKey="lob"
-                      tick={{ fill: '#94a3b8', fontSize: 11 }}
+                      tick={{ fill: '#64748B', fontSize: 11 }}
                       width={90}
                     />
                     <Tooltip
-                      contentStyle={{ background: '#1E293B', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
                       formatter={(v: unknown, name: unknown) => [Number(v).toLocaleString(), String(name) === 'sales' ? 'Sales' : 'Calls']}
                     />
-                    <Legend wrapperStyle={{ fontSize: 11, color: '#94a3b8' }} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: '#64748B' }} />
                     <Bar dataKey="calls" fill={`${COLOR_BLUE}55`} stroke={COLOR_BLUE} strokeWidth={0.5} radius={[0, 3, 3, 0]} name="calls" />
                     <Bar dataKey="sales" fill={COLOR_VIOLET} stroke="none" radius={[0, 3, 3, 0]} name="sales" />
                   </BarChart>
@@ -917,7 +930,7 @@ export default function SalesDashboard() {
                     data={productRows}
                     margin={{ top: 4, right: 8, left: 0, bottom: 40 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
                     <XAxis
                       dataKey="name"
                       tick={{ fill: '#64748b', fontSize: 9 }}
@@ -927,7 +940,7 @@ export default function SalesDashboard() {
                     />
                     <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
                     <Tooltip
-                      contentStyle={{ background: '#1E293B', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
                       labelFormatter={(v) => `Product: ${v}`}
                       formatter={(v: unknown, name: unknown) => {
                         const num = Number(v); const nm = String(name);
@@ -971,16 +984,16 @@ export default function SalesDashboard() {
                     layout="vertical"
                     margin={{ top: 0, right: 16, left: 0, bottom: 0 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" horizontal={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
                     <XAxis type="number" tick={{ fill: '#64748b', fontSize: 10 }} />
                     <YAxis
                       type="category"
                       dataKey="scenario"
-                      tick={{ fill: '#94a3b8', fontSize: 10 }}
+                      tick={{ fill: '#64748B', fontSize: 10 }}
                       width={100}
                     />
                     <Tooltip
-                      contentStyle={{ background: '#1E293B', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
                       formatter={(v: unknown) => [Number(v).toLocaleString(), 'Count']}
                     />
                     <Bar dataKey="count" fill={COLOR_PINK} radius={[0, 3, 3, 0]} name="Count" />
@@ -1007,7 +1020,7 @@ export default function SalesDashboard() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-white/5">
+                  <tr className="border-b border-slate-200">
                     <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider w-12">Rank</th>
                     <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">MASID</th>
                     <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">Agent ID</th>
@@ -1024,9 +1037,9 @@ export default function SalesDashboard() {
                     return (
                       <tr
                         key={a.agent_id}
-                        className={`border-b border-white/4 transition-colors ${
-                          i % 2 === 0 ? 'bg-white/[0.01]' : ''
-                        } ${isTop3 ? 'hover:bg-violet-500/5' : 'hover:bg-white/[0.02]'}`}
+                        className={`border-b border-slate-100 transition-colors ${
+                          i % 2 === 0 ? 'bg-transparent' : ''
+                        } ${isTop3 ? 'hover:bg-violet-500/5' : 'hover:bg-slate-50'}`}
                       >
                         <td className="py-2.5 px-3">
                           {isTop3 ? (
@@ -1036,18 +1049,18 @@ export default function SalesDashboard() {
                           )}
                         </td>
                         <td className="py-2.5 px-3">
-                          <span className={`font-mono font-semibold ${isTop3 ? 'text-white' : 'text-slate-300'}`}>
+                          <span className={`font-mono font-semibold ${isTop3 ? 'text-slate-900' : 'text-slate-600'}`}>
                             {a.masid}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-slate-500 font-mono text-[10px]">{a.agent_id}</td>
                         <td className="py-2.5 px-3 text-right text-slate-400">{a.total_calls.toLocaleString()}</td>
                         <td className="py-2.5 px-3 text-right">
-                          <span className={`font-semibold ${isTop3 ? 'text-violet-300' : 'text-slate-300'}`}>
+                          <span className={`font-semibold ${isTop3 ? 'text-violet-300' : 'text-slate-600'}`}>
                             {a.sales.toLocaleString()}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-right text-slate-300">{fmtCurrency(a.revenue)}</td>
+                        <td className="py-2.5 px-3 text-right text-slate-600">{fmtCurrency(a.revenue)}</td>
                         <td className="py-2.5 px-3 text-right">
                           <span
                             className="font-bold px-1.5 py-0.5 rounded text-[11px]"

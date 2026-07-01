@@ -14,8 +14,6 @@ import api from '@/lib/axios';
 
 const mainLinks = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Launcher' },
-  // { to: '/call-master', icon: PhoneCall, label: 'Call Master' },  // hidden
-  // { to: '/sales', icon: TrendingUp, label: 'Sales' },             // hidden
   { to: '/quality', icon: BarChart3, label: 'AI Quality' },
 ];
 
@@ -60,24 +58,33 @@ export default function Sidebar() {
     <motion.aside
       animate={{ width: sidebarExpanded ? 240 : 64 }}
       transition={{ duration: 0.25, ease: 'easeInOut' }}
-      className="relative flex h-screen flex-col bg-[#0F172A] overflow-hidden flex-shrink-0"
+      className="relative flex h-screen flex-col bg-white border-r border-slate-200 overflow-hidden flex-shrink-0 shadow-sm"
     >
       {/* Logo */}
-      <div className="flex h-16 items-center px-4 border-b border-white/10">
-        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg overflow-hidden bg-white/5">
-          <img src="/mas-call-logo.png" alt="MAS Call" className="h-7 w-7 object-contain" />
-        </div>
+      <div className="flex h-16 items-center px-3 border-b border-slate-200 bg-white">
+        {/* Collapsed: show small icon version */}
+        {!sidebarExpanded && (
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden bg-white border border-slate-200 shadow-sm">
+            <img src="/Logo.png" alt="MAS" className="h-8 w-8 object-contain p-0.5" />
+          </div>
+        )}
         <AnimatePresence>
           {sidebarExpanded && (
-            <motion.span
+            <motion.div
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -8 }}
               transition={{ duration: 0.15 }}
-              className="ml-3 font-bold text-white text-sm whitespace-nowrap"
+              className="flex items-center gap-2 whitespace-nowrap w-full"
             >
-              My Dashboard
-            </motion.span>
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden bg-white border border-slate-200 shadow-sm">
+                <img src="/Logo.png" alt="MAS" className="h-9 w-9 object-contain p-0.5" />
+              </div>
+              <div>
+                <p className="font-black text-slate-900 text-sm leading-none">My Dashboard</p>
+                <p className="text-[10px] font-semibold mt-0.5" style={{ color: '#1565C0' }}>Analytics Platform</p>
+              </div>
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
@@ -108,19 +115,33 @@ export default function Sidebar() {
         </SidebarSection>
       </nav>
 
-      {/* Logout */}
+      {/* User info + Logout */}
+      {sidebarExpanded && user && (
+        <div className="px-3 py-3 border-t border-slate-200 bg-slate-50">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-7 h-7 rounded-full bg-[#E3F2FD] flex items-center justify-center shrink-0">
+              <span className="text-[11px] font-bold text-[#1565C0]">{user.name?.charAt(0).toUpperCase()}</span>
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-slate-700 truncate">{user.name}</p>
+              <p className="text-[10px] text-slate-400 truncate">{user.email}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="px-2 pb-4">
         <button
           onClick={handleLogout}
           className={cn(
-            'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-red-400 hover:bg-red-500/10 transition-colors',
+            'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-red-500 hover:bg-red-50 hover:text-red-600 transition-colors',
             !sidebarExpanded && 'justify-center'
           )}
         >
           <LogOut className="h-4 w-4 flex-shrink-0" />
           <AnimatePresence>
             {sidebarExpanded && (
-              <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-sm">
+              <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-sm font-medium">
                 Logout
               </motion.span>
             )}
@@ -131,7 +152,7 @@ export default function Sidebar() {
       {/* Toggle button */}
       <button
         onClick={toggleSidebar}
-        className="absolute -right-3 top-20 flex h-6 w-6 items-center justify-center rounded-full bg-[#1E40AF] text-white shadow-lg z-10"
+        className="absolute -right-3 top-20 flex h-6 w-6 items-center justify-center rounded-full bg-white border border-slate-200 text-slate-600 shadow-md z-10 hover:bg-[#E3F2FD] hover:text-[#1565C0] hover:border-[#1565C0]/30 transition-colors"
       >
         {sidebarExpanded ? <ChevronLeft className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
       </button>
@@ -141,12 +162,12 @@ export default function Sidebar() {
 
 function SidebarSection({ label, expanded, children }: { label: string; expanded: boolean; children: React.ReactNode }) {
   return (
-    <div className="mb-2">
+    <div className="mb-3">
       <AnimatePresence>
         {expanded && (
           <motion.p
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="mb-1 px-3 text-[10px] font-bold tracking-widest text-slate-500 uppercase"
+            className="mb-1 px-3 text-[9px] font-bold tracking-widest text-slate-400 uppercase"
           >
             {label}
           </motion.p>
@@ -164,7 +185,9 @@ function SidebarLink({ to, icon: Icon, label, expanded }: { to: string; icon: Re
       end
       className={({ isActive }) => cn(
         'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150',
-        isActive ? 'bg-primary text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white',
+        isActive
+          ? 'bg-[#E3F2FD] text-[#1565C0] font-semibold border border-[#1565C0]/30'
+          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
         !expanded && 'justify-center'
       )}
     >
@@ -208,7 +231,7 @@ function SidebarExpandableItem({
         onClick={() => navigate(parentTo)}
         className={cn(
           'flex w-full justify-center rounded-lg px-3 py-2 transition-colors',
-          isParentActive ? 'bg-primary text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'
+          isParentActive ? 'bg-[#E3F2FD] text-[#1565C0] border border-[#1565C0]/30' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
         )}
       >
         <Icon className="h-4 w-4 flex-shrink-0" />
@@ -220,13 +243,13 @@ function SidebarExpandableItem({
     <div>
       <div className={cn(
         'flex items-center rounded-lg transition-all duration-150',
-        isParentActive ? 'bg-primary/20' : 'hover:bg-white/5'
+        isParentActive ? 'bg-blue-50 border border-blue-100' : 'hover:bg-slate-100'
       )}>
         <button
           onClick={() => { navigate(parentTo); setOpen(v => !v); }}
           className={cn(
             'flex flex-1 items-center gap-3 px-3 py-2 text-sm',
-            isParentActive ? 'text-white' : 'text-slate-400 hover:text-white'
+            isParentActive ? 'text-[#1565C0] font-semibold' : 'text-slate-600 hover:text-slate-900'
           )}
         >
           <Icon className="h-4 w-4 flex-shrink-0" />
@@ -234,7 +257,7 @@ function SidebarExpandableItem({
         </button>
         <button
           onClick={() => setOpen(v => !v)}
-          className={cn('px-2 py-2 transition-colors', isParentActive ? 'text-white/70' : 'text-slate-500 hover:text-white')}
+          className={cn('px-2 py-2 transition-colors', isParentActive ? 'text-[#1565C0]' : 'text-slate-400 hover:text-slate-700')}
         >
           <ChevronDown className={cn('h-3 w-3 transition-transform duration-200', open && 'rotate-180')} />
         </button>
@@ -249,13 +272,13 @@ function SidebarExpandableItem({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="ml-3 mt-0.5 border-l border-white/10 pl-2 space-y-0.5 py-1">
+            <div className="ml-3 mt-0.5 border-l-2 border-slate-200 pl-2 space-y-0.5 py-1">
               <NavLink
                 to={parentTo}
                 end
                 className={({ isActive }) => cn(
                   'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-all',
-                  isActive ? 'bg-primary text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'
+                  isActive ? 'bg-[#E3F2FD] text-[#1565C0] font-semibold' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
                 )}
               >
                 <span className="text-sm">📊</span>
@@ -267,7 +290,7 @@ function SidebarExpandableItem({
                   to={sub.to}
                   className={({ isActive }) => cn(
                     'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-all',
-                    isActive ? 'bg-primary text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'
+                    isActive ? 'bg-[#E3F2FD] text-[#1565C0] font-semibold' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
                   )}
                 >
                   <span className="text-sm">{sub.icon}</span>

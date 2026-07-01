@@ -41,9 +41,9 @@ const COLOR_AMBER  = '#F59E0B';
 const COLOR_RED    = '#EF4444';
 const COLORS       = [COLOR_BLUE, COLOR_GREEN, COLOR_PURPLE, COLOR_AMBER, COLOR_RED, '#06B6D4', '#EC4899', '#6366F1'];
 
-const TOOLTIP_STYLE = { background: '#0F172A', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
+const TOOLTIP_STYLE = { background: '#FFFFFF', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
 const AXIS_TICK     = { fill: '#64748B', fontSize: 11 };
-const GRID          = { strokeDasharray: '3 3', stroke: '#1E293B' };
+const GRID          = { strokeDasharray: '3 3', stroke: '#FFFFFF' };
 
 function toLocalDT(d: Date) {
   const p = (n: number) => String(n).padStart(2, '0');
@@ -121,7 +121,7 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, index, 
       initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.06, duration: 0.4 }}
       onClick={onClick}
-      className={`relative bg-gradient-to-br from-[#1E293B] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-white/5 overflow-hidden transition-all duration-200 ${onClick ? 'cursor-pointer hover:border-white/15 hover:shadow-lg' : ''}`}
+      className={`relative bg-gradient-to-br from-[#FFFFFF] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-slate-200 overflow-hidden transition-all duration-200 ${onClick ? 'cursor-pointer hover:border-slate-300 hover:shadow-lg' : ''}`}
     >
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
       <div className="pl-2">
@@ -131,7 +131,7 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, index, 
             <div style={{ color }}>{icon}</div>
           </div>
         </div>
-        <div className="text-2xl font-bold text-white tracking-tight">
+        <div className="text-2xl font-bold text-slate-900 tracking-tight">
           <AnimatedNumber value={value} suffix={suffix} dec={dec} />
         </div>
         {sub && <div className="text-[11px] text-slate-500 mt-1">{sub}</div>}
@@ -158,22 +158,22 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, dow
   }, [expanded]);
 
   const header = (onClose?: () => void) => (
-    <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
+    <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
       <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
+      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">{title}</h3>
       {downloadData && downloadData.rows.length > 0 && (
         <button onClick={(e) => { e.stopPropagation(); downloadCSV(downloadData.filename, downloadData.rows); }}
-          title="Download CSV" className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
+          title="Download CSV" className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded">
           <Download size={13} />
         </button>
       )}
       {!onClose ? (
         <button onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
-          title="Expand" className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
+          title="Expand" className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded">
           <Maximize2 size={13} />
         </button>
       ) : (
-        <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-0.5 rounded ml-1">
+        <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition-colors p-0.5 rounded ml-1">
           <X size={15} />
         </button>
       )}
@@ -183,7 +183,7 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, dow
   return (
     <>
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
-        className={`bg-[#1E293B] rounded-xl border border-white/5 overflow-hidden ${className}`}>
+        className={`bg-white rounded-xl border border-slate-200 overflow-hidden ${className}`}>
         {header()}
         <div className="p-5">{children}</div>
       </motion.div>
@@ -191,7 +191,7 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, dow
       {expanded && createPortal(
         <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-black/75 backdrop-blur-sm"
           style={{ zIndex: 9999 }} onClick={() => setExpanded(false)}>
-          <div className="bg-[#1E293B] rounded-2xl border border-white/10 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
             style={{ maxHeight: '90vh' }} onClick={e => e.stopPropagation()}>
             {header(() => setExpanded(false))}
             <div className="p-6 overflow-auto flex-1">{children}</div>
@@ -222,10 +222,10 @@ function HorizBars({ data, labelKey, valueKey, colorFn }: {
             <span className="text-xs text-slate-400 w-36 shrink-0 truncate" title={String(r[labelKey])}>
               {String(r[labelKey])}
             </span>
-            <div className="flex-1 bg-white/5 rounded-full h-5 overflow-hidden">
+            <div className="flex-1 bg-slate-100 rounded-full h-5 overflow-hidden">
               <div className="h-5 rounded-full flex items-center justify-end pr-2 transition-all"
                 style={{ width: `${pct}%`, minWidth: 4, backgroundColor: color }}>
-                {pct > 15 && <span className="text-[10px] text-white font-bold">{fmt(v, 0)}</span>}
+                {pct > 15 && <span className="text-[10px] text-slate-900 font-bold">{fmt(v, 0)}</span>}
               </div>
             </div>
             {pct <= 15 && <span className="text-[10px] text-slate-400 w-10 text-right shrink-0">{fmt(v, 0)}</span>}
@@ -245,11 +245,11 @@ function QualityBars({ rows }: { rows: QParamRow[] }) {
       {sorted.map(p => (
         <div key={p.key} className="flex items-center gap-2">
           <span className="text-xs text-slate-400 w-40 shrink-0 truncate" title={p.parameter}>{p.parameter}</span>
-          <div className="flex-1 bg-white/5 rounded-full h-5 overflow-hidden">
+          <div className="flex-1 bg-slate-100 rounded-full h-5 overflow-hidden">
             <motion.div className="h-5 rounded-full flex items-center justify-end pr-2"
               style={{ backgroundColor: pctColor(p.score), minWidth: 4 }}
               initial={{ width: 0 }} animate={{ width: `${p.score}%` }} transition={{ duration: 0.7 }}>
-              {p.score > 12 && <span className="text-[10px] text-white font-bold">{Number(p.score).toFixed(0)}%</span>}
+              {p.score > 12 && <span className="text-[10px] text-slate-900 font-bold">{Number(p.score).toFixed(0)}%</span>}
             </motion.div>
           </div>
           {p.score <= 12 && (
@@ -276,7 +276,7 @@ function AgentTable({ rows, onRowClick }: { rows: AgentRow[]; onRowClick?: (a: A
   );
 
   const col = (key: AgentSortKey, label: string, align = 'right') => (
-    <th className={`text-${align} text-slate-500 py-2 pr-3 font-semibold cursor-pointer hover:text-slate-300 transition-colors`}
+    <th className={`text-${align} text-slate-500 py-2 pr-3 font-semibold cursor-pointer hover:text-slate-600 transition-colors`}
       onClick={() => { if (sortKey === key) setAsc(v => !v); else { setSortKey(key); setAsc(false); } }}>
       <span className="inline-flex items-center gap-1 justify-end">
         {label}
@@ -291,7 +291,7 @@ function AgentTable({ rows, onRowClick }: { rows: AgentRow[]; onRowClick?: (a: A
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
-          <tr className="border-b border-white/5">
+          <tr className="border-b border-slate-200">
             <th className="text-left text-slate-500 py-2 pr-3 font-semibold">#</th>
             <th className="text-left text-slate-500 py-2 pr-3 font-semibold">Agent</th>
             {col('calls',       'Calls')}
@@ -304,9 +304,9 @@ function AgentTable({ rows, onRowClick }: { rows: AgentRow[]; onRowClick?: (a: A
         <tbody>
           {sorted.map((a, i) => (
             <tr key={a.agent} onClick={() => onRowClick?.(a)}
-              className={`border-b border-white/5 hover:bg-white/5 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}>
+              className={`border-b border-slate-200 hover:bg-slate-100 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}>
               <td className="py-2.5 pr-3 text-slate-600">{i + 1}</td>
-              <td className="py-2.5 pr-3 font-medium text-slate-200 max-w-[140px] truncate" title={a.agent}>{a.agent}</td>
+              <td className="py-2.5 pr-3 font-medium text-slate-700 max-w-[140px] truncate" title={a.agent}>{a.agent}</td>
               <td className="py-2.5 pr-3 text-right text-slate-400">{fmt(a.calls, 0)}</td>
               <td className="py-2.5 pr-3 text-right font-semibold" style={{ color: a.sales > 0 ? COLOR_GREEN : '#64748B' }}>
                 {Number(a.sales) > 0 ? fmt(Number(a.sales), 0) : '—'}
@@ -342,19 +342,19 @@ function OBDrillModal({ title, accent, onClose, loading, onExport, children }: {
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, [onClose]);
   return createPortal(
-    <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm" style={{ zIndex: 9998 }}
+    <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm" style={{ zIndex: 9998 }}
       onClick={onClose}>
-      <div className="bg-[#1E293B] rounded-2xl border border-white/10 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5 shrink-0">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 shrink-0">
           <div className="w-1.5 h-5 rounded-full shrink-0" style={{ backgroundColor: accent ?? COLOR_PURPLE }} />
-          <h3 className="text-sm font-semibold text-slate-200 flex-1 truncate">{title}</h3>
+          <h3 className="text-sm font-semibold text-slate-700 flex-1 truncate">{title}</h3>
           {onExport && (
-            <button onClick={onExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors">
+            <button onClick={onExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
               <FileDown size={13} /> Export CSV
             </button>
           )}
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors ml-1">
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors ml-1">
             <X size={15} />
           </button>
         </div>
@@ -583,20 +583,20 @@ export default function OutboundSalesDashboard() {
   }));
 
   return (
-    <div className="min-h-screen bg-[#0F172A] text-white">
+    <div className="min-h-screen bg-white text-slate-900">
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="px-6 pt-6 pb-4 bg-[#0B1120] border-b border-white/5">
+      <div className="px-6 pt-6 pb-4 bg-white border-b border-slate-200">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-3">
             <button
               onClick={() => navigate('/call-master')}
-              className="flex items-center gap-1.5 text-slate-500 hover:text-white transition-colors text-xs"
+              className="flex items-center gap-1.5 text-slate-500 hover:text-slate-900 transition-colors text-xs"
             >
               <ChevronLeft size={14} /> Call Master
             </button>
             <span className="text-slate-700">/</span>
             <div>
-              <h1 className="text-xl font-bold text-white tracking-tight">Outbound Sales Intelligence</h1>
+              <h1 className="text-xl font-bold text-slate-900 tracking-tight">Outbound Sales Intelligence</h1>
               <p className="text-xs text-slate-500 mt-0.5">
                 db_external.CallDetails · {user?.role === 'super_admin' ? 'All Process' : 'Your Scope'}
               </p>
@@ -622,30 +622,30 @@ export default function OutboundSalesDashboard() {
 
         {/* Filter bar */}
         <div className="flex flex-wrap gap-3 items-center">
-          <div className="flex items-center gap-1.5 bg-[#1E293B] border border-white/10 rounded-lg px-3 py-2">
+          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-3 py-2">
             <Calendar size={13} className="text-slate-500 shrink-0" />
             <div className="flex flex-col gap-0.5">
               <span className="text-[9px] text-slate-500 uppercase tracking-wider leading-none">From</span>
               <input type="datetime-local" value={startDate} onChange={e => setStartDate(e.target.value)}
-                className="bg-transparent text-xs text-slate-200 outline-none [color-scheme:dark]" />
+                className="bg-transparent text-xs text-slate-700 outline-none [color-scheme:dark]" />
             </div>
             <span className="text-slate-600 mx-1 self-center">—</span>
             <div className="flex flex-col gap-0.5">
               <span className="text-[9px] text-slate-500 uppercase tracking-wider leading-none">To</span>
               <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
-                className="bg-transparent text-xs text-slate-200 outline-none [color-scheme:dark]" />
+                className="bg-transparent text-xs text-slate-700 outline-none [color-scheme:dark]" />
             </div>
           </div>
 
           {isTenantLocked ? (
-            <div className="flex items-center gap-2 bg-[#1E293B] border border-blue-500/40 rounded-lg px-3 py-2">
+            <div className="flex items-center gap-2 bg-white border border-blue-500/40 rounded-lg px-3 py-2">
               <Lock size={12} className="text-blue-400 shrink-0" />
               <span className="text-sm text-blue-300 font-medium">{clients[0].name}</span>
             </div>
           ) : (
             <div className="relative">
               <select value={clientId} onChange={e => setClientId(e.target.value)}
-                className="appearance-none bg-[#1E293B] border border-white/10 text-sm text-slate-200 rounded-lg px-3 py-2 pr-8 outline-none">
+                className="appearance-none bg-white border border-slate-200 text-sm text-slate-700 rounded-lg px-3 py-2 pr-8 outline-none">
                 <option value="">All Processes</option>
                 {clients.map(c => (
                   <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
@@ -656,7 +656,7 @@ export default function OutboundSalesDashboard() {
           )}
 
           <motion.button whileTap={{ scale: 0.95 }} onClick={fetchAll} disabled={loading}
-            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-slate-900 text-sm font-medium px-4 py-2 rounded-lg transition-colors">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             {loading ? 'Loading…' : 'Refresh'}
           </motion.button>
@@ -809,8 +809,8 @@ export default function OutboundSalesDashboard() {
           ) : (
             <div className="overflow-x-auto max-h-72 overflow-y-auto">
               <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-[#1E293B]">
-                  <tr className="border-b border-white/10">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="border-b border-slate-200">
                     <th className="text-left text-slate-500 py-2 pr-3 font-semibold">Date</th>
                     <th className="text-right text-slate-500 py-2 pr-3 font-semibold">Calls</th>
                     <th className="text-right text-slate-500 py-2 pr-3 font-semibold">Sales</th>
@@ -820,8 +820,8 @@ export default function OutboundSalesDashboard() {
                 </thead>
                 <tbody>
                   {trend.map(r => (
-                    <tr key={r.date} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                      <td className="py-2.5 pr-3 font-medium text-slate-300">{r.date}</td>
+                    <tr key={r.date} className="border-b border-slate-200 hover:bg-slate-100 transition-colors">
+                      <td className="py-2.5 pr-3 font-medium text-slate-600">{r.date}</td>
                       <td className="py-2.5 pr-3 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
                       <td className="py-2.5 pr-3 text-right font-semibold" style={{ color: r.sales > 0 ? COLOR_GREEN : '#64748B' }}>
                         {Number(r.sales) > 0 ? Number(r.sales).toLocaleString() : '—'}
@@ -864,7 +864,7 @@ export default function OutboundSalesDashboard() {
               { label: 'Conversion',  val: `${agentDrill.conv_pct.toFixed(1)}%`,                         color: pctColor(agentDrill.conv_pct) },
               { label: 'Avg Talk',    val: fmtSec(agentDrill.avg_talk_sec),                              color: COLOR_AMBER },
             ].map(({ label, val, color }) => (
-              <div key={label} className="bg-[#0F172A] rounded-xl p-3 border border-white/5">
+              <div key={label} className="bg-white rounded-xl p-3 border border-slate-200">
                 <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">{label}</p>
                 <p className="text-lg font-bold" style={{ color }}>{val}</p>
               </div>
@@ -911,8 +911,8 @@ export default function OutboundSalesDashboard() {
               <h4 className="text-[11px] text-slate-500 uppercase tracking-widest mt-5 mb-3">Daily Breakdown</h4>
               <div className="overflow-auto max-h-56">
                 <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-[#1E293B] z-10">
-                    <tr className="border-b border-white/5">
+                  <thead className="sticky top-0 bg-white z-10">
+                    <tr className="border-b border-slate-200">
                       {['Date','Calls','Sales','Conv%','Avg Talk'].map(h => (
                         <th key={h} className="py-2 px-3 text-right first:text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap text-[9px]">{h}</th>
                       ))}
@@ -920,8 +920,8 @@ export default function OutboundSalesDashboard() {
                   </thead>
                   <tbody>
                     {agentDrillRows.map((r, i) => (
-                      <tr key={r.date} className={`border-b border-white/[0.04] ${i%2===0?'':'bg-white/[0.01]'}`}>
-                        <td className="py-2 px-3 text-slate-300 font-medium">{fmtDate(r.date)}</td>
+                      <tr key={r.date} className={`border-b border-slate-100 ${i%2===0?'':'bg-transparent'}`}>
+                        <td className="py-2 px-3 text-slate-600 font-medium">{fmtDate(r.date)}</td>
                         <td className="py-2 px-3 text-right text-slate-400 tabular-nums">{Number(r.calls).toLocaleString()}</td>
                         <td className="py-2 px-3 text-right font-semibold tabular-nums" style={{ color: r.sales > 0 ? COLOR_GREEN : '#64748B' }}>
                           {Number(r.sales) > 0 ? Number(r.sales).toLocaleString() : '—'}

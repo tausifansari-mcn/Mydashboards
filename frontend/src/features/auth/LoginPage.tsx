@@ -49,10 +49,10 @@ export default function LoginPage() {
               transition={{ delay: 0.1, type: 'spring', stiffness: 200 }}
               className="mx-auto mb-4 flex items-center justify-center"
             >
-              <img src="/mas-call-logo-login.png" alt="MAS Call Logo" className="h-20 w-auto object-contain" />
+              <img src="/Logo.png" alt="MAS Logo" className="h-20 w-auto object-contain drop-shadow-md" />
             </motion.div>
-            <h1 className="text-xl font-bold text-slate-900">My Dashboard</h1>
-            <p className="mt-1 text-sm text-slate-500">Mas CallNet Analytics</p>
+            <h1 className="text-xl font-black text-slate-900">My Dashboard</h1>
+            <p className="mt-1 text-sm font-semibold" style={{ color: '#1565C0' }}>Mas CallNet Analytics</p>
           </div>
 
           {error && (

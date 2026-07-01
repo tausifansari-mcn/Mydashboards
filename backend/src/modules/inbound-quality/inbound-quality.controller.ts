@@ -67,6 +67,57 @@ export async function getSocialMediaThreats(req: Request, res: Response) {
   }
 }
 
+export async function getSocialThreatDetail(req: Request, res: Response) {
+  try {
+    const data = await svc.getSocialThreatDetail(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getTopPositiveSignals(req: Request, res: Response) {
+  try {
+    const data = await svc.getTopPositiveSignals(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getPosKeywordPhrases(req: Request, res: Response) {
+  try {
+    const pattern = (req.query.pattern as string) || '';
+    if (!pattern) { res.status(400).json({ message: 'pattern is required' }); return; }
+    const data = await svc.getPosKeywordPhrases(parseFilters(req), pattern);
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getPosKeywordLeads(req: Request, res: Response) {
+  try {
+    const pattern = (req.query.pattern as string) || '';
+    if (!pattern) { res.status(400).json({ message: 'pattern is required' }); return; }
+    const data = await svc.getPosKeywordLeads(parseFilters(req), pattern);
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getTranscript(req: Request, res: Response) {
+  try {
+    const leadId = (req.query.leadId as string) || '';
+    if (!leadId) { res.status(400).json({ message: 'leadId is required' }); return; }
+    const data = await svc.getTranscript(leadId);
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function getTopNegativeSignalDetails(req: Request, res: Response) {
   try {
     const data = await svc.getTopNegativeSignalDetails(parseFilters(req));
@@ -79,6 +130,90 @@ export async function getTopNegativeSignalDetails(req: Request, res: Response) {
 export async function getPotentialScams(req: Request, res: Response) {
   try {
     const data = await svc.getPotentialScams(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getAbuseDetail(req: Request, res: Response) {
+  try {
+    const data = await svc.getAbuseDetail(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getPotentialScamsDetail(req: Request, res: Response) {
+  try {
+    const data = await svc.getPotentialScamsDetail(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getNegKeywords(_req: Request, res: Response) {
+  try {
+    const data = await svc.getNegKeywords();
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function addNegKeyword(req: Request, res: Response) {
+  try {
+    const { pattern, category } = req.body as { pattern?: string; category?: string };
+    if (!pattern || !category) {
+      res.status(400).json({ message: 'pattern and category are required' });
+      return;
+    }
+    const validCategories = ['Frustration', 'Threat', 'Abuse', 'Slang', 'Sarcasm'];
+    if (!validCategories.includes(category)) {
+      res.status(400).json({ message: `category must be one of: ${validCategories.join(', ')}` });
+      return;
+    }
+    await svc.addNegKeyword(pattern.trim(), category);
+    res.json({ success: true });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function updateNegKeyword(req: Request, res: Response) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { enabled } = req.body as { enabled?: boolean };
+    if (isNaN(id) || enabled === undefined) {
+      res.status(400).json({ message: 'id and enabled are required' });
+      return;
+    }
+    await svc.updateNegKeyword(id, Boolean(enabled));
+    res.json({ success: true });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function reloadNegRules(_req: Request, res: Response) {
+  try {
+    await svc.reloadNegRules();
+    res.json({ success: true, message: 'Neg category rules reloaded' });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getNegSignalDetail(req: Request, res: Response) {
+  try {
+    const signal = (req.query.signal as string) as 'Threat' | 'Frustration';
+    if (signal !== 'Threat' && signal !== 'Frustration') {
+      res.status(400).json({ message: 'signal must be Threat or Frustration' });
+      return;
+    }
+    const data = await svc.getNegSignalDetail(parseFilters(req), signal);
     res.json({ data });
   } catch (err: unknown) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
@@ -187,6 +322,40 @@ export async function getBandDetail(req: Request, res: Response) {
     const filters = { ...parseFilters(req), band: (req.query.band as string) || 'excellent' };
     const data = await svc.getBandDetail(filters);
     res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getAgentMaster(_req: Request, res: Response) {
+  try {
+    const data = await svc.getAgentMaster();
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getMissingAgents(req: Request, res: Response) {
+  try {
+    const data = await svc.getMissingAgents(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function insertAgentMaster(req: Request, res: Response) {
+  try {
+    const { masId, agentName, lob, process: proc } = req.body as {
+      masId: string; agentName: string; lob: string; process?: string;
+    };
+    if (!masId || !agentName) {
+      res.status(400).json({ message: 'masId and agentName are required' });
+      return;
+    }
+    await svc.insertAgentMaster({ masId, agentName, lob: lob || '', process: proc });
+    res.json({ success: true });
   } catch (err: unknown) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
   }

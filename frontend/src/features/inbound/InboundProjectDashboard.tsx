@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useRef, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
 import { useProcessStore } from '@/store/processStore';
 import {
   BarChart, Bar, LineChart, Line, ComposedChart,
@@ -37,7 +36,7 @@ function downloadChartPNG(ref: React.RefObject<HTMLDivElement | null>, name: str
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#1E293B'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, w, h);
   const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml;charset=utf-8' }));
   const img = new Image();
   img.onload = () => {
@@ -66,19 +65,19 @@ function SectionCard({
 
   return (
     <>
-      <div className="rounded-xl border border-white/10 bg-[#1E293B] overflow-hidden">
-        <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
+      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
           <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-          <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
+          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">{title}</h3>
           <div className="flex items-center gap-1">
             {onDownload && (
               <button onClick={onDownload} title="Download chart data as CSV"
-                className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors">
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors">
                 <FileDown size={13} />
               </button>
             )}
             <button onClick={() => setExpanded(true)} title="Expand"
-              className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors">
+              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors">
               <Maximize2 size={13} />
             </button>
           </div>
@@ -94,22 +93,22 @@ function SectionCard({
           style={{ zIndex: 9999 }}
           onClick={e => { if (e.target === e.currentTarget) setExpanded(false); }}
         >
-          <div className="flex flex-col bg-[#1E293B] rounded-2xl border border-white/10 overflow-hidden flex-1 min-h-0">
-            <div className="flex items-center gap-2.5 px-6 py-4 border-b border-white/5 shrink-0">
+          <div className="flex flex-col bg-white rounded-2xl border border-slate-200 overflow-hidden flex-1 min-h-0">
+            <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-200 shrink-0">
               <div className="w-1.5 h-5 rounded-full" style={{ backgroundColor: accent }} />
-              <h3 className="text-sm font-semibold text-slate-200 flex-1">{title}</h3>
+              <h3 className="text-sm font-semibold text-slate-700 flex-1">{title}</h3>
               {onDownload && (
                 <button onClick={onDownload}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors mr-1">
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors mr-1">
                   <FileDown size={13} /> Download Data
                 </button>
               )}
               <button onClick={() => downloadChartPNG(expandBodyRef, title)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors mr-1">
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors mr-1">
                 <Download size={13} /> PNG
               </button>
               <button onClick={() => setExpanded(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors">
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
                 <X size={16} />
               </button>
             </div>
@@ -182,14 +181,14 @@ function KPICard({ label, value, sub, color, icon: Icon }: {
   label: string; value: string; sub?: string; color: string; icon: React.ElementType;
 }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-[#1E293B] p-4 flex flex-col gap-2">
+    <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ backgroundColor: color + '22' }}>
           <Icon className="h-4 w-4" style={{ color }} />
         </div>
         <span className="text-xs text-slate-400 uppercase tracking-wide">{label}</span>
       </div>
-      <p className="text-2xl font-bold text-white">{value}</p>
+      <p className="text-2xl font-bold text-slate-900">{value}</p>
       {sub && <p className="text-xs text-slate-500">{sub}</p>}
     </div>
   );
@@ -246,8 +245,8 @@ export default function InboundProjectDashboard() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   if (!meta) return (
-    <div className="flex min-h-screen items-center justify-center bg-[#0B1120]">
-      <p className="text-white text-xl mr-4">Project not found: {projectKey}</p>
+    <div className="flex min-h-screen items-center justify-center bg-white">
+      <p className="text-slate-900 text-xl mr-4">Project not found: {projectKey}</p>
       <button onClick={() => navigate('/inbound')} className="text-blue-400 underline">Back</button>
     </div>
   );
@@ -268,19 +267,19 @@ export default function InboundProjectDashboard() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0B1120] text-white p-6 space-y-6">
+    <div className="min-h-screen bg-white text-slate-900 p-6 space-y-6">
 
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-4">
           <button onClick={() => navigate('/inbound')}
-            className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-400 hover:text-white transition-colors">
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-400 hover:text-slate-900 transition-colors">
             <ArrowLeft className="h-4 w-4" /> All Projects
           </button>
           <div className="flex items-center gap-3">
             <span className="text-3xl">{meta.icon}</span>
             <div>
-              <h1 className="text-2xl font-bold text-white">{meta.name} Inbound</h1>
+              <h1 className="text-2xl font-bold text-slate-900">{meta.name} Inbound</h1>
               <p className="text-xs text-slate-400">Mandate: {meta.mandate} agents · Required: {meta.required}</p>
             </div>
           </div>
@@ -288,12 +287,12 @@ export default function InboundProjectDashboard() {
         <div className="flex items-center gap-2 flex-wrap">
           {(['today','7d','30d'] as const).map(r => (
             <button key={r} onClick={() => setRange(r)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${range===r?'bg-blue-600 text-white':'border border-white/10 text-slate-400 hover:text-white'}`}>
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${range===r?'bg-blue-600 text-slate-900':'border border-slate-200 text-slate-400 hover:text-slate-900'}`}>
               {r==='today'?'Today':r==='7d'?'Last 7 Days':'Last 30 Days'}
             </button>
           ))}
           <button onClick={fetchAll}
-            className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors">
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs text-slate-400 hover:text-slate-900 transition-colors">
             <RefreshCw className={`h-3 w-3 ${loading?'animate-spin':''}`} />
             {lastUpdated || 'Refresh'}
           </button>
@@ -341,7 +340,7 @@ export default function InboundProjectDashboard() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="hour" tickFormatter={fmtHour} tick={{ fill: '#94A3B8', fontSize: 11 }} />
                   <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0F172A', border: '1px solid #334155' }}
+                  <Tooltip contentStyle={{ backgroundColor: '#F8FAFC', border: '1px solid #334155' }}
                     labelFormatter={(v: unknown) => `${fmtHour(Number(v))}`}
                     formatter={(v: unknown, n: unknown) => [Number(v).toLocaleString(), String(n)]} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -354,15 +353,15 @@ export default function InboundProjectDashboard() {
         </div>
 
         {/* Login Progress */}
-        <div className="rounded-xl border border-white/10 bg-[#1E293B] p-4 flex flex-col gap-4">
-          <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Login Status</h3>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col gap-4">
+          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Login Status</h3>
           <div className="flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-full border-2"
               style={{ borderColor: (summary?.login_count??0) >= meta.required ? '#22C55E' : '#F59E0B' }}>
-              <Users className="h-5 w-5 text-white" />
+              <Users className="h-5 w-5 text-slate-900" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-white">{summary?.login_count ?? 0}</p>
+              <p className="text-2xl font-bold text-slate-900">{summary?.login_count ?? 0}</p>
               <p className="text-xs text-slate-400">of {meta.mandate} mandate</p>
             </div>
           </div>
@@ -377,7 +376,7 @@ export default function InboundProjectDashboard() {
               <span>Deficit: {Math.max(0, meta.required - (summary?.login_count ?? 0))}</span>
             </div>
           </div>
-          <div className="mt-auto space-y-2 border-t border-white/10 pt-4 text-xs">
+          <div className="mt-auto space-y-2 border-t border-slate-200 pt-4 text-xs">
             {([['AL Target','≥ 95%',alColor(summary?.al??0)],['SL Target','≥ 80%',slColor(summary?.sl??0)],['ACHT Target','≤ 300s',achtColor(summary?.acht??0)]] as [string,string,string][]).map(([k,v,c]) => (
               <div key={k} className="flex justify-between"><span className="text-slate-400">{k}</span><span className="font-medium" style={{ color: c }}>{v}</span></div>
             ))}
@@ -400,7 +399,7 @@ export default function InboundProjectDashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis dataKey="date" tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v: unknown) => fmtDateTick(v)} />
               <YAxis domain={[0,100]} tick={{ fill: '#94A3B8', fontSize: 11 }} unit="%" />
-              <Tooltip contentStyle={{ backgroundColor: '#0F172A', border: '1px solid #334155' }}
+              <Tooltip contentStyle={{ backgroundColor: '#F8FAFC', border: '1px solid #334155' }}
                 formatter={(v: unknown, n: unknown) => [`${Number(v).toFixed(1)}%`, String(n)]} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <ReferenceLine y={95} stroke="#22C55E" strokeDasharray="4 4" label={{ value:'AL 95%', fill:'#22C55E', fontSize:10 }} />
@@ -429,7 +428,7 @@ export default function InboundProjectDashboard() {
               <XAxis dataKey="date" tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v: unknown) => fmtDateTick(v)} />
               <YAxis yAxisId="acht"   orientation="left"  tick={{ fill:'#94A3B8',fontSize:11 }} unit="s" />
               <YAxis yAxisId="repeat" orientation="right" tick={{ fill:'#94A3B8',fontSize:11 }} unit="%" />
-              <Tooltip contentStyle={{ backgroundColor: '#0F172A', border: '1px solid #334155' }}
+              <Tooltip contentStyle={{ backgroundColor: '#F8FAFC', border: '1px solid #334155' }}
                 formatter={(v: unknown, n: unknown) => { const s=String(n); return s==='ACHT'?[`${Number(v)}s`,s]:[`${Number(v).toFixed(1)}%`,s]; }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <ReferenceLine yAxisId="acht"   y={300} stroke="#F59E0B" strokeDasharray="4 4" label={{ value:'300s', fill:'#F59E0B', fontSize:10 }} />
@@ -456,7 +455,7 @@ export default function InboundProjectDashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis dataKey="date" tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v: unknown) => fmtDateTick(v)} />
               <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} />
-              <Tooltip contentStyle={{ backgroundColor: '#0F172A', border: '1px solid #334155' }}
+              <Tooltip contentStyle={{ backgroundColor: '#F8FAFC', border: '1px solid #334155' }}
                 formatter={(v: unknown, n: unknown) => [Number(v).toLocaleString(), String(n)]} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="offered"  name="Offered"  fill={meta.color} radius={[2,2,0,0]} />
@@ -467,21 +466,21 @@ export default function InboundProjectDashboard() {
       </SectionCard>
 
       {/* ── Date-wise Performance Table ── */}
-      <div className="rounded-xl border border-white/10 bg-[#1E293B] overflow-hidden">
-        <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
+      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
           <div className="w-1.5 h-4 rounded-full shrink-0 bg-blue-500" />
-          <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">
+          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">
             Date-wise Performance · {meta.name}
           </h3>
           <button onClick={exportPerf}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors">
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
             <FileDown size={13} /> Export CSV
           </button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-white/5 bg-white/[0.02]">
+              <tr className="border-b border-slate-200 bg-slate-50">
                 {['Date','Offered','Answered','AL%','SL%','ACHT','Repeat%',...(meta.hasFCR?['FCR%']:[])].map(h => (
                   <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
@@ -491,15 +490,15 @@ export default function InboundProjectDashboard() {
               {trend.length === 0 ? (
                 <tr><td colSpan={meta.hasFCR?8:7} className="py-8 text-center text-slate-600">No data available</td></tr>
               ) : trend.map((r, i) => (
-                <tr key={r.date} className={`border-b border-white/[0.04] hover:bg-white/[0.02] ${i%2===0?'':'bg-white/[0.01]'}`}>
-                  <td className="py-2 px-3 text-slate-300 font-medium">{fmtDate(r.date)}</td>
-                  <td className="py-2 px-3 text-slate-300 tabular-nums">{r.offered.toLocaleString()}</td>
-                  <td className="py-2 px-3 text-slate-300 tabular-nums">{r.answered.toLocaleString()}</td>
+                <tr key={r.date} className={`border-b border-slate-100 hover:bg-slate-50 ${i%2===0?'':'bg-transparent'}`}>
+                  <td className="py-2 px-3 text-slate-600 font-medium">{fmtDate(r.date)}</td>
+                  <td className="py-2 px-3 text-slate-600 tabular-nums">{r.offered.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-slate-600 tabular-nums">{r.answered.toLocaleString()}</td>
                   <td className="py-2 px-3 tabular-nums"><span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ color: alColor(r.al), background: alColor(r.al)+'18' }}>{r.al.toFixed(1)}%</span></td>
                   <td className="py-2 px-3 tabular-nums"><span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ color: slColor(r.sl), background: slColor(r.sl)+'18' }}>{r.sl.toFixed(1)}%</span></td>
                   <td className="py-2 px-3 tabular-nums"><span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ color: achtColor(r.acht), background: achtColor(r.acht)+'18' }}>{r.acht}s</span></td>
                   <td className="py-2 px-3 tabular-nums"><span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ color: repeatColor(r.repeat_pct), background: repeatColor(r.repeat_pct)+'18' }}>{r.repeat_pct.toFixed(1)}%</span></td>
-                  {meta.hasFCR && <td className="py-2 px-3 tabular-nums text-slate-300">{r.fcr_pct!=null?`${r.fcr_pct.toFixed(1)}%`:'—'}</td>}
+                  {meta.hasFCR && <td className="py-2 px-3 tabular-nums text-slate-600">{r.fcr_pct!=null?`${r.fcr_pct.toFixed(1)}%`:'—'}</td>}
                 </tr>
               ))}
             </tbody>
@@ -508,21 +507,21 @@ export default function InboundProjectDashboard() {
       </div>
 
       {/* ── Manpower Details Table ── */}
-      <div className="rounded-xl border border-white/10 bg-[#1E293B] overflow-hidden">
-        <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
+      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
           <div className="w-1.5 h-4 rounded-full shrink-0 bg-purple-500" />
-          <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">
+          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">
             👥 Manpower Details · {meta.name}
           </h3>
           <button onClick={exportManpower}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors">
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
             <FileDown size={13} /> Export CSV
           </button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-white/5 bg-white/[0.02]">
+              <tr className="border-b border-slate-200 bg-slate-50">
                 {['Date','Mandate','Required','Login Count','Deficit'].map(h => (
                   <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
@@ -534,10 +533,10 @@ export default function InboundProjectDashboard() {
               ) : trend.map((r, i) => {
                 const deficit = meta.required - r.login_count;
                 return (
-                  <tr key={r.date} className={`border-b border-white/[0.04] hover:bg-white/[0.02] ${i%2===0?'':'bg-white/[0.01]'}`}>
-                    <td className="py-2 px-3 text-slate-300 font-medium">{fmtDate(r.date)}</td>
-                    <td className="py-2 px-3 text-slate-300 tabular-nums">{meta.mandate}</td>
-                    <td className="py-2 px-3 text-slate-300 tabular-nums">{meta.required}</td>
+                  <tr key={r.date} className={`border-b border-slate-100 hover:bg-slate-50 ${i%2===0?'':'bg-transparent'}`}>
+                    <td className="py-2 px-3 text-slate-600 font-medium">{fmtDate(r.date)}</td>
+                    <td className="py-2 px-3 text-slate-600 tabular-nums">{meta.mandate}</td>
+                    <td className="py-2 px-3 text-slate-600 tabular-nums">{meta.required}</td>
                     <td className="py-2 px-3 tabular-nums">
                       <span className="px-1.5 py-0.5 rounded text-[11px] font-semibold"
                         style={{ color: r.login_count>=meta.required?'#22C55E':'#EF4444', background: (r.login_count>=meta.required?'#22C55E':'#EF4444')+'18' }}>

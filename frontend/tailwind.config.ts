@@ -6,11 +6,15 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        primary: { DEFAULT: '#1E40AF', foreground: '#ffffff', light: '#EFF6FF', dark: '#1e3a8a' },
-        accent: { DEFAULT: '#F59E0B', foreground: '#ffffff' },
-        success: { DEFAULT: '#10B981', foreground: '#ffffff' },
-        danger: { DEFAULT: '#EF4444', foreground: '#ffffff' },
-        sidebar: { DEFAULT: '#0F172A', foreground: '#94a3b8', active: '#1E40AF' },
+        /* MAS brand colors — from Logo.png */
+        primary: { DEFAULT: '#1565C0', foreground: '#ffffff', light: '#E3F2FD', dark: '#0D47A1' },
+        'mas-blue':  { DEFAULT: '#1565C0', light: '#E3F2FD', dark: '#0D47A1' },
+        'mas-green': { DEFAULT: '#43A832', light: '#E8F5E9', dark: '#2E7D32' },
+        'mas-red':   { DEFAULT: '#D32F2F', light: '#FFEBEE', dark: '#B71C1C' },
+        accent: { DEFAULT: '#43A832', foreground: '#ffffff' },
+        success: { DEFAULT: '#43A832', foreground: '#ffffff' },
+        danger: { DEFAULT: '#D32F2F', foreground: '#ffffff' },
+        sidebar: { DEFAULT: '#0F172A', foreground: '#94a3b8', active: '#1565C0' },
       },
       fontFamily: {
         sans: ['"Fira Sans"', 'Inter', 'sans-serif'],

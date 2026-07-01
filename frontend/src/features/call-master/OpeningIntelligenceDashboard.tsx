@@ -52,9 +52,9 @@ const C_TEAL   = '#06B6D4';
 const C_PINK   = '#EC4899';
 const COLORS   = [C_BLUE, C_GREEN, C_PURPLE, C_AMBER, C_RED, C_TEAL, C_PINK, '#6366F1'];
 
-const TOOLTIP_STYLE = { background: '#0F172A', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
+const TOOLTIP_STYLE = { background: '#FFFFFF', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
 const AXIS_TICK     = { fill: '#64748B', fontSize: 11 };
-const GRID_PROPS    = { strokeDasharray: '3 3', stroke: '#1E293B' };
+const GRID_PROPS    = { strokeDasharray: '3 3', stroke: '#FFFFFF' };
 
 const OPENING_COLORS: Record<string, string> = {
   'Full Opening':      C_GREEN,
@@ -128,7 +128,7 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, index }
     <motion.div
       initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.06, duration: 0.4 }}
-      className="relative bg-gradient-to-br from-[#1E293B] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-white/5 overflow-hidden"
+      className="relative bg-gradient-to-br from-[#FFFFFF] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-slate-200 overflow-hidden"
     >
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
       <div className="pl-2">
@@ -138,7 +138,7 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, index }
             <div style={{ color }}>{icon}</div>
           </div>
         </div>
-        <div className="text-2xl font-bold text-white tracking-tight">
+        <div className="text-2xl font-bold text-slate-900 tracking-tight">
           <AnimatedNumber value={value} suffix={suffix} dec={dec} />
         </div>
         {sub && <div className="text-[11px] text-slate-500 mt-1">{sub}</div>}
@@ -164,22 +164,22 @@ function SectionCard({ title, children, className = '', accent = C_BLUE, downloa
   }, [expanded]);
 
   const header = (onClose?: () => void) => (
-    <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
+    <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
       <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
+      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">{title}</h3>
       {downloadData && downloadData.rows.length > 0 && (
         <button onClick={(e) => { e.stopPropagation(); downloadCSV(downloadData.filename, downloadData.rows); }}
-          title="Download CSV" className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
+          title="Download CSV" className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded">
           <Download size={13} />
         </button>
       )}
       {!onClose ? (
         <button onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
-          title="Expand" className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
+          title="Expand" className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded">
           <Maximize2 size={13} />
         </button>
       ) : (
-        <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-0.5 rounded ml-1">
+        <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition-colors p-0.5 rounded ml-1">
           <X size={15} />
         </button>
       )}
@@ -189,14 +189,14 @@ function SectionCard({ title, children, className = '', accent = C_BLUE, downloa
   return (
     <>
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
-        className={`bg-[#1E293B] rounded-xl border border-white/5 overflow-hidden ${className}`}>
+        className={`bg-white rounded-xl border border-slate-200 overflow-hidden ${className}`}>
         {header()}
         <div className="p-5">{children}</div>
       </motion.div>
       {expanded && createPortal(
         <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-black/75 backdrop-blur-sm"
           style={{ zIndex: 9999 }} onClick={() => setExpanded(false)}>
-          <div className="bg-[#1E293B] rounded-2xl border border-white/10 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
             style={{ maxHeight: '90vh' }} onClick={e => e.stopPropagation()}>
             {header(() => setExpanded(false))}
             <div className="p-6 overflow-auto flex-1">{children}</div>
@@ -270,7 +270,7 @@ function PeriodSelector({ value, onChange }: {
       {opts.map(o => (
         <button key={o} onClick={() => onChange(o)}
           className={`px-2.5 py-1 rounded-md text-[10px] font-semibold capitalize transition-colors ${
-            value === o ? 'bg-blue-600 text-white' : 'bg-slate-700/60 text-slate-400 hover:text-slate-200'
+            value === o ? 'bg-blue-600 text-slate-900' : 'bg-slate-700/60 text-slate-400 hover:text-slate-700'
           }`}>{o}</button>
       ))}
     </div>
@@ -289,7 +289,7 @@ function DimSelector({ value, onChange }: {
       {opts.map(o => (
         <button key={o} onClick={() => onChange(o)}
           className={`px-2.5 py-1 rounded-md text-[10px] font-semibold capitalize transition-colors ${
-            value === o ? 'bg-purple-600 text-white' : 'bg-slate-700/60 text-slate-400 hover:text-slate-200'
+            value === o ? 'bg-purple-600 text-slate-900' : 'bg-slate-700/60 text-slate-400 hover:text-slate-700'
           }`}>{o}</button>
       ))}
     </div>
@@ -313,7 +313,7 @@ function InsightCard({ insight, index }: { insight: AIInsight; index: number }) 
         className="w-full flex items-center gap-3 px-4 py-3 text-left">
         <span style={{ color: cfg.color }}>{cfg.icon}</span>
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-bold text-white truncate">{insight.title}</div>
+          <div className="text-xs font-bold text-slate-900 truncate">{insight.title}</div>
           <div className="text-[10px] mt-0.5" style={{ color: cfg.color }}>{cfg.label}</div>
         </div>
         <span className="text-slate-500 shrink-0">{open ? '−' : '+'}</span>
@@ -331,7 +331,7 @@ function InsightCard({ insight, index }: { insight: AIInsight; index: number }) 
               ].map(({ k, v }) => (
                 <div key={k} className="rounded-lg bg-black/20 px-3 py-2">
                   <div className="text-[9px] font-bold uppercase tracking-wider mb-1" style={{ color: cfg.color }}>{k}</div>
-                  <div className="text-[11px] text-slate-300 leading-relaxed">{v}</div>
+                  <div className="text-[11px] text-slate-600 leading-relaxed">{v}</div>
                 </div>
               ))}
             </div>
@@ -587,18 +587,18 @@ export default function OpeningIntelligenceDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0F172A] text-white">
+    <div className="min-h-screen bg-white text-slate-900">
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="bg-[#0B1120] border-b border-white/5 sticky top-0 z-30">
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
           <button onClick={() => navigate('/call-master')}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors text-xs">
+            className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 transition-colors text-xs">
             <ChevronLeft size={16} /> Call Master
           </button>
           <div className="w-px h-4 bg-slate-700" />
           <MessageSquare size={16} className="text-blue-400 shrink-0" />
           <div>
-            <h1 className="text-sm font-bold text-white leading-none">Opening Intelligence</h1>
+            <h1 className="text-sm font-bold text-slate-900 leading-none">Opening Intelligence</h1>
             <p className="text-[10px] text-slate-500 mt-0.5">Opening Pitch & Context Setting Analytics</p>
           </div>
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-600/15 border border-blue-500/30 text-blue-400 text-[10px] font-semibold ml-auto">
@@ -608,19 +608,19 @@ export default function OpeningIntelligenceDashboard() {
 
         {/* Filter Bar */}
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 pb-3 flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-lg px-2.5 py-1.5 border border-white/5">
+          <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-lg px-2.5 py-1.5 border border-slate-200">
             <span className="text-[10px] text-slate-500">From</span>
             <input type="datetime-local" value={startDT} onChange={e => setStartDT(e.target.value)}
-              className="bg-transparent text-[11px] text-slate-300 outline-none w-36" />
+              className="bg-transparent text-[11px] text-slate-600 outline-none w-36" />
           </div>
-          <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-lg px-2.5 py-1.5 border border-white/5">
+          <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-lg px-2.5 py-1.5 border border-slate-200">
             <span className="text-[10px] text-slate-500">To</span>
             <input type="datetime-local" value={endDT} onChange={e => setEndDT(e.target.value)}
-              className="bg-transparent text-[11px] text-slate-300 outline-none w-36" />
+              className="bg-transparent text-[11px] text-slate-600 outline-none w-36" />
           </div>
           {!isSingleClient ? (
             <select value={clientId} onChange={e => setClientId(e.target.value)}
-              className="bg-slate-800/60 border border-white/5 rounded-lg text-[11px] text-slate-300 px-2.5 py-1.5 outline-none">
+              className="bg-slate-800/60 border border-slate-200 rounded-lg text-[11px] text-slate-600 px-2.5 py-1.5 outline-none">
               <option value="">All Process</option>
               {clients.map(c => <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>)}
             </select>
@@ -630,7 +630,7 @@ export default function OpeningIntelligenceDashboard() {
             </div>
           )}
           <button onClick={applyFilters} disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors disabled:opacity-50">
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-slate-900 text-xs font-semibold transition-colors disabled:opacity-50">
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
             {loading ? 'Loading…' : 'Apply'}
           </button>
@@ -706,7 +706,7 @@ export default function OpeningIntelligenceDashboard() {
                           {r.category}
                         </span>
                         <div className="flex items-center gap-2">
-                          <span className="text-slate-300 font-semibold">{Number(r.calls).toLocaleString()}</span>
+                          <span className="text-slate-600 font-semibold">{Number(r.calls).toLocaleString()}</span>
                           <ScoreBadge value={r.conv_pct} />
                         </div>
                       </div>
@@ -769,7 +769,7 @@ export default function OpeningIntelligenceDashboard() {
                           {r.category}
                         </span>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-slate-300 font-semibold">{Number(r.calls).toLocaleString()}</span>
+                          <span className="text-slate-600 font-semibold">{Number(r.calls).toLocaleString()}</span>
                           <ScoreBadge value={r.conv_pct} />
                         </div>
                       </div>
@@ -935,7 +935,7 @@ export default function OpeningIntelligenceDashboard() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-[11px]">
                     <thead>
-                      <tr className="text-slate-500 uppercase text-[10px] tracking-wider border-b border-white/5">
+                      <tr className="text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-200">
                         <th className="pb-2 text-left">#</th>
                         <th className="pb-2 text-left">Agent</th>
                         <th className="pb-2 text-right">Calls</th>
@@ -944,11 +944,11 @@ export default function OpeningIntelligenceDashboard() {
                         <th className="pb-2 text-right">Conv %</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-slate-200">
                       {(leaderboard?.top10Agents ?? []).map((r, i) => (
-                        <tr key={i} className="hover:bg-white/[0.02] transition-colors">
+                        <tr key={i} className="hover:bg-slate-50 transition-colors">
                           <td className="py-1.5 text-slate-600 font-bold">{i + 1}</td>
-                          <td className="py-1.5 text-slate-300 truncate max-w-[120px]" title={r.name}>{r.name}</td>
+                          <td className="py-1.5 text-slate-600 truncate max-w-[120px]" title={r.name}>{r.name}</td>
                           <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
                           <td className="py-1.5 text-right"><ScoreBadge value={r.opening_pct} /></td>
                           <td className="py-1.5 text-right">
@@ -974,7 +974,7 @@ export default function OpeningIntelligenceDashboard() {
                     <div key={i} className="flex items-center gap-2 p-2 rounded-lg bg-red-900/10 border border-red-700/20">
                       <span className="text-red-400 font-bold text-[10px] w-4">{i + 1}</span>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[11px] text-slate-300 truncate">{r.name}</div>
+                        <div className="text-[11px] text-slate-600 truncate">{r.name}</div>
                         <div className="text-[10px] text-slate-500">{Number(r.calls).toLocaleString()} calls</div>
                       </div>
                       <ScoreBadge value={r.opening_score} />
@@ -993,7 +993,7 @@ export default function OpeningIntelligenceDashboard() {
                     <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Clients</p>
                     <HorizBars data={(leaderboard?.topClients ?? []) as unknown as Record<string, unknown>[]} labelKey="name" valueKey="opening_pct" color={C_AMBER} maxItems={5} />
                   </div>
-                  <div className="border-t border-white/5 pt-3">
+                  <div className="border-t border-slate-200 pt-3">
                     <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Campaigns</p>
                     <HorizBars data={(leaderboard?.topCampaigns ?? []) as unknown as Record<string, unknown>[]} labelKey="name" valueKey="opening_pct" color={C_PURPLE} maxItems={5} />
                   </div>
@@ -1025,7 +1025,7 @@ export default function OpeningIntelligenceDashboard() {
             </div>
           </div>
           {!sec8Loading && insights.length === 0 && sec8Loaded.current && (
-            <div className="flex items-center gap-3 p-4 rounded-xl bg-slate-800/40 border border-white/5">
+            <div className="flex items-center gap-3 p-4 rounded-xl bg-slate-800/40 border border-slate-200">
               <Info size={16} className="text-slate-500" />
               <span className="text-[12px] text-slate-400">AI insights will appear once data is loaded.</span>
             </div>

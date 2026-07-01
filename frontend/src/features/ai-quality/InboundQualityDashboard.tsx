@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useProcessStore } from '@/store/processStore';
 import {
-  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LabelList,
   ComposedChart, Bar, XAxis, YAxis, CartesianGrid, ReferenceLine, Legend,
 } from 'recharts';
 import {
@@ -19,6 +19,78 @@ function toLocalDT(d: Date) {
 }
 
 interface PieSlice { name: string; value: number; color: string; }
+
+interface ScamFlagCounts {
+  financial_fraud: number;
+  scam_words:      number;
+}
+interface ScamWordRow {
+  word:      string;
+  scenario:  string;
+  scenario1: string;
+  count:     number;
+  pct:       number;
+  lead_id?:  string;
+  agent_id?: string;
+  date?:     string;
+  flag?:     string;
+}
+interface PotentialScamDetail { flags: ScamFlagCounts; wordRows: ScamWordRow[]; }
+
+interface AbuseDetailRow {
+  speaker:   'Agent' | 'Customer';
+  lead_id:   string;
+  agent_id:  string;
+  word:      string;
+  meaning:   string;
+  scenario:  string;
+  scenario1: string;
+  date:      string;
+  client_id: string;
+}
+interface AbuseDetailResponse { total: number; rows: AbuseDetailRow[]; }
+
+interface NegSignalDetailCallRow {
+  lead_id:   string;
+  agent_id:  string;
+  word:      string;
+  scenario:  string;
+  scenario1: string;
+  date:      string;
+  client_id: string;
+}
+interface NegSignalDetailCallResponse { total: number; rows: NegSignalDetailCallRow[]; }
+
+interface PosKeywordRow { keyword: string; customer_count: number; agent_count: number; total: number; }
+
+interface PosKeywordLeadRow {
+  lead_id:   string;
+  agent_id:  string;
+  source:    'Customer' | 'Agent';
+  phrase:    string;
+  scenario:  string;
+  scenario1: string;
+  date:      string;
+}
+
+interface TranscriptData {
+  lead_id:    string;
+  agent_id:   string;
+  date:       string;
+  transcript: string;
+}
+
+interface SocialThreatDetailRow {
+  lead_id:     string;
+  agent_id:    string;
+  threat_word: string;
+  threat_type: 'Social Media' | 'Court & Legal';
+  scenario:    string;
+  scenario1:   string;
+  date:        string;
+  client_id:   string;
+}
+interface SocialThreatDetailResponse { total: number; rows: SocialThreatDetailRow[]; }
 
 interface AchtRow {
   category:    string;
@@ -50,6 +122,7 @@ interface InboundProcessKPIs {
   frustration_count:          number;
   threat_count:               number;
   abuse_count:                number;
+  cuss_abuse_count:           number;
   slang_count:                number;
   sarcasm_count:              number;
   pie_data:                   PieSlice[];
@@ -86,6 +159,9 @@ interface DayWiseRepeatRow { call_date: string; unique_calls: number; repeat_cal
 interface RepeatPivotRow   { mobile_no: string; by_date: Record<string, number>; grand_total: number; }
 interface RepeatAnalysis   { grand_unique: number; grand_repeat: number; grand_pct: number; day_wise: DayWiseRepeatRow[]; pivot_dates: string[]; pivot_rows: RepeatPivotRow[]; }
 
+interface AgentMasterRow  { masId: string; agentName: string; lob: string; }
+interface MissingAgentRow { masId: string; audit_count: number; }
+
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 function downloadCSV(rows: Record<string, unknown>[], filename: string) {
   if (!rows.length) return;
@@ -119,18 +195,764 @@ function DrillModal({ title, accent, onClose, children }: DrillModalProps) {
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
   return createPortal(
-    <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-start justify-center overflow-y-auto py-6 px-4"
+    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto py-6 px-4"
       onClick={onClose}>
-      <div className="bg-[#0F172A] border border-white/10 rounded-2xl w-full max-w-5xl shadow-2xl"
+      <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-5xl shadow-2xl"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200">
           <div className="w-1 h-5 rounded-full" style={{ background: accent }} />
-          <p className="text-sm font-bold text-white flex-1">{title}</p>
-          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+          <p className="text-sm font-bold text-slate-900 flex-1">{title}</p>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition-colors">
             <X size={18} />
           </button>
         </div>
         <div className="p-6">{children}</div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ─── Transcript Modal ────────────────────────────────────────────────────────
+function TranscriptModal({ data, loading, onClose }: { data: TranscriptData | null; loading: boolean; onClose: () => void }) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200"
+          style={{ background: 'linear-gradient(135deg, #EFF6FF, #DBEAFE)' }}>
+          <div className="p-2 rounded-xl bg-blue-100">
+            <span className="text-lg">📋</span>
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-black text-slate-900">Call Transcript</p>
+            {data && (
+              <p className="text-[10px] text-slate-500 mt-0.5 font-medium">
+                Lead: <span className="font-mono text-blue-700">{data.lead_id}</span>
+                {' · '}Agent: <span className="font-semibold text-slate-700">{data.agent_id}</span>
+                {' · '}{data.date}
+              </p>
+            )}
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-900 transition-colors p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="overflow-auto flex-1 p-6">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+              <Loader2 size={20} className="animate-spin" />
+              <span className="text-sm font-semibold">Loading transcript…</span>
+            </div>
+          ) : !data || !data.transcript ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-slate-400">
+              <span className="text-4xl">📭</span>
+              <p className="text-sm font-medium">No transcript available for this call.</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+              <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap font-mono">
+                {data.transcript}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ─── Positive Signal Detail Modal ─────────────────────────────────────────────
+function PosSignalDetailModal({
+  keyword, color, phrases, phrasesLoading, leads, leadsLoading, onClose, onLeadClick,
+}: {
+  keyword:        string;
+  color:          string;
+  phrases:        Array<{ source: string; phrase: string; count: number }>;
+  phrasesLoading: boolean;
+  leads:          PosKeywordLeadRow[];
+  leadsLoading:   boolean;
+  onClose:        () => void;
+  onLeadClick:    (leadId: string) => void;
+}) {
+  const [tab, setTab] = useState<'phrases' | 'calls'>('phrases');
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100"
+          style={{ background: `linear-gradient(135deg, ${color}12, ${color}06)` }}>
+          <span className="text-xl">✨</span>
+          <div>
+            <h2 className="text-base font-bold text-slate-800">"{keyword}" — Positive Signal</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {leads.length > 0 ? `${leads.length} calls · ` : ''}{phrases.length} unique phrases
+            </p>
+          </div>
+          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700 transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 px-6 pt-4 pb-0 border-b border-slate-100">
+          {[
+            { key: 'phrases' as const, label: '💬 Top Phrases', count: phrases.length },
+            { key: 'calls'   as const, label: '📋 Call Details', count: leads.length },
+          ].map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className="px-4 py-2 text-xs font-semibold transition-all border-b-2 -mb-px"
+              style={tab === t.key
+                ? { borderColor: color, color, background: `${color}08` }
+                : { borderColor: 'transparent', color: '#64748B' }}>
+              {t.label} ({t.count})
+            </button>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div className="overflow-auto flex-1 p-6">
+
+          {/* Phrases tab */}
+          {tab === 'phrases' && (
+            phrasesLoading ? (
+              <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+                <Loader2 size={18} className="animate-spin" /><span className="text-sm">Loading phrases…</span>
+              </div>
+            ) : phrases.length === 0 ? (
+              <p className="text-center text-slate-400 text-sm py-10">No phrases found for this period.</p>
+            ) : (
+              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr style={{ backgroundColor: `${color}10` }}>
+                      {['Source', 'Phrase', 'Count'].map(h => (
+                        <th key={h} className="text-left px-4 py-2.5 font-semibold text-slate-600 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {phrases.map((p, i) => (
+                      <tr key={i} className="hover:bg-slate-50 border-b border-slate-100 last:border-0">
+                        <td className="px-4 py-2.5">
+                          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            p.source === 'Customer' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
+                          }`}>
+                            {p.source === 'Customer' ? '👤 Customer' : '🎧 Agent'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-700">{p.phrase}</td>
+                        <td className="px-4 py-2.5 font-mono font-semibold" style={{ color }}>{p.count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+
+          {/* Calls tab */}
+          {tab === 'calls' && (
+            leadsLoading ? (
+              <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+                <Loader2 size={18} className="animate-spin" /><span className="text-sm">Loading calls…</span>
+              </div>
+            ) : leads.length === 0 ? (
+              <p className="text-center text-slate-400 text-sm py-10">No call records found for this period.</p>
+            ) : (
+              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr style={{ backgroundColor: `${color}10` }}>
+                      {['Lead ID', 'Source', 'Agent ID', 'Phrase / Keyword', 'Scenario', 'Date'].map(h => (
+                        <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-600 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leads.map((r, i) => (
+                      <tr key={i} className="hover:bg-slate-50 border-b border-slate-100 last:border-0">
+                        <td className="px-3 py-2.5">
+                          {r.lead_id ? (
+                            <button
+                              onClick={() => onLeadClick(r.lead_id)}
+                              className="font-mono text-blue-600 hover:text-blue-800 hover:underline text-[11px] font-semibold transition-colors">
+                              {r.lead_id}
+                            </button>
+                          ) : <span className="text-slate-400 font-mono">—</span>}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            r.source === 'Customer' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
+                          }`}>
+                            {r.source === 'Customer' ? '👤 Cust' : '🎧 Agent'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 font-semibold text-slate-700">{r.agent_id}</td>
+                        <td className="px-3 py-2.5 text-slate-600 max-w-[200px] truncate" title={r.phrase}>{r.phrase || '—'}</td>
+                        <td className="px-3 py-2.5 text-slate-500">{r.scenario}{r.scenario1 ? ` / ${r.scenario1}` : ''}</td>
+                        <td className="px-3 py-2.5 font-mono text-slate-400 whitespace-nowrap">{r.date}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function AbuseDetailModal({ detail, loading, onClose, onLeadClick }: { detail: AbuseDetailResponse | null; loading: boolean; onClose: () => void; onLeadClick: (leadId: string) => void }) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  const [tab, setTab] = useState<'all' | 'agent' | 'customer'>('all');
+  const rows = detail?.rows ?? [];
+  const visible = tab === 'all' ? rows : rows.filter(r => r.speaker.toLowerCase() === tab);
+  const agentCount    = rows.filter(r => r.speaker === 'Agent').length;
+  const customerCount = rows.filter(r => r.speaker === 'Customer').length;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto py-6 px-4"
+      onClick={onClose}>
+      <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-5xl shadow-2xl"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200"
+             style={{ background: 'linear-gradient(135deg, #FAF5FF, #F3E8FF)' }}>
+          <div className="p-2 rounded-xl bg-purple-500/10">
+            <span className="text-lg">🚫</span>
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-black text-slate-900">Abuse Detection — Full Breakdown</p>
+            <p className="text-[10px] text-slate-500 font-medium mt-0.5">Agent & customer abusive language detected from call transcripts</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-900 transition-colors p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+              <Loader2 size={20} className="animate-spin" />
+              <span className="text-sm font-semibold">Loading abuse data...</span>
+            </div>
+          ) : !detail || rows.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3">
+              <span className="text-4xl">✅</span>
+              <p className="text-slate-500 font-semibold text-sm">No abusive language detected in this period</p>
+            </div>
+          ) : (
+            <>
+              {/* Summary chips */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-purple-200 bg-purple-50">
+                  <span className="text-sm font-black text-purple-700">{rows.length}</span>
+                  <span className="text-xs font-semibold text-purple-600">Total Incidents</span>
+                </div>
+                <div className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-red-200 bg-red-50">
+                  <span className="text-sm font-black text-red-700">{agentCount}</span>
+                  <span className="text-xs font-semibold text-red-600">Agent Abuse ⚠️ Critical</span>
+                </div>
+                <div className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-orange-200 bg-orange-50">
+                  <span className="text-sm font-black text-orange-700">{customerCount}</span>
+                  <span className="text-xs font-semibold text-orange-600">Customer Abuse</span>
+                </div>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex gap-1 border-b border-slate-200">
+                {([['all', 'All', rows.length], ['agent', 'Agent Only', agentCount], ['customer', 'Customer Only', customerCount]] as [string, string, number][]).map(([t, lbl, cnt]) => (
+                  <button key={t} onClick={() => setTab(t as 'all' | 'agent' | 'customer')}
+                    className="px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all"
+                    style={tab === t
+                      ? { borderColor: '#A855F7', color: '#A855F7', background: '#FAF5FF' }
+                      : { borderColor: 'transparent', color: '#64748B' }
+                    }>
+                    {lbl} ({cnt})
+                  </button>
+                ))}
+              </div>
+
+              {/* Table */}
+              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="overflow-auto max-h-[420px]">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr style={{ background: '#FAF5FF' }}>
+                        {['Lead ID','Speaker','Agent ID','Word Used','Meaning','Scenario','Sub-Scenario','Date'].map(h => (
+                          <th key={h} className="px-4 py-2.5 text-left font-black text-purple-700 uppercase tracking-wider text-[10px] border-b border-purple-100 whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visible.map((r, i) => {
+                        const isAgent = r.speaker === 'Agent';
+                        return (
+                          <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            <td className="px-4 py-2.5 border-b border-slate-100">
+                              {r.lead_id ? (
+                                <button onClick={() => onLeadClick(r.lead_id)}
+                                  className="font-mono text-[11px] text-blue-600 hover:text-blue-800 hover:underline font-semibold transition-colors">
+                                  {r.lead_id}
+                                </button>
+                              ) : <span className="text-slate-400 font-mono text-[11px]">—</span>}
+                            </td>
+                            <td className="px-4 py-2.5 border-b border-slate-100">
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                isAgent
+                                  ? 'bg-red-100 text-red-700 border border-red-200'
+                                  : 'bg-orange-100 text-orange-700 border border-orange-200'
+                              }`}>
+                                {isAgent ? '⚠️ Agent' : '👤 Customer'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 border-b border-slate-100 font-mono text-[11px] text-slate-700 font-semibold">{r.agent_id}</td>
+                            <td className="px-4 py-2.5 border-b border-slate-100">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-purple-50 text-purple-800 border border-purple-200">
+                                {r.word}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 border-b border-slate-100 text-slate-600 italic text-[11px]">{r.meaning}</td>
+                            <td className="px-4 py-2.5 border-b border-slate-100 text-slate-700">{r.scenario}</td>
+                            <td className="px-4 py-2.5 border-b border-slate-100 text-slate-500">{r.scenario1 === 'Unknown' ? '—' : r.scenario1}</td>
+                            <td className="px-4 py-2.5 border-b border-slate-100 text-slate-500 font-mono text-[10px] whitespace-nowrap">{r.date}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: PotentialScamDetail | null; loading: boolean; onClose: () => void; onLeadClick: (leadId: string) => void }) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  const FLAGS = [
+    { key: 'financial_fraud' as const, label: 'Financial Fraud', desc: 'AI flagged financial fraud indicators in the call', color: '#EF4444', bg: '#FEF2F2' },
+    { key: 'scam_words'      as const, label: 'Scam Detected',   desc: 'Call contained scam/fraud keywords in conversation', color: '#F97316', bg: '#FFF7ED' },
+  ];
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto py-6 px-4"
+      onClick={onClose}>
+      <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-5xl shadow-2xl"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200"
+             style={{ background: 'linear-gradient(135deg, #FEF2F2, #FFF7ED)' }}>
+          <div className="p-2 rounded-xl bg-red-500/10">
+            <AlertOctagon size={18} className="text-red-500" />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-black text-slate-900">Potential Scam Leads — Full Breakdown</p>
+            <p className="text-[10px] text-slate-500 font-medium mt-0.5">Flag counts + words used + scenario context</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-900 transition-colors p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+              <Loader2 size={20} className="animate-spin" />
+              <span className="text-sm font-semibold">Loading scam detail...</span>
+            </div>
+          ) : !detail ? (
+            <p className="text-center text-slate-400 text-sm py-10">No data available</p>
+          ) : (
+            <>
+              {/* ── Flag Breakdown Cards ── */}
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Flag Type Breakdown</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {FLAGS.map(f => {
+                    const count = detail.flags[f.key];
+                    const total = detail.flags.financial_fraud + detail.flags.scam_words;
+                    const pct   = total > 0 ? ((count / total) * 100).toFixed(1) : '0';
+                    return (
+                      <div key={f.key} className="rounded-xl border-2 p-4 flex items-start gap-3"
+                           style={{ background: f.bg, borderColor: `${f.color}30` }}>
+                        <div className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ background: f.color }} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-black text-slate-900">{f.label}</p>
+                          <p className="text-[10px] text-slate-500 font-medium mt-0.5 leading-snug">{f.desc}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-xl font-black" style={{ color: f.color }}>{count.toLocaleString()}</p>
+                          <p className="text-[10px] font-bold text-slate-500">{pct}%</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ── Call Detail Table ── */}
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">
+                  Call Details
+                  <span className="ml-2 font-medium text-slate-400 normal-case">({detail.wordRows.length} calls)</span>
+                </p>
+                {detail.wordRows.length === 0 ? (
+                  <p className="text-center text-slate-400 text-sm py-6">No data available for this period</p>
+                ) : (
+                  <div className="rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="overflow-auto max-h-[400px]">
+                      <table className="w-full text-xs border-collapse">
+                        <thead>
+                          <tr style={{ background: '#FEF2F2' }}>
+                            {['Flag', 'Lead ID', 'Agent ID', 'Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
+                              <th key={h} className="px-3 py-2.5 text-left font-semibold text-red-700 uppercase tracking-wider text-[10px] border-b border-red-100 whitespace-nowrap">
+                                {h}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detail.wordRows.map((r, i) => (
+                            <tr key={i} className="hover:bg-slate-50 border-b border-slate-100 last:border-0">
+                              <td className="px-3 py-2">
+                                <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${
+                                  r.flag === 'Financial Fraud'
+                                    ? 'bg-red-100 text-red-700'
+                                    : 'bg-orange-100 text-orange-700'
+                                }`}>
+                                  {r.flag ?? 'Scam'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2">
+                                {r.lead_id ? (
+                                  <button onClick={() => onLeadClick(r.lead_id!)}
+                                    className="font-mono text-[11px] text-blue-600 hover:text-blue-800 hover:underline font-semibold transition-colors">
+                                    {r.lead_id}
+                                  </button>
+                                ) : <span className="text-slate-400 font-mono">—</span>}
+                              </td>
+                              <td className="px-3 py-2 font-semibold text-slate-700">{r.agent_id}</td>
+                              <td className="px-3 py-2">
+                                {r.word && r.word !== '—'
+                                  ? <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-medium bg-red-50 text-red-700 border border-red-200">{r.word}</span>
+                                  : <span className="text-slate-400 italic">—</span>}
+                              </td>
+                              <td className="px-3 py-2 text-slate-600">{r.scenario}</td>
+                              <td className="px-3 py-2 text-slate-500">{r.scenario1 === 'Unknown' ? '—' : r.scenario1}</td>
+                              <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{r.date ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ─── Social Media & Consumer Court Threat Detail Modal ───────────────────────
+function SocialThreatDetailModal({
+  detail, loading, onClose, onLeadClick,
+}: {
+  detail: SocialThreatDetailResponse | null;
+  loading: boolean;
+  onClose: () => void;
+  onLeadClick: (leadId: string) => void;
+}) {
+  const [tab, setTab] = useState<'All' | 'Social Media' | 'Court & Legal'>('All');
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  const rows = detail?.rows ?? [];
+  const socialCount = rows.filter(r => r.threat_type === 'Social Media').length;
+  const courtCount  = rows.filter(r => r.threat_type === 'Court & Legal').length;
+  const visible     = tab === 'All' ? rows : rows.filter(r => r.threat_type === tab);
+
+  const TABS: { key: typeof tab; label: string; count: number; color: string }[] = [
+    { key: 'All',           label: 'All',            count: rows.length,  color: '#F97316' },
+    { key: 'Social Media',  label: '📱 Social Media', count: socialCount,  color: '#3B82F6' },
+    { key: 'Court & Legal', label: '⚖️ Court & Legal', count: courtCount,  color: '#EF4444' },
+  ];
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100"
+          style={{ background: 'linear-gradient(135deg, #FFF7ED, #FEF3C7)' }}>
+          <div className="p-2 rounded-xl bg-orange-100">
+            <ShieldAlert size={18} className="text-orange-500" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-slate-800">Social Media &amp; Consumer Court Threat</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {loading ? 'Loading…' : `${detail?.total ?? 0} calls with threat keywords`}
+            </p>
+          </div>
+          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700 transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Summary chips */}
+        {!loading && rows.length > 0 && (
+          <div className="flex items-center gap-3 px-6 py-3 border-b border-slate-100 bg-slate-50">
+            <div className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 bg-blue-50 border border-blue-200">
+              <span className="text-xs font-bold text-blue-700">📱 Social Media</span>
+              <span className="text-sm font-black text-blue-600">{socialCount}</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 bg-red-50 border border-red-200">
+              <span className="text-xs font-bold text-red-700">⚖️ Court &amp; Legal</span>
+              <span className="text-sm font-black text-red-600">{courtCount}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Tabs */}
+        {!loading && rows.length > 0 && (
+          <div className="flex gap-1 px-6 pt-4 pb-0">
+            {TABS.map(t => (
+              <button key={t.key}
+                onClick={() => setTab(t.key)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                style={tab === t.key
+                  ? { backgroundColor: `${t.color}15`, color: t.color, border: `1px solid ${t.color}40` }
+                  : { backgroundColor: '#F8FAFC', color: '#64748B', border: '1px solid #E2E8F0' }}>
+                {t.label} ({t.count})
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Body */}
+        <div className="overflow-auto flex-1 p-6">
+          {loading && (
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="h-9 rounded-lg bg-slate-100 animate-pulse" />
+              ))}
+            </div>
+          )}
+
+          {!loading && rows.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-slate-400">
+              <span className="text-4xl">🔍</span>
+              <p className="text-sm font-medium">No social/court threats found for this date range.</p>
+            </div>
+          )}
+
+          {!loading && visible.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-orange-50">
+                    {['Type', 'Lead ID', 'Agent ID', 'Threat Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
+                      <th key={h} className="text-left px-3 py-2.5 font-semibold text-orange-700 whitespace-nowrap border-b border-orange-100 uppercase tracking-wider text-[10px]">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((row, i) => (
+                    <tr key={i} className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0">
+                      <td className="px-3 py-2">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${
+                          row.threat_type === 'Social Media'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-red-100 text-red-700'
+                        }`}>
+                          {row.threat_type === 'Social Media' ? '📱 Social' : '⚖️ Court'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.lead_id ? (
+                          <button onClick={() => onLeadClick(row.lead_id)}
+                            className="font-mono text-[11px] text-blue-600 hover:text-blue-800 hover:underline font-semibold transition-colors">
+                            {row.lead_id}
+                          </button>
+                        ) : <span className="text-slate-400 font-mono">—</span>}
+                      </td>
+                      <td className="px-3 py-2 font-semibold text-slate-700">{row.agent_id}</td>
+                      <td className="px-3 py-2">
+                        <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-medium bg-orange-50 text-orange-700 border border-orange-200">
+                          {row.threat_word}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-600">{row.scenario}</td>
+                      <td className="px-3 py-2 text-slate-500">{row.scenario1 === 'Unknown' ? '—' : row.scenario1}</td>
+                      <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{row.date}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ─── Neg Signal Detail Modal (Threat / Frustration) ─────────────────────────
+function NegSignalDetailModal({
+  signal, detail, loading, onClose, onLeadClick,
+}: {
+  signal: 'Threat' | 'Frustration';
+  detail: NegSignalDetailCallResponse | null;
+  loading: boolean;
+  onClose: () => void;
+  onLeadClick: (leadId: string) => void;
+}) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  const accent    = signal === 'Threat' ? '#EF4444' : '#F59E0B';
+  const icon      = signal === 'Threat' ? '⚠️' : '😤';
+  const bgLight   = signal === 'Threat' ? '#FEF2F2' : '#FFFBEB';
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100"
+          style={{ background: `linear-gradient(135deg, ${accent}18, ${accent}08)` }}>
+          <span className="text-xl">{icon}</span>
+          <div>
+            <h2 className="text-base font-bold text-slate-800">{signal} Signal — Call Details</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {loading ? 'Loading…' : `${detail?.total ?? 0} calls flagged`}
+            </p>
+          </div>
+          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700 transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-auto flex-1 p-6">
+          {loading && (
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="h-9 rounded-lg bg-slate-100 animate-pulse" />
+              ))}
+            </div>
+          )}
+
+          {!loading && (!detail || detail.rows.length === 0) && (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-slate-400">
+              <span className="text-4xl">🔍</span>
+              <p className="text-sm font-medium">No {signal.toLowerCase()} signals found for this date range.</p>
+            </div>
+          )}
+
+          {!loading && detail && detail.rows.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr style={{ backgroundColor: bgLight }}>
+                    {['Lead ID', 'Agent ID', 'Word / Phrase Used', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
+                      <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.rows.map((row, i) => (
+                    <tr key={i} className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0">
+                      <td className="px-3 py-2">
+                        {row.lead_id ? (
+                          <button onClick={() => onLeadClick(row.lead_id)}
+                            className="font-mono text-[11px] text-blue-600 hover:text-blue-800 hover:underline font-semibold transition-colors">
+                            {row.lead_id}
+                          </button>
+                        ) : <span className="text-slate-400 font-mono text-[11px]">—</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="font-semibold text-slate-700">{row.agent_id}</span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-medium"
+                          style={{ backgroundColor: `${accent}20`, color: accent }}>
+                          {row.word}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-600">{row.scenario}</td>
+                      <td className="px-3 py-2 text-slate-500">{row.scenario1}</td>
+                      <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{row.date}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>,
     document.body,
@@ -142,7 +964,7 @@ function ExpandBtn({ expanded, onToggle }: { expanded: boolean; onToggle: () => 
   return (
     <button onClick={onToggle}
       title={expanded ? 'Minimize' : 'Expand fullscreen'}
-      className="ml-auto p-1 rounded text-slate-600 hover:text-slate-300 transition-colors shrink-0">
+      className="ml-auto p-1 rounded text-slate-600 hover:text-slate-600 transition-colors shrink-0">
       {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
     </button>
   );
@@ -152,10 +974,104 @@ function ExpandBtn({ expanded, onToggle }: { expanded: boolean; onToggle: () => 
 function ExportBtn({ onClick, title = 'Export CSV' }: { onClick: () => void; title?: string }) {
   return (
     <button onClick={onClick} title={title}
-      className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-slate-400 hover:text-emerald-400 border border-white/5 hover:border-emerald-500/30 transition-colors shrink-0">
+      className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-slate-400 hover:text-emerald-400 border border-slate-200 hover:border-emerald-500/30 transition-colors shrink-0">
       <Download size={11} /> CSV
     </button>
   );
+}
+
+// ─── Agent Name Tag ───────────────────────────────────────────────────────────
+// Shows resolved name; if not resolved, shows clickable MAS ID with inline add form
+interface AgentNameTagProps {
+  masId: string;
+  agentMap: Map<string, string>;
+  onSaved: (masId: string, name: string) => void;
+  className?: string;
+}
+function AgentNameTag({ masId, agentMap, onSaved, className = '' }: AgentNameTagProps) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [lob, setLob] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const resolved = agentMap.get(masId);
+  if (resolved) return <span className={className}>{resolved}</span>;
+
+  return (
+    <span className="relative inline-block">
+      <span
+        className="text-amber-400 font-mono cursor-pointer hover:underline hover:text-amber-300 transition-colors"
+        title="Click to add agent name"
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+      >
+        {masId} ✏️
+      </span>
+      {open && createPortal(
+        <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center px-4"
+          onClick={() => setOpen(false)}>
+          <div className="bg-white border border-amber-500/30 rounded-2xl p-6 w-full max-w-sm shadow-2xl"
+            onClick={e => e.stopPropagation()}>
+            <p className="text-xs font-bold text-amber-400 uppercase tracking-widest mb-1">Add Agent Name</p>
+            <p className="text-[11px] text-slate-600 font-semibold mb-4">MAS ID: <span className="font-mono text-amber-300">{masId}</span></p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] text-slate-600 font-semibold uppercase tracking-wider block mb-1">Agent Name *</label>
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="e.g. Rahul Sharma"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && name.trim()) save(); if (e.key === 'Escape') setOpen(false); }}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-amber-400"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-600 font-semibold uppercase tracking-wider block mb-1">LOB</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Inbound"
+                  value={lob}
+                  onChange={e => setLob(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && name.trim()) save(); if (e.key === 'Escape') setOpen(false); }}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-amber-400"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button
+                disabled={!name.trim() || saving}
+                onClick={save}
+                className="flex-1 py-2 rounded-lg text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                {saving ? 'Saving…' : 'Save Agent'}
+              </button>
+              <button onClick={() => setOpen(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 border border-slate-200 hover:border-slate-300 transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </span>
+  );
+
+  async function save() {
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    try {
+      await api.post('/inbound-quality/agent-master', { masId, agentName: name.trim(), lob: lob.trim() });
+      onSaved(masId, name.trim());
+      setOpen(false);
+      setName(''); setLob('');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { message?: string } } };
+      const msg = axiosErr?.response?.data?.message || 'Failed to save. Please try again.';
+      alert(msg);
+    }
+    finally { setSaving(false); }
+  }
 }
 
 const SCENARIO_COLORS = ['#3B82F6','#22C55E','#F59E0B','#A855F7','#EF4444','#14B8A6','#F97316','#EC4899'];
@@ -177,24 +1093,37 @@ interface MetricCardProps {
 }
 function MetricCard({ label, value, subValue, icon: Icon, accentColor, loading }: MetricCardProps) {
   return (
-    <div className="relative flex flex-col gap-2 bg-[#1E293B] border border-white/5 rounded-xl px-4 py-4 overflow-hidden">
-      <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: accentColor }} />
-      <div className="pl-2">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest leading-tight">{label}</span>
-          <div className="p-1.5 rounded-lg" style={{ backgroundColor: `${accentColor}18` }}>
-            <Icon size={13} style={{ color: accentColor }} />
+    <div
+      className="relative flex flex-col bg-white rounded-2xl overflow-hidden group transition-all duration-200 hover:-translate-y-1 cursor-default"
+      style={{ border: `2px solid ${accentColor}30`, borderTopWidth: 4, borderTopColor: accentColor,
+               boxShadow: `0 2px 8px ${accentColor}10` }}
+      onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.boxShadow = `0 12px 32px ${accentColor}28`}
+      onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.boxShadow = `0 2px 8px ${accentColor}10`}
+    >
+      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+           style={{ background: `linear-gradient(145deg, ${accentColor}08, transparent)` }} />
+      <div className="relative px-4 py-4">
+        <div className="flex items-start justify-between mb-3">
+          <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.12em] leading-tight pr-2">{label}</span>
+          <div className="p-2 rounded-xl shrink-0 group-hover:scale-110 transition-transform duration-200 shadow-sm"
+               style={{ backgroundColor: `${accentColor}18`, color: accentColor }}>
+            <Icon size={13} />
           </div>
         </div>
         {loading ? (
-          <div className="h-7 w-16 bg-white/5 rounded animate-pulse" />
+          <div className="h-8 w-20 bg-slate-100 rounded-lg animate-pulse" />
         ) : (
-          <p className="text-2xl font-bold text-white leading-none">{value}</p>
+          <p className="text-[26px] font-black text-slate-900 leading-none tracking-tight">{value}</p>
         )}
         {subValue && !loading && (
-          <p className="text-[11px] text-slate-400 mt-1">{subValue}</p>
+          <div className="flex items-center gap-1.5 mt-2">
+            <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: accentColor }} />
+            <p className="text-[11px] text-slate-600 font-semibold">{subValue}</p>
+          </div>
         )}
       </div>
+      <div className="absolute bottom-0 left-0 right-0 h-[3px] opacity-60 group-hover:opacity-100 transition-opacity duration-200"
+           style={{ background: `linear-gradient(90deg, ${accentColor}, ${accentColor}40)` }} />
     </div>
   );
 }
@@ -242,6 +1171,22 @@ export default function InboundQualityDashboard() {
   const [repeatData, setRepeatData] = useState<RepeatAnalysis | null>(null);
   const [repeatLoading, setRepeatLoading] = useState(false);
 
+  // ── Agent Master ─────────────────────────────────────────────────────────
+  const [agentMap, setAgentMap] = useState<Map<string, string>>(new Map());
+  const [missingAgents, setMissingAgents] = useState<MissingAgentRow[]>([]);
+  const [showMissingPanel, setShowMissingPanel] = useState(false);
+  const [addAgentForm, setAddAgentForm] = useState<Record<string, { name: string; lob: string }>>({});
+  const [addAgentSaving, setAddAgentSaving] = useState<Record<string, boolean>>({});
+
+  const resolveAgent = (masId: string) => agentMap.get(masId) || masId;
+  const handleAgentSaved = (masId: string, name: string) => {
+    setAgentMap(prev => new Map(prev).set(masId, name));
+    setMissingAgents(prev => prev.filter(a => a.masId !== masId));
+  };
+  const agentTag = (masId: string, cls?: string) => (
+    <AgentNameTag masId={masId} agentMap={agentMap} onSaved={handleAgentSaved} className={cls} />
+  );
+
   // ── Deep analysis state ──────────────────────────────────────────────────
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [drillModal, setDrillModal] = useState<{ title: string; accent: string; rows: Record<string,unknown>[]; columns: { key: string; label: string }[] } | null>(null);
@@ -250,7 +1195,7 @@ export default function InboundQualityDashboard() {
   const toggleExpand = (key: string) => setExpandedSection(prev => prev === key ? null : key);
 
   const [startDate, setStartDate] = useState(
-    toLocalDT(new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0))
+    toLocalDT(new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0))
   );
   const [endDate, setEndDate] = useState(toLocalDT(now));
   const [kpis, setKpis]               = useState<InboundProcessKPIs | null>(null);
@@ -261,11 +1206,65 @@ export default function InboundQualityDashboard() {
   const [selectedScenario, setSelectedScenario] = useState<string | null>(null);
   const [socialThreats, setSocialThreats]         = useState<AlertScenarioRow[]>([]);
   const [negSignalDetails, setNegSignalDetails]   = useState<NegSignalDetailRow[]>([]);
+  const [posSignals, setPosSignals]               = useState<PosKeywordRow[]>([]);
   const [potentialScams, setPotentialScams]       = useState<AlertScenarioRow[]>([]);
   const [sensitiveWordAnalysis, setSensitiveWordAnalysis] = useState<SensitiveWordAnalysis | null>(null);
+  const [scamDetailOpen,  setScamDetailOpen]  = useState(false);
+  const [scamDetail,      setScamDetail]      = useState<PotentialScamDetail | null>(null);
+  const [scamDetailLoading, setScamDetailLoading] = useState(false);
+
+  const [abuseDetailOpen,    setAbuseDetailOpen]    = useState(false);
+  const [abuseDetail,        setAbuseDetail]        = useState<AbuseDetailResponse | null>(null);
+  const [abuseDetailLoading, setAbuseDetailLoading] = useState(false);
+
+  const [threatDetailOpen,    setThreatDetailOpen]    = useState(false);
+  const [threatDetail,        setThreatDetail]        = useState<NegSignalDetailCallResponse | null>(null);
+  const [threatDetailLoading, setThreatDetailLoading] = useState(false);
+
+  const [frustDetailOpen,    setFrustDetailOpen]    = useState(false);
+  const [frustDetail,        setFrustDetail]        = useState<NegSignalDetailCallResponse | null>(null);
+  const [frustDetailLoading, setFrustDetailLoading] = useState(false);
+
+  const [socialThreatOpen,    setSocialThreatOpen]    = useState(false);
+  const [socialThreatDetail,  setSocialThreatDetail]  = useState<SocialThreatDetailResponse | null>(null);
+  const [socialThreatLoading, setSocialThreatLoading] = useState(false);
+
+  // Transcript
+  const [transcriptLeadId, setTranscriptLeadId] = useState<string | null>(null);
+  const [transcriptData,   setTranscriptData]   = useState<TranscriptData | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+
+  // Positive signal detail modal
+  const [posModalOpen,    setPosModalOpen]    = useState(false);
+  const [posModalKeyword, setPosModalKeyword] = useState('');
+  const [posModalColor,   setPosModalColor]   = useState('#10B981');
+  const [posModalPhrases, setPosModalPhrases] = useState<Array<{ source: string; phrase: string; count: number }>>([]);
+  const [posModalPhrasesLoading, setPosModalPhrasesLoading] = useState(false);
+  const [posModalLeads,  setPosModalLeads]   = useState<PosKeywordLeadRow[]>([]);
+  const [posModalLeadsLoading, setPosModalLeadsLoading] = useState(false);
 
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
+
+  // Reset detail caches when date range changes
+  useEffect(() => {
+    setScamDetail(null);
+    setAbuseDetail(null);
+    setThreatDetail(null);
+    setFrustDetail(null);
+    setSocialThreatDetail(null);
+  }, [sd, ed]);
+
+  const handleLeadClick = useCallback((leadId: string) => {
+    if (!leadId || leadId === '—') return;
+    setTranscriptLeadId(leadId);
+    setTranscriptData(null);
+    setTranscriptLoading(true);
+    api.get<{ data: TranscriptData | null }>(`/inbound-quality/transcript?leadId=${encodeURIComponent(leadId)}`)
+      .then(r => setTranscriptData(r.data?.data ?? null))
+      .catch(() => setTranscriptData(null))
+      .finally(() => setTranscriptLoading(false));
+  }, []);
 
   const openBandDetail = async (band: string, title: string, accent: string) => {
     const cols = [
@@ -394,12 +1393,34 @@ export default function InboundQualityDashboard() {
       .finally(() => setRepeatLoading(false));
   }, [clientId, sd, ed]);
 
+  // Fetch agent master once (not dependent on date/client — whole table)
+  useEffect(() => {
+    api.get<{ data: AgentMasterRow[] }>('/inbound-quality/agent-master')
+      .then(r => {
+        const map = new Map<string, string>();
+        (r.data?.data ?? []).forEach(a => map.set(a.masId, a.agentName));
+        setAgentMap(map);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch missing agents whenever filters change
+  useEffect(() => {
+    api.get<{ data: MissingAgentRow[] }>(
+      `/inbound-quality/missing-agents?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    )
+      .then(r => setMissingAgents(r.data?.data ?? []))
+      .catch(() => setMissingAgents([]));
+  }, [clientId, sd, ed]);
+
   const fetchAlertTables = useCallback(() => {
     const q = `clientId=${clientId}&startDate=${sd}&endDate=${ed}`;
     api.get<{ data: AlertScenarioRow[] }>(`/inbound-quality/social-media-threats?${q}`)
       .then(r => setSocialThreats(r.data?.data ?? [])).catch(() => setSocialThreats([]));
     api.get<{ data: NegSignalDetailRow[] }>(`/inbound-quality/neg-signal-details?${q}`)
       .then(r => setNegSignalDetails(r.data?.data ?? [])).catch(() => setNegSignalDetails([]));
+    api.get<{ data: PosKeywordRow[] }>(`/inbound-quality/pos-signal-details?${q}`)
+      .then(r => setPosSignals(r.data?.data ?? [])).catch(() => setPosSignals([]));
     api.get<{ data: AlertScenarioRow[] }>(`/inbound-quality/potential-scams?${q}`)
       .then(r => setPotentialScams(r.data?.data ?? [])).catch(() => setPotentialScams([]));
     api.get<{ data: SensitiveWordAnalysis }>(`/inbound-quality/sensitive-word-analysis?${q}`)
@@ -432,19 +1453,19 @@ export default function InboundQualityDashboard() {
   const pct = (n: number) => total > 0 ? `${((n / total) * 100).toFixed(1)}%` : '—';
 
   return (
-    <div className="min-h-screen bg-[#0F172A] text-white flex flex-col">
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
 
       {/* Top bar */}
-      <div className="bg-[#0B1120] border-b border-white/5 sticky top-0 z-30">
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
           <button onClick={() => navigate('/quality')}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors text-xs">
+            className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 transition-colors text-xs">
             <ChevronLeft size={16} /> AI Quality
           </button>
           <div className="w-px h-4 bg-slate-700" />
           <Phone size={14} className="text-sky-400 shrink-0" />
           <div>
-            <h1 className="text-sm font-bold text-white leading-none">Inbound Quality · {clientName}</h1>
+            <h1 className="text-sm font-bold text-slate-900 leading-none">Inbound Quality · {clientName}</h1>
             <p className="text-[10px] text-slate-500 mt-0.5">Quality audit performance</p>
           </div>
         </div>
@@ -454,12 +1475,12 @@ export default function InboundQualityDashboard() {
 
         {/* Date filter */}
         <div className="flex items-center gap-3 flex-wrap mb-6">
-          <label className="text-[11px] text-slate-400 uppercase tracking-wider">From</label>
+          <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider">From</label>
           <input type="datetime-local" value={startDate} onChange={e => setStartDate(e.target.value)}
-            className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500" />
-          <label className="text-[11px] text-slate-400 uppercase tracking-wider">To</label>
+            className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-sky-500" />
+          <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider">To</label>
           <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
-            className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500" />
+            className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-sky-500" />
           <button
             onClick={async () => {
               setDrillLoading(true);
@@ -497,6 +1518,85 @@ export default function InboundQualityDashboard() {
           </button>
         </div>
 
+        {/* Missing Agents Banner */}
+        {missingAgents.length > 0 && (
+          <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
+              onClick={() => setShowMissingPanel(p => !p)}>
+              <span className="text-amber-400 text-base">⚠️</span>
+              <span className="text-xs font-semibold text-amber-300 flex-1">
+                {missingAgents.length} agent{missingAgents.length > 1 ? 's' : ''} found without a name in Agent Master — click to review &amp; add
+              </span>
+              <span className="text-amber-400 text-xs">{showMissingPanel ? '▲' : '▼'}</span>
+            </div>
+            {showMissingPanel && (
+              <div className="border-t border-amber-500/20 px-4 py-3">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200">
+                      <th className="py-2 text-left text-slate-400 font-semibold uppercase tracking-wider text-[9px]">MAS ID</th>
+                      <th className="py-2 text-center text-slate-400 font-semibold uppercase tracking-wider text-[9px]">Audit Count</th>
+                      <th className="py-2 text-left text-slate-400 font-semibold uppercase tracking-wider text-[9px]">Agent Name</th>
+                      <th className="py-2 text-left text-slate-400 font-semibold uppercase tracking-wider text-[9px]">LOB</th>
+                      <th className="py-2 text-center text-slate-400 font-semibold uppercase tracking-wider text-[9px]">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {missingAgents.map(ma => (
+                      <tr key={ma.masId} className="border-b border-slate-100">
+                        <td className="py-2 pr-3 text-amber-300 font-mono font-bold">{ma.masId}</td>
+                        <td className="py-2 pr-3 text-center text-slate-600">{ma.audit_count}</td>
+                        <td className="py-2 pr-3">
+                          <input
+                            type="text"
+                            placeholder="Enter agent name"
+                            value={addAgentForm[ma.masId]?.name ?? ''}
+                            onChange={e => setAddAgentForm(prev => ({ ...prev, [ma.masId]: { ...prev[ma.masId], name: e.target.value, lob: prev[ma.masId]?.lob ?? '' } }))}
+                            className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-amber-400"
+                          />
+                        </td>
+                        <td className="py-2 pr-3">
+                          <input
+                            type="text"
+                            placeholder="LOB (e.g. Inbound)"
+                            value={addAgentForm[ma.masId]?.lob ?? ''}
+                            onChange={e => setAddAgentForm(prev => ({ ...prev, [ma.masId]: { ...prev[ma.masId], lob: e.target.value, name: prev[ma.masId]?.name ?? '' } }))}
+                            className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-amber-400"
+                          />
+                        </td>
+                        <td className="py-2 text-center">
+                          <button
+                            disabled={!addAgentForm[ma.masId]?.name?.trim() || addAgentSaving[ma.masId]}
+                            onClick={async () => {
+                              const form = addAgentForm[ma.masId];
+                              if (!form?.name?.trim()) return;
+                              setAddAgentSaving(prev => ({ ...prev, [ma.masId]: true }));
+                              try {
+                                await api.post('/inbound-quality/agent-master', {
+                                  masId: ma.masId,
+                                  agentName: form.name.trim(),
+                                  lob: form.lob?.trim() || '',
+                                });
+                                // Refresh agent map and remove from missing list
+                                setAgentMap(prev => new Map(prev).set(ma.masId, form.name.trim()));
+                                setMissingAgents(prev => prev.filter(a => a.masId !== ma.masId));
+                                setAddAgentForm(prev => { const n = { ...prev }; delete n[ma.masId]; return n; });
+                              } catch { alert('Failed to save agent. Please try again.'); }
+                              finally { setAddAgentSaving(prev => ({ ...prev, [ma.masId]: false })); }
+                            }}
+                            className="px-3 py-1 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                            {addAgentSaving[ma.masId] ? 'Saving…' : 'Add'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Slide tabs */}
         <div className="flex gap-2 mb-6">
           {SLIDES.map((s, i) => {
@@ -510,7 +1610,7 @@ export default function InboundQualityDashboard() {
               <button key={s.label}
                 onClick={() => setActiveSlide(i)}
                 className={`px-5 py-2 rounded-lg border text-xs font-bold uppercase tracking-widest transition-all duration-150 ${
-                  isActive ? activeClass : 'bg-white/[0.03] border-white/10 text-slate-500 hover:text-slate-300'
+                  isActive ? activeClass : 'bg-slate-50 border-slate-200 text-slate-500 hover:text-slate-600'
                 }`}
               >
                 {s.label}
@@ -607,10 +1707,10 @@ export default function InboundQualityDashboard() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
 
               {/* Score Components — LEFT */}
-              <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                   <div className="w-1 h-4 rounded-full bg-violet-500" />
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Score Components</h3>
+                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Score Components</h3>
                 </div>
                 <div className="p-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {[
@@ -625,17 +1725,17 @@ export default function InboundQualityDashboard() {
                     return (
                       <div key={label}
                         className={`relative flex flex-col items-center justify-center gap-1.5 rounded-xl border py-4 px-3 overflow-hidden ${
-                          isAvg ? 'border-violet-500/30 bg-violet-500/5' : 'border-white/5 bg-[#0F172A]'
+                          isAvg ? 'border-violet-500/30 bg-violet-500/5' : 'border-slate-200 bg-white'
                         }`}>
                         <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-xl" style={{ backgroundColor: isAvg ? '#8B5CF6' : color }} />
                         {loading ? (
-                          <div className="h-7 w-14 bg-white/5 rounded animate-pulse" />
+                          <div className="h-7 w-14 bg-slate-100 rounded animate-pulse" />
                         ) : (
                           <span className="text-2xl font-bold tabular-nums" style={{ color: isAvg ? '#A78BFA' : color }}>
                             {value}%
                           </span>
                         )}
-                        <span className={`text-[10px] font-semibold uppercase tracking-widest text-center leading-tight ${isAvg ? 'text-violet-400' : 'text-slate-300'}`}>
+                        <span className={`text-[10px] font-semibold uppercase tracking-widest text-center leading-tight ${isAvg ? 'text-violet-400' : 'text-slate-600'}`}>
                           {label}
                         </span>
                       </div>
@@ -653,18 +1753,18 @@ export default function InboundQualityDashboard() {
                   : 0;
                 const grandFatalPct = grandTotal > 0 ? (grandFatal / grandTotal) * 100 : 0;
                 return (
-                  <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                       <div className="w-1 h-4 rounded-full bg-amber-500" />
-                      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">ACHT Categorization</h3>
+                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">ACHT Categorization</h3>
                       <ExportBtn onClick={() => kpis && downloadCSV(kpis.acht_data.map(r => ({ Category: r.category, 'Audit Count': r.audit_count, 'Score%': r.score_pct, 'Fatal Count': r.fatal_count, 'Fatal%': r.fatal_pct })), 'acht-categorization.csv')} />
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
                         <thead>
-                          <tr className="border-b border-white/5 bg-white/[0.02]">
+                          <tr className="border-b border-slate-200 bg-slate-50">
                             {['ACHT Categorization', 'Audit Count', 'Score%', 'Fatal Count', 'Fatal%'].map(h => (
-                              <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider whitespace-nowrap">
+                              <th key={h} className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider whitespace-nowrap">
                                 {h}
                               </th>
                             ))}
@@ -672,9 +1772,9 @@ export default function InboundQualityDashboard() {
                         </thead>
                         <tbody>
                           {kpis.acht_data.map((row, i) => (
-                            <tr key={i} className={`border-b border-white/[0.04] hover:bg-white/[0.02] ${i % 2 === 0 ? '' : 'bg-white/[0.01]'}`}>
-                              <td className="py-2.5 px-4 text-slate-200 font-medium">{row.category}</td>
-                              <td className="py-2.5 px-4 text-slate-300 tabular-nums">{row.audit_count.toLocaleString()}</td>
+                            <tr key={i} className={`border-b border-slate-100 hover:bg-slate-50 ${i % 2 === 0 ? '' : 'bg-transparent'}`}>
+                              <td className="py-2.5 px-4 text-slate-700 font-medium">{row.category}</td>
+                              <td className="py-2.5 px-4 text-slate-600 tabular-nums">{row.audit_count.toLocaleString()}</td>
                               <td className="py-2.5 px-4 tabular-nums">
                                 <span className="font-semibold" style={{
                                   color: row.score_pct >= 90 ? '#22C55E' : row.score_pct >= 85 ? '#F59E0B' : row.score_pct > 0 ? '#EF4444' : '#64748B'
@@ -682,7 +1782,7 @@ export default function InboundQualityDashboard() {
                                   {row.score_pct > 0 ? `${row.score_pct}%` : '0%'}
                                 </span>
                               </td>
-                              <td className="py-2.5 px-4 text-slate-300 tabular-nums">{row.fatal_count.toLocaleString()}</td>
+                              <td className="py-2.5 px-4 text-slate-600 tabular-nums">{row.fatal_count.toLocaleString()}</td>
                               <td className="py-2.5 px-4 tabular-nums">
                                 <span className="inline-block px-2 py-0.5 rounded text-[11px] font-bold"
                                   style={{
@@ -696,15 +1796,15 @@ export default function InboundQualityDashboard() {
                           ))}
                         </tbody>
                         <tfoot>
-                          <tr className="border-t border-white/10 bg-[#1E293B]">
-                            <td className="py-2.5 px-4 font-bold text-slate-200">Grand Total</td>
-                            <td className="py-2.5 px-4 font-bold text-white tabular-nums">{grandTotal.toLocaleString()}</td>
+                          <tr className="border-t border-slate-200 bg-white">
+                            <td className="py-2.5 px-4 font-bold text-slate-700">Grand Total</td>
+                            <td className="py-2.5 px-4 font-bold text-slate-900 tabular-nums">{grandTotal.toLocaleString()}</td>
                             <td className="py-2.5 px-4 font-bold tabular-nums" style={{
                               color: grandScoreAvg >= 90 ? '#22C55E' : grandScoreAvg >= 85 ? '#F59E0B' : '#EF4444'
                             }}>
                               {grandScoreAvg > 0 ? `${grandScoreAvg.toFixed(1)}%` : '0%'}
                             </td>
-                            <td className="py-2.5 px-4 font-bold text-white tabular-nums">{grandFatal.toLocaleString()}</td>
+                            <td className="py-2.5 px-4 font-bold text-slate-900 tabular-nums">{grandFatal.toLocaleString()}</td>
                             <td className="py-2.5 px-4 font-bold tabular-nums">
                               <span className="inline-block px-2 py-0.5 rounded text-[11px] font-bold"
                                 style={{
@@ -721,18 +1821,18 @@ export default function InboundQualityDashboard() {
                   </div>
                 );
               })() : (
-                <div className="bg-[#1E293B] border border-white/5 rounded-xl flex items-center justify-center text-slate-600 text-xs py-10">
+                <div className="bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-600 text-xs py-10">
                   No ACHT data
                 </div>
               )}
             </div>
 
             {/* Portfolio Insight */}
-            <div className="bg-[#1E293B]/60 border border-white/5 rounded-2xl px-5 py-5 mb-6">
+            <div className="bg-white/60 border border-slate-200 rounded-2xl px-5 py-5 mb-6">
               {/* Section header */}
               <div className="flex items-center gap-2 mb-5">
                 <div className="w-1 h-5 rounded-full bg-violet-500" />
-                <h2 className="text-sm font-bold text-white uppercase tracking-widest">Portfolio Insight</h2>
+                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest">Portfolio Insight</h2>
               </div>
 
             {/* Threat & Scam Metrics */}
@@ -740,76 +1840,84 @@ export default function InboundQualityDashboard() {
 
               {/* Social Media & Consumer Court Threat */}
               <div
-                className="relative flex items-center gap-4 bg-[#1E293B] border border-orange-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-white/[0.03] transition-colors"
+                className="relative flex items-center gap-4 bg-white border border-orange-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
                 title="Click to view detail breakdown"
-                onClick={() => socialThreats.length > 0 && setDrillModal({
-                  title: 'Social Media & Consumer Court Threat — Detail Breakdown',
-                  accent: '#F97316',
-                  columns: [{ key: 'Scenario', label: 'Scenario' }, { key: 'Scenario1', label: 'Scenario1' }, { key: 'Count', label: 'Count' }, { key: 'Count%', label: 'Count%' }],
-                  rows: socialThreats.map(r => ({ Scenario: r.scenario, Scenario1: r.scenario1, Count: r.count, 'Count%': `${r.pct}%` })),
-                })}>
+                onClick={() => {
+                  setSocialThreatOpen(true);
+                  if (!socialThreatDetail) {
+                    setSocialThreatLoading(true);
+                    api.get<{ data: SocialThreatDetailResponse }>(`/inbound-quality/social-threat-detail?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+                      .then(r => setSocialThreatDetail(r.data?.data ?? null))
+                      .catch(() => setSocialThreatDetail(null))
+                      .finally(() => setSocialThreatLoading(false));
+                  }
+                }}>
                 <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-orange-500" />
                 <div className="p-3 rounded-xl bg-orange-500/10 shrink-0">
                   <ShieldAlert size={22} className="text-orange-400" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[10px] font-semibold text-slate-200 uppercase tracking-widest leading-tight mb-1">
+                  <p className="text-[10px] font-semibold text-slate-700 uppercase tracking-widest leading-tight mb-1">
                     Social Media &amp; Consumer Court Threat
                   </p>
                   {loading ? (
-                    <div className="h-8 w-20 bg-white/5 rounded animate-pulse" />
+                    <div className="h-8 w-20 bg-slate-100 rounded animate-pulse" />
                   ) : (
                     <div className="flex items-end gap-2">
                       <span className="text-3xl font-black text-orange-400 tabular-nums leading-none">
                         {(kpis?.social_media_court_threat ?? 0).toLocaleString()}
                       </span>
-                      <span className="text-xs text-slate-300 mb-0.5">
+                      <span className="text-xs text-slate-600 mb-0.5">
                         calls ({kpis && kpis.audit_count > 0
                           ? ((kpis.social_media_court_threat / kpis.audit_count) * 100).toFixed(1)
                           : 0}%) · Click to view
                       </span>
                     </div>
                   )}
-                  <p className="text-[10px] text-slate-300 mt-1">
-                    sensetive_word: social / court / consumer / legal / fir
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    📱 Social Media &nbsp;·&nbsp; ⚖️ Consumer Court &nbsp;·&nbsp; Legal / FIR
                   </p>
                 </div>
               </div>
 
               {/* Potential Scam */}
               <div
-                className="relative flex items-center gap-4 bg-[#1E293B] border border-red-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-white/[0.03] transition-colors"
+                className="relative flex items-center gap-4 bg-white border border-red-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
                 title="Click to view detail breakdown"
-                onClick={() => potentialScams.length > 0 && setDrillModal({
-                  title: 'Potential Scam Leads — Detail Breakdown',
-                  accent: '#EF4444',
-                  columns: [{ key: 'Scenario', label: 'Scenario' }, { key: 'Scenario1', label: 'Scenario1' }, { key: 'Count', label: 'Count' }, { key: 'Count%', label: 'Count%' }],
-                  rows: potentialScams.map(r => ({ Scenario: r.scenario, Scenario1: r.scenario1, Count: r.count, 'Count%': `${r.pct}%` })),
-                })}>
+                onClick={() => {
+                  setScamDetailOpen(true);
+                  if (!scamDetail) {
+                    setScamDetailLoading(true);
+                    api.get<{ data: PotentialScamDetail }>(`/inbound-quality/potential-scams-detail?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+                      .then(r => setScamDetail(r.data?.data ?? null))
+                      .catch(() => setScamDetail(null))
+                      .finally(() => setScamDetailLoading(false));
+                  }
+                }}>
                 <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-red-500" />
                 <div className="p-3 rounded-xl bg-red-500/10 shrink-0">
                   <AlertOctagon size={22} className="text-red-400" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[10px] font-semibold text-slate-200 uppercase tracking-widest leading-tight mb-1">
+                  <p className="text-[10px] font-semibold text-slate-700 uppercase tracking-widest leading-tight mb-1">
                     Potential Scam
                   </p>
                   {loading ? (
-                    <div className="h-8 w-20 bg-white/5 rounded animate-pulse" />
+                    <div className="h-8 w-20 bg-slate-100 rounded animate-pulse" />
                   ) : (
                     <div className="flex items-end gap-2">
                       <span className="text-3xl font-black text-red-400 tabular-nums leading-none">
                         {(kpis?.potential_scam ?? 0).toLocaleString()}
                       </span>
-                      <span className="text-xs text-slate-300 mb-0.5">
+                      <span className="text-xs text-slate-600 mb-0.5">
                         calls ({kpis && kpis.audit_count > 0
                           ? ((kpis.potential_scam / kpis.audit_count) * 100).toFixed(1)
                           : 0}%) · Click to view
                       </span>
                     </div>
                   )}
-                  <p className="text-[10px] text-slate-300 mt-1">
-                    Sys. manipulation / Financial fraud / Collusion / Policy failure = Yes
+                  <p className="text-[10px] text-slate-600 mt-1">
+                    Financial fraud 
                   </p>
                 </div>
               </div>
@@ -820,14 +1928,14 @@ export default function InboundQualityDashboard() {
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-1 h-4 rounded-full bg-rose-500" />
-                <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Top Negative Signals</h3>
+                <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Top Negative Signals</h3>
                 <span className="ml-auto text-[10px] text-slate-400">Based on top_negative_words categorisation</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                 {[
                   { label: 'Frustration', key: 'frustration_count' as const, color: '#F59E0B', bg: '#F59E0B15', icon: '😤' },
                   { label: 'Threat',      key: 'threat_count'      as const, color: '#EF4444', bg: '#EF444415', icon: '⚠️' },
-                  { label: 'Abuse',       key: 'abuse_count'       as const, color: '#A855F7', bg: '#A855F715', icon: '🚫' },
+                  { label: 'Abuse',       key: 'cuss_abuse_count'  as const, color: '#A855F7', bg: '#A855F715', icon: '🚫' },
                   { label: 'Slang',       key: 'slang_count'       as const, color: '#3B82F6', bg: '#3B82F615', icon: '💬' },
                   { label: 'Sarcasm',     key: 'sarcasm_count'     as const, color: '#14B8A6', bg: '#14B8A615', icon: '🙃' },
                 ].map(({ label, key, color, bg, icon }) => {
@@ -836,12 +1944,36 @@ export default function InboundQualityDashboard() {
                     ? ((count / kpis.audit_count) * 100).toFixed(1)
                     : '0.0';
                   const filtered = negSignalDetails.filter(r => r.neg_signal === label);
-                  return (
-                    <div key={label}
-                      className="relative flex flex-col gap-2 rounded-xl border border-white/5 px-4 py-4 overflow-hidden cursor-pointer hover:brightness-110 transition-all"
-                      style={{ backgroundColor: bg }}
-                      title={`Click to view ${label} signal details`}
-                      onClick={() => filtered.length > 0 && setDrillModal({
+                  const handleClick = () => {
+                    if (label === 'Abuse') {
+                      setAbuseDetailOpen(true);
+                      if (!abuseDetail) {
+                        setAbuseDetailLoading(true);
+                        api.get<{ data: AbuseDetailResponse }>(`/inbound-quality/abuse-detail?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+                          .then(r => setAbuseDetail(r.data?.data ?? null))
+                          .catch(() => setAbuseDetail(null))
+                          .finally(() => setAbuseDetailLoading(false));
+                      }
+                    } else if (label === 'Threat') {
+                      setThreatDetailOpen(true);
+                      if (!threatDetail) {
+                        setThreatDetailLoading(true);
+                        api.get<{ data: NegSignalDetailCallResponse }>(`/inbound-quality/neg-signal-detail?signal=Threat&startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+                          .then(r => setThreatDetail(r.data?.data ?? null))
+                          .catch(() => setThreatDetail(null))
+                          .finally(() => setThreatDetailLoading(false));
+                      }
+                    } else if (label === 'Frustration') {
+                      setFrustDetailOpen(true);
+                      if (!frustDetail) {
+                        setFrustDetailLoading(true);
+                        api.get<{ data: NegSignalDetailCallResponse }>(`/inbound-quality/neg-signal-detail?signal=Frustration&startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+                          .then(r => setFrustDetail(r.data?.data ?? null))
+                          .catch(() => setFrustDetail(null))
+                          .finally(() => setFrustDetailLoading(false));
+                      }
+                    } else if (filtered.length > 0) {
+                      setDrillModal({
                         title: `${label} Signal — Scenario Breakdown`,
                         accent: color,
                         columns: [
@@ -851,7 +1983,15 @@ export default function InboundQualityDashboard() {
                           { key: 'Count%',    label: 'Count%'    },
                         ],
                         rows: filtered.map(r => ({ Scenario: r.scenario, Scenario1: r.scenario1, Count: r.count, 'Count%': `${r.pct}%` })),
-                      })}>
+                      });
+                    }
+                  };
+                  return (
+                    <div key={label}
+                      className="relative flex flex-col gap-2 rounded-xl border border-slate-200 px-4 py-4 overflow-hidden cursor-pointer hover:brightness-110 transition-all"
+                      style={{ backgroundColor: bg }}
+                      title={`Click to view ${label} details`}
+                      onClick={handleClick}>
                       <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-xl" style={{ backgroundColor: color }} />
                       <div className="flex items-center justify-between">
                         <span className="text-base">{icon}</span>
@@ -861,19 +2001,105 @@ export default function InboundQualityDashboard() {
                         </span>
                       </div>
                       {loading ? (
-                        <div className="h-7 w-16 bg-white/10 rounded animate-pulse" />
+                        <div className="h-7 w-16 bg-slate-100 rounded animate-pulse" />
                       ) : (
                         <span className="text-2xl font-black tabular-nums" style={{ color }}>
                           {count.toLocaleString()}
                         </span>
                       )}
-                      <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-300">
+                      <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-600">
                         {label}
                       </span>
                     </div>
                   );
                 })}
               </div>
+            </div>
+
+            {/* Top Positive Signals */}
+            <div className="mt-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-1 h-4 rounded-full bg-emerald-500" />
+                <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Top Positive Signals</h3>
+                <span className="ml-auto text-[10px] text-slate-400">
+                  {posSignals.length > 0
+                    ? `${posSignals.reduce((s, r) => s + r.total, 0).toLocaleString()} total mentions · scroll →`
+                    : 'customer + agent'}
+                </span>
+              </div>
+
+              {posSignals.length === 0 && !loading ? (
+                <p className="text-xs text-slate-400 text-center py-4">No positive signal data for this period.</p>
+              ) : (
+                <div className="flex gap-2.5 overflow-x-auto pb-2"
+                  style={{ scrollbarWidth: 'thin', scrollbarColor: '#D1FAE5 transparent' }}>
+                  {(loading ? Array.from({ length: 8 }) : posSignals).map((row, i) => {
+                    if (loading) {
+                      return <div key={i} className="flex-shrink-0 w-28 h-20 rounded-xl bg-slate-100 animate-pulse" />;
+                    }
+                    const r       = row as PosKeywordRow;
+                    const COLORS  = ['#10B981','#059669','#0EA5E9','#8B5CF6','#14B8A6','#F59E0B','#22C55E','#06B6D4','#6366F1','#84CC16','#EC4899','#F97316'];
+                    const color   = COLORS[i % COLORS.length];
+                    const PATTERNS: Record<string, string> = {
+                      'Thank You':'thank','Appreciate':'appreciat','Great':'great','Good':'good',
+                      'Help / Assist':'help','Understanding':'understand','Patience':'patient',
+                      'Happy':'happy','Satisfied':'satisf','Excellent':'excellent','Nice':'nice','Wonderful':'wonder',
+                    };
+                    const pattern = PATTERNS[r.keyword] ?? r.keyword.toLowerCase();
+
+                    return (
+                      <div key={r.keyword}
+                        className="relative flex-shrink-0 flex flex-col justify-between rounded-xl border px-3 py-2.5 overflow-hidden cursor-pointer transition-all hover:shadow-md hover:-translate-y-0.5"
+                        style={{ width: 112, backgroundColor: `${color}10`, borderColor: `${color}35` }}
+                        title={`Click to see top phrases for "${r.keyword}"`}
+                        onClick={() => {
+                          setPosModalKeyword(r.keyword);
+                          setPosModalColor(color);
+                          setPosModalPhrases([]);
+                          setPosModalLeads([]);
+                          setPosModalOpen(true);
+                          const base = `pattern=${encodeURIComponent(pattern)}&startDate=${sd}&endDate=${ed}&clientId=${clientId}`;
+                          setPosModalPhrasesLoading(true);
+                          api.get<{ data: Array<{ source: string; phrase: string; count: number }> }>(
+                            `/inbound-quality/pos-keyword-phrases?${base}`
+                          ).then(res => setPosModalPhrases(res.data?.data ?? []))
+                           .catch(() => {})
+                           .finally(() => setPosModalPhrasesLoading(false));
+                          setPosModalLeadsLoading(true);
+                          api.get<{ data: PosKeywordLeadRow[] }>(
+                            `/inbound-quality/pos-keyword-leads?${base}`
+                          ).then(res => setPosModalLeads(res.data?.data ?? []))
+                           .catch(() => {})
+                           .finally(() => setPosModalLeadsLoading(false));
+                        }}>
+                        {/* top color stripe */}
+                        <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-xl" style={{ backgroundColor: color }} />
+
+                        {/* count */}
+                        <span className="text-lg font-black tabular-nums leading-none" style={{ color }}>
+                          {r.total.toLocaleString()}
+                        </span>
+
+                        {/* label */}
+                        <span className="text-[10px] font-bold text-slate-700 leading-tight mt-1 block truncate">
+                          {r.keyword}
+                        </span>
+
+                        {/* customer / agent split */}
+                        <div className="flex gap-1 mt-1.5">
+                          <span className="text-[9px] rounded px-1 py-0.5 font-semibold"
+                            style={{ backgroundColor: `${color}20`, color }}>
+                            👤 {r.customer_count}
+                          </span>
+                          <span className="text-[9px] rounded px-1 py-0.5 font-semibold bg-slate-100 text-slate-600">
+                            🎧 {r.agent_count}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             </div> {/* /Portfolio Insight */}
 
@@ -912,40 +2138,40 @@ export default function InboundQualityDashboard() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6 mb-6">
 
                   {/* Top 5 Performers */}
-                  <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                       <Trophy size={13} className="text-amber-400" />
-                      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Top 5 Performers</h3>
-                      <ExportBtn onClick={() => downloadCSV(performers.map((p, i) => ({ Rank: i + 1, Agent: p.user, Audits: p.audit_count, 'Avg Score%': p.avg_score })), 'top-performers.csv')} />
+                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Top 5 Performers</h3>
+                      <ExportBtn onClick={() => downloadCSV(performers.map((p, i) => ({ Rank: i + 1, 'MAS ID': p.user, Agent: resolveAgent(p.user), Audits: p.audit_count, 'Avg Score%': p.avg_score })), 'top-performers.csv')} />
                     </div>
                     <div className="p-4 space-y-2.5">
                       {performers.length === 0 ? (
                         <p className="text-xs text-slate-600 py-6 text-center">No agent data found</p>
                       ) : performers.map((p, i) => (
                         <div key={p.user}
-                          className="flex items-center gap-3 cursor-pointer hover:bg-white/[0.03] rounded-lg px-1 transition-colors"
-                          title={`Click to drill into ${p.user}'s performance`}
-                          onClick={() => openBandDetail('no_fatal', `${p.user} — Performance Breakdown`, RANK_COLORS[i])}>
+                          className="flex items-center gap-3 cursor-pointer hover:bg-slate-50 rounded-lg px-1 transition-colors"
+                          title={`Click to drill into ${resolveAgent(p.user)}'s performance`}
+                          onClick={() => openBandDetail('no_fatal', `${resolveAgent(p.user)} — Performance Breakdown`, RANK_COLORS[i])}>
                           <div className="flex items-center justify-center w-8 h-8 rounded-lg text-[10px] font-black shrink-0"
                             style={{ backgroundColor: `${RANK_COLORS[i]}20`, color: RANK_COLORS[i] }}>
                             {RANK_LABELS[i]}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between mb-1">
-                              <span className="text-xs font-semibold text-slate-200 truncate">{p.user}</span>
+                              <span className="text-xs font-semibold text-slate-700 truncate">{agentTag(p.user)}</span>
                               <span className="text-xs font-bold ml-2 shrink-0"
                                 style={{ color: cqColor(p.avg_score) }}>
                                 {p.avg_score}%
                               </span>
                             </div>
-                            <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                            <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                               <div className="h-full rounded-full transition-all duration-500"
                                 style={{
                                   width: `${Math.min(p.avg_score, 100)}%`,
                                   backgroundColor: cqColor(p.avg_score),
                                 }} />
                             </div>
-                            <span className="text-[10px] text-slate-400 mt-0.5">{p.audit_count} audits · Click to drill</span>
+                            <span className="text-[10px] text-slate-600 font-semibold mt-0.5">{p.audit_count} audits · Click to drill</span>
                           </div>
                         </div>
                       ))}
@@ -953,10 +2179,10 @@ export default function InboundQualityDashboard() {
                   </div>
 
                   {/* 7-Day Bar Chart: Score vs Target */}
-                  <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                       <Target size={13} className="text-sky-400" />
-                      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Last 7 Days vs Target</h3>
+                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Last 7 Days vs Target</h3>
                       <ExportBtn onClick={() => downloadCSV(chartData.map(d => ({ Date: d.date, 'Avg Score%': d.score ?? 'No data', 'Audit Count': d.audits, Target: d.target })), 'last-7-days.csv')} />
                       <span className="ml-auto flex items-center gap-1.5 text-[10px] text-red-400 font-semibold">
                         <span className="w-4 h-0.5 bg-red-400 rounded inline-block" />
@@ -966,7 +2192,7 @@ export default function InboundQualityDashboard() {
                     <div className="p-4">
                       <ResponsiveContainer width="100%" height={220}>
                         <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" vertical={false} />
+                          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
                           <XAxis
                             dataKey="label"
                             tick={{ fill: '#64748B', fontSize: 10 }}
@@ -979,12 +2205,13 @@ export default function InboundQualityDashboard() {
                             tickFormatter={v => `${v}%`}
                           />
                           <Tooltip
-                            contentStyle={{ background: '#0F172A', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 11 }}
+                            contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff20', borderRadius: 8, fontSize: 11 }}
                             formatter={(val: unknown, name: unknown) => [
                               name === 'score' ? `${val ?? 'No data'}%` : `${val}%`,
                               name === 'score' ? 'Quality Score' : 'Target',
                             ]}
-                            labelStyle={{ color: '#94A3B8', marginBottom: 4 }}
+                            labelStyle={{ color: '#ffffff', fontWeight: 600, marginBottom: 4 }}
+                            itemStyle={{ color: '#ffffff' }}
                           />
                           <ReferenceLine
                             y={95}
@@ -1001,7 +2228,7 @@ export default function InboundQualityDashboard() {
                             {chartData.map((d, i) => (
                               <Cell
                                 key={i}
-                                fill={d.score === null ? '#1E293B' : d.score >= 95 ? '#22C55E' : d.score >= 85 ? '#3B82F6' : '#F59E0B'}
+                                fill={d.score === null ? '#F1F5F9' : d.score >= 95 ? '#22C55E' : d.score >= 85 ? '#3B82F6' : '#F59E0B'}
                                 fillOpacity={d.score === null ? 0.2 : 1}
                               />
                             ))}
@@ -1051,14 +2278,15 @@ export default function InboundQualityDashboard() {
               const total_bq     = agentAuditBand.reduce((s, r) => s + r.bq_count,    0);
               const avg_cq       = agentAuditBand.reduce((s, r) => s + r.cq_score, 0) / agentAuditBand.length;
               return (
-                <div className="mb-6 bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                  <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 flex-wrap">
+                <div className="mb-6 bg-white border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-3 flex-wrap">
                     <div className="w-1 h-4 rounded-full bg-sky-500 shrink-0" />
-                    <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Agent Audit Summary</h3>
-                    <span className="text-[10px] text-slate-300 ml-1">TQ ≥80% · MQ 60–79% · BQ &lt;60% · Stack Ranking: &gt;95% TQ · &gt;85% MQ · else BQ</span>
+                    <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Agent Audit Summary</h3>
+                    <span className="text-[10px] text-slate-600 ml-1">TQ ≥80% · MQ 60–79% · BQ &lt;60% · Stack Ranking: &gt;95% TQ · &gt;85% MQ · else BQ</span>
                     <ExportBtn onClick={() => downloadCSV(agentAuditBand.map((r, i) => ({
                       '#': i + 1,
-                      'Agent':           r.agent,
+                      'MAS ID':          r.agent,
+                      'Agent':           resolveAgent(r.agent),
                       'Audit Count':     r.audit_count,
                       'CQ Score%':       r.cq_score,
                       'Stack Ranking':   r.cq_score > 95 ? 'TQ' : r.cq_score > 85 ? 'MQ' : 'BQ',
@@ -1071,8 +2299,8 @@ export default function InboundQualityDashboard() {
                   </div>
                   <div className="overflow-x-auto overflow-y-auto max-h-96">
                     <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-[#1E293B] z-10">
-                        <tr className="border-b border-white/5 bg-white/[0.02]">
+                      <thead className="sticky top-0 bg-white z-10">
+                        <tr className="border-b border-slate-200 bg-slate-50">
                           {[
                             { label: '#',              cls: 'w-8 text-center' },
                             { label: 'Agent',           cls: 'text-left' },
@@ -1085,7 +2313,7 @@ export default function InboundQualityDashboard() {
                             { label: 'MQ',              cls: 'text-right text-amber-400'   },
                             { label: 'BQ',              cls: 'text-right text-red-400'     },
                           ].map(h => (
-                            <th key={h.label} className={`py-2.5 px-3 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap ${h.cls || 'text-slate-300'}`}>
+                            <th key={h.label} className={`py-2.5 px-3 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap ${h.cls || 'text-slate-600'}`}>
                               {h.label}
                             </th>
                           ))}
@@ -1094,12 +2322,12 @@ export default function InboundQualityDashboard() {
                       <tbody>
                         {agentAuditBand.map((r, i) => (
                           <tr key={r.agent}
-                            className="border-b border-white/5 hover:bg-white/[0.04] transition-colors cursor-pointer"
-                            title={`Click to drill into ${r.agent}'s band detail`}
-                            onClick={() => openBandDetail('no_fatal', `${r.agent} — Band Detail`, r.cq_score > 95 ? '#22C55E' : r.cq_score > 85 ? '#F59E0B' : '#EF4444')}>
+                            className="border-b border-slate-200 hover:bg-slate-100 transition-colors cursor-pointer"
+                            title={`Click to drill into ${resolveAgent(r.agent)}'s band detail`}
+                            onClick={() => openBandDetail('no_fatal', `${resolveAgent(r.agent)} — Band Detail`, r.cq_score > 95 ? '#22C55E' : r.cq_score > 85 ? '#F59E0B' : '#EF4444')}>
                             <td className="py-2 px-3 text-slate-400 text-center">{i + 1}</td>
-                            <td className="py-2 px-3 font-medium text-white whitespace-nowrap">{r.agent}</td>
-                            <td className="py-2 px-3 text-right text-slate-200">{r.audit_count.toLocaleString()}</td>
+                            <td className="py-2 px-3 font-medium text-slate-900 whitespace-nowrap">{agentTag(r.agent)}</td>
+                            <td className="py-2 px-3 text-right text-slate-700">{r.audit_count.toLocaleString()}</td>
                             <td className="py-2 px-3 text-right font-bold" style={{ color: cq(r.cq_score) }}>{r.cq_score.toFixed(1)}%</td>
                             <td className="py-2 px-3 text-center">{stackBadge(r.cq_score)}</td>
                             <td className="py-2 px-3 text-right font-semibold" style={{ color: r.fatal_count > 0 ? '#EF4444' : '#94A3B8' }}>
@@ -1121,11 +2349,11 @@ export default function InboundQualityDashboard() {
                         ))}
                       </tbody>
                       <tfoot>
-                        <tr className="border-t border-white/10 bg-white/[0.02]">
-                          <td className="py-2 px-3 text-[10px] text-slate-200 font-semibold" colSpan={2}>
+                        <tr className="border-t border-slate-200 bg-slate-50">
+                          <td className="py-2 px-3 text-[10px] text-slate-700 font-semibold" colSpan={2}>
                             Total ({agentAuditBand.length} agents)
                           </td>
-                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-slate-200">{total_audits.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-[10px] font-semibold text-slate-700">{total_audits.toLocaleString()}</td>
                           <td className="py-2 px-3 text-right text-[10px] font-bold" style={{ color: cq(avg_cq) }}>{avg_cq.toFixed(1)}%</td>
                           <td className="py-2 px-3 text-center">{stackBadge(avg_cq)}</td>
                           <td className="py-2 px-3 text-right text-[10px] font-semibold text-red-400">{total_fatals.toLocaleString()}</td>
@@ -1149,11 +2377,11 @@ export default function InboundQualityDashboard() {
                 : null;
 
               return (
-                <div className="mt-6 mb-6 bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
+                <div className="mt-6 mb-6 bg-white border border-slate-200 rounded-xl overflow-hidden">
                   {/* Header */}
-                  <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2 flex-wrap">
+                  <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 flex-wrap">
                     <div className="w-1 h-4 rounded-full bg-blue-500" />
-                    <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">
+                    <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">
                       Scenario Distribution
                     </h3>
                     <ExportBtn onClick={() => downloadCSV(filteredScenarios.map(s => ({ Scenario: s.scenario, Count: s.count, 'Count%': `${s.pct}%` })), 'scenario-distribution.csv')} />
@@ -1163,7 +2391,7 @@ export default function InboundQualityDashboard() {
                         <span className="text-xs font-bold text-blue-400">{selectedScenario}</span>
                         <button
                           onClick={() => setSelectedScenario(null)}
-                          className="ml-auto text-[10px] text-slate-500 hover:text-slate-300 border border-white/10 rounded px-2 py-0.5 transition-colors">
+                          className="ml-auto text-[10px] text-slate-500 hover:text-slate-600 border border-slate-200 rounded px-2 py-0.5 transition-colors">
                           ✕ Clear
                         </button>
                       </>
@@ -1187,23 +2415,22 @@ export default function InboundQualityDashboard() {
                             outerRadius={100}
                             innerRadius={48}
                             paddingAngle={2}
-                            onClick={(d: ScenarioItem) => setSelectedScenario(prev => prev === d.scenario ? null : d.scenario)}
+                            onClick={(d: unknown) => { const s = d as ScenarioItem; setSelectedScenario(prev => prev === s.scenario ? null : s.scenario); }}
                             style={{ cursor: 'pointer' }}
                             labelLine={false}
-                            label={({ cx, cy, midAngle, innerRadius, outerRadius, percent, index }: {
-                              cx: number; cy: number; midAngle: number; innerRadius: number;
-                              outerRadius: number; percent: number; index: number;
-                            }) => {
-                              if (percent < 0.06) return null;
+                            label={(props: import('recharts').PieLabelRenderProps) => {
+                              const { cx = 0, cy = 0, midAngle = 0, innerRadius = 0, outerRadius = 0, percent = 0 } = props;
+                              const ncx = Number(cx), ncy = Number(cy), nma = Number(midAngle), nir = Number(innerRadius), nor = Number(outerRadius), np = Number(percent);
+                              if (np < 0.06) return null;
                               const R = Math.PI / 180;
-                              const r = innerRadius + (outerRadius - innerRadius) * 0.55;
+                              const r = nir + (nor - nir) * 0.55;
                               return (
                                 <text
-                                  x={cx + r * Math.cos(-midAngle * R)}
-                                  y={cy + r * Math.sin(-midAngle * R)}
+                                  x={ncx + r * Math.cos(-nma * R)}
+                                  y={ncy + r * Math.sin(-nma * R)}
                                   fill="#fff" textAnchor="middle" dominantBaseline="central"
                                   fontSize={10} fontWeight={700}>
-                                  {`${(percent * 100).toFixed(0)}%`}
+                                  {`${(np * 100).toFixed(0)}%`}
                                 </text>
                               );
                             }}
@@ -1219,7 +2446,7 @@ export default function InboundQualityDashboard() {
                             ))}
                           </Pie>
                           <Tooltip
-                            contentStyle={{ background: '#0F172A', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 11 }}
+                            contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 11 }}
                             formatter={(v: unknown, n: unknown) => [
                               `${Number(v).toLocaleString()} calls (${filteredScenarios.find(s => s.scenario === n)?.pct ?? 0}%)`,
                               String(n),
@@ -1245,14 +2472,14 @@ export default function InboundQualityDashboard() {
                     </div>
 
                     {/* Right — Table */}
-                    <div className="lg:w-[55%] border-t lg:border-t-0 lg:border-l border-white/5 overflow-hidden">
+                    <div className="lg:w-[55%] border-t lg:border-t-0 lg:border-l border-slate-200 overflow-hidden">
                       {!selectedScenario ? (
                         /* All scenarios summary */
                         <table className="w-full text-xs">
                           <thead>
-                            <tr className="border-b border-white/5 bg-white/[0.02]">
+                            <tr className="border-b border-slate-200 bg-slate-50">
                               {['Scenario', 'Count', 'Count %'].map(h => (
-                                <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">
+                                <th key={h} className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">
                                   {h}
                                 </th>
                               ))}
@@ -1262,22 +2489,22 @@ export default function InboundQualityDashboard() {
                             {filteredScenarios.map((s, i) => (
                               <tr key={s.scenario}
                                 onClick={() => setSelectedScenario(s.scenario)}
-                                className="border-b border-white/[0.04] hover:bg-white/[0.04] cursor-pointer transition-colors">
+                                className="border-b border-slate-100 hover:bg-slate-100 cursor-pointer transition-colors">
                                 <td className="py-2.5 px-4 flex items-center gap-2">
                                   <span className="w-2 h-2 rounded-sm shrink-0"
                                     style={{ background: SCENARIO_COLORS[i % SCENARIO_COLORS.length] }} />
-                                  <span className="text-slate-200 font-medium">{s.scenario}</span>
+                                  <span className="text-slate-700 font-medium">{s.scenario}</span>
                                 </td>
-                                <td className="py-2.5 px-4 text-slate-300 tabular-nums font-semibold">
+                                <td className="py-2.5 px-4 text-slate-600 tabular-nums font-semibold">
                                   {s.count.toLocaleString()}
                                 </td>
                                 <td className="py-2.5 px-4 tabular-nums">
                                   <div className="flex items-center gap-2">
-                                    <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden max-w-[80px]">
+                                    <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden max-w-[80px]">
                                       <div className="h-full rounded-full"
                                         style={{ width: `${s.pct}%`, background: SCENARIO_COLORS[i % SCENARIO_COLORS.length] }} />
                                     </div>
-                                    <span className="text-slate-300 font-semibold">{s.pct}%</span>
+                                    <span className="text-slate-600 font-semibold">{s.pct}%</span>
                                   </div>
                                 </td>
                               </tr>
@@ -1287,16 +2514,16 @@ export default function InboundQualityDashboard() {
                       ) : (
                         /* Scenario1 drill-down */
                         <div>
-                          <div className="px-4 py-2.5 border-b border-white/5 bg-white/[0.02]">
-                            <p className="text-[10px] text-slate-300 uppercase tracking-wider font-semibold">
+                          <div className="px-4 py-2.5 border-b border-slate-200 bg-slate-50">
+                            <p className="text-[10px] text-slate-600 uppercase tracking-wider font-semibold">
                               {selectedScenario} — Sub-scenario breakdown
                             </p>
                           </div>
                           <table className="w-full text-xs">
                             <thead>
-                              <tr className="border-b border-white/5">
+                              <tr className="border-b border-slate-200">
                                 {['Scenario 1', 'Count', 'Count %'].map(h => (
-                                  <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">
+                                  <th key={h} className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">
                                     {h}
                                   </th>
                                 ))}
@@ -1308,18 +2535,18 @@ export default function InboundQualityDashboard() {
                                 const color   = SCENARIO_COLORS[scenIdx % SCENARIO_COLORS.length];
                                 return (
                                   <tr key={i}
-                                    className={`border-b border-white/[0.04] ${i % 2 === 0 ? '' : 'bg-white/[0.01]'}`}>
-                                    <td className="py-2.5 px-4 text-slate-200">{c.scenario1}</td>
-                                    <td className="py-2.5 px-4 text-slate-300 tabular-nums font-semibold">
+                                    className={`border-b border-slate-100 ${i % 2 === 0 ? '' : 'bg-transparent'}`}>
+                                    <td className="py-2.5 px-4 text-slate-700">{c.scenario1}</td>
+                                    <td className="py-2.5 px-4 text-slate-600 tabular-nums font-semibold">
                                       {c.count.toLocaleString()}
                                     </td>
                                     <td className="py-2.5 px-4 tabular-nums">
                                       <div className="flex items-center gap-2">
-                                        <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden max-w-[80px]">
+                                        <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden max-w-[80px]">
                                           <div className="h-full rounded-full"
                                             style={{ width: `${c.pct}%`, background: color }} />
                                         </div>
-                                        <span className="text-slate-300 font-semibold">{c.pct}%</span>
+                                        <span className="text-slate-600 font-semibold">{c.pct}%</span>
                                       </div>
                                     </td>
                                   </tr>
@@ -1353,10 +2580,10 @@ export default function InboundQualityDashboard() {
                 rows: Array<{ scenario: string; scenario1: string; count: number; pct: number; extra?: string }>;
                 extraCol?: string;
               }) => (
-                <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                  <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                     <div className="w-1 h-4 rounded-full" style={{ background: accentColor }} />
-                    <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">{title}</h3>
+                    <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">{title}</h3>
                     <ExportBtn onClick={() => downloadCSV(rows.map(r => ({ Scenario: r.scenario, Scenario1: r.scenario1, ...(extraCol ? { [extraCol]: r.extra } : {}), Count: r.count, 'Count%': `${r.pct}%` })), `${title.replace(/\s+/g,'-').toLowerCase()}.csv`)} />
                     <span className="ml-auto text-xs font-bold" style={{ color: accentColor }}>
                       {rows.reduce((s, r) => s + r.count, 0).toLocaleString()} calls
@@ -1367,19 +2594,19 @@ export default function InboundQualityDashboard() {
                   ) : (
                     <div className="overflow-y-auto max-h-64">
                       <table className="w-full text-xs">
-                        <thead className="sticky top-0 bg-[#1E293B] z-10">
-                          <tr className="border-b border-white/5 bg-white/[0.02]">
-                            <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">Scenario</th>
-                            <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">Scenario1</th>
-                            {extraCol && <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">{extraCol}</th>}
-                            <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">Count</th>
-                            <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">Count%</th>
+                        <thead className="sticky top-0 bg-white z-10">
+                          <tr className="border-b border-slate-200 bg-slate-50">
+                            <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">Scenario</th>
+                            <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">Scenario1</th>
+                            {extraCol && <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">{extraCol}</th>}
+                            <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">Count</th>
+                            <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">Count%</th>
                           </tr>
                         </thead>
                         <tbody>
                           {rows.map((r, i) => (
-                            <tr key={i} className={`border-b border-white/[0.04] ${i % 2 === 0 ? '' : 'bg-white/[0.01]'}`}>
-                              <td className="py-2.5 px-4 text-slate-300">{r.scenario}</td>
+                            <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? '' : 'bg-transparent'}`}>
+                              <td className="py-2.5 px-4 text-slate-600">{r.scenario}</td>
                               <td className="py-2.5 px-4 text-slate-400">{r.scenario1}</td>
                               {extraCol && (
                                 <td className="py-2.5 px-4">
@@ -1392,23 +2619,23 @@ export default function InboundQualityDashboard() {
                                   </span>
                                 </td>
                               )}
-                              <td className="py-2.5 px-4 text-slate-200 font-semibold tabular-nums">{r.count.toLocaleString()}</td>
+                              <td className="py-2.5 px-4 text-slate-700 font-semibold tabular-nums">{r.count.toLocaleString()}</td>
                               <td className="py-2.5 px-4 tabular-nums">
                                 <div className="flex items-center gap-2">
-                                  <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden max-w-[60px]">
+                                  <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden max-w-[60px]">
                                     <div className="h-full rounded-full" style={{ width: `${r.pct}%`, background: accentColor }} />
                                   </div>
-                                  <span className="text-slate-300 font-semibold">{r.pct}%</span>
+                                  <span className="text-slate-600 font-semibold">{r.pct}%</span>
                                 </div>
                               </td>
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot className="border-t border-white/10">
-                          <tr className="bg-white/[0.03]">
-                            <td colSpan={extraCol ? 3 : 2} className="py-2.5 px-4 text-slate-300 font-semibold text-[10px] uppercase">Total</td>
-                            <td className="py-2.5 px-4 text-white font-bold tabular-nums">{rows.reduce((s, r) => s + r.count, 0).toLocaleString()}</td>
-                            <td className="py-2.5 px-4 text-white font-bold">100%</td>
+                        <tfoot className="border-t border-slate-200">
+                          <tr className="bg-slate-50">
+                            <td colSpan={extraCol ? 3 : 2} className="py-2.5 px-4 text-slate-600 font-semibold text-[10px] uppercase">Total</td>
+                            <td className="py-2.5 px-4 text-slate-900 font-bold tabular-nums">{rows.reduce((s, r) => s + r.count, 0).toLocaleString()}</td>
+                            <td className="py-2.5 px-4 text-slate-900 font-bold">100%</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1429,10 +2656,10 @@ export default function InboundQualityDashboard() {
 
                   {/* Sensitive Word Analysis — two metrics below the social threats table */}
                   {sensitiveWordAnalysis && (
-                    <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                      <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                         <div className="w-1 h-4 rounded-full bg-orange-400" />
-                        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">
+                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">
                           Sensitive Word Use Analysis
                         </h3>
                       </div>
@@ -1441,9 +2668,9 @@ export default function InboundQualityDashboard() {
                         <div className="lg:w-[65%] overflow-hidden">
                           <table className="w-full text-xs">
                             <thead>
-                              <tr className="border-b border-white/5 bg-white/[0.02]">
+                              <tr className="border-b border-slate-200 bg-slate-50">
                                 {['Sensitive Word Use', 'Count', 'Count%'].map(h => (
-                                  <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider">
+                                  <th key={h} className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">
                                     {h}
                                   </th>
                                 ))}
@@ -1451,35 +2678,35 @@ export default function InboundQualityDashboard() {
                             </thead>
                             <tbody>
                               {sensitiveWordAnalysis.distribution.map((r, i) => (
-                                <tr key={i} className={`border-b border-white/[0.04] ${i % 2 === 0 ? '' : 'bg-white/[0.01]'}`}>
-                                  <td className="py-3 px-4 text-slate-200 leading-snug">{r.label}</td>
-                                  <td className="py-3 px-4 text-slate-300 font-bold tabular-nums whitespace-nowrap">{r.count.toLocaleString()}</td>
+                                <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? '' : 'bg-transparent'}`}>
+                                  <td className="py-3 px-4 text-slate-700 leading-snug">{r.label}</td>
+                                  <td className="py-3 px-4 text-slate-600 font-bold tabular-nums whitespace-nowrap">{r.count.toLocaleString()}</td>
                                   <td className="py-3 px-4 tabular-nums whitespace-nowrap">
                                     <div className="flex items-center gap-2">
-                                      <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden max-w-[60px]">
+                                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden max-w-[60px]">
                                         <div className="h-full rounded-full bg-orange-400" style={{ width: `${r.pct}%` }} />
                                       </div>
-                                      <span className="text-slate-300 font-semibold">{r.pct}%</span>
+                                      <span className="text-slate-600 font-semibold">{r.pct}%</span>
                                     </div>
                                   </td>
                                 </tr>
                               ))}
                             </tbody>
-                            <tfoot className="border-t border-white/10">
-                              <tr className="bg-white/[0.03]">
-                                <td className="py-2.5 px-4 text-slate-300 font-semibold text-[10px] uppercase">Total</td>
-                                <td className="py-2.5 px-4 text-white font-bold tabular-nums">
+                            <tfoot className="border-t border-slate-200">
+                              <tr className="bg-slate-50">
+                                <td className="py-2.5 px-4 text-slate-600 font-semibold text-[10px] uppercase">Total</td>
+                                <td className="py-2.5 px-4 text-slate-900 font-bold tabular-nums">
                                   {sensitiveWordAnalysis.distribution.reduce((s, r) => s + r.count, 0).toLocaleString()}
                                 </td>
-                                <td className="py-2.5 px-4 text-white font-bold">100%</td>
+                                <td className="py-2.5 px-4 text-slate-900 font-bold">100%</td>
                               </tr>
                             </tfoot>
                           </table>
                         </div>
 
                         {/* Right — Dimension counts */}
-                        <div className="lg:w-[35%] border-t lg:border-t-0 lg:border-l border-white/5 p-4 flex flex-col gap-3 justify-center">
-                          <p className="text-[10px] text-slate-300 uppercase tracking-widest font-semibold mb-1">
+                        <div className="lg:w-[35%] border-t lg:border-t-0 lg:border-l border-slate-200 p-4 flex flex-col gap-3 justify-center">
+                          <p className="text-[10px] text-slate-600 uppercase tracking-widest font-semibold mb-1">
                             Dimension
                           </p>
                           {[
@@ -1487,10 +2714,10 @@ export default function InboundQualityDashboard() {
                             { label: 'Social Media',                    count: sensitiveWordAnalysis.social_count, color: '#3B82F6', note: 'CX threatened social media' },
                             { label: 'Consumer Court',                  count: sensitiveWordAnalysis.court_count,  color: '#F97316', note: 'CX mentioned court/legal/FIR' },
                           ].map(d => (
-                            <div key={d.label} className="flex items-center gap-3 bg-white/[0.03] rounded-lg px-3 py-3 border border-white/5">
+                            <div key={d.label} className="flex items-center gap-3 bg-slate-50 rounded-lg px-3 py-3 border border-slate-200">
                               <div className="w-1 self-stretch rounded-full shrink-0" style={{ background: d.color }} />
                               <div className="flex-1 min-w-0">
-                                <p className="text-[10px] text-slate-300 uppercase tracking-widest">{d.label}</p>
+                                <p className="text-[10px] text-slate-600 uppercase tracking-widest">{d.label}</p>
                                 <p className="text-slate-400 text-[9px] leading-tight">{d.note}</p>
                               </div>
                               <span className="text-xl font-bold tabular-nums" style={{ color: d.color }}>
@@ -1524,11 +2751,11 @@ export default function InboundQualityDashboard() {
                       { label: 'Top Negative Signal Calls',    count: totalNeg,    color: '#F59E0B' },
                       { label: 'Potential Scam Leads',         count: totalScam,   color: '#EF4444' },
                     ].map(s => (
-                      <div key={s.label} className="flex-1 bg-[#1E293B] border border-white/5 rounded-xl px-4 py-3 flex items-center gap-3">
+                      <div key={s.label} className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center gap-3">
                         <div className="w-1 self-stretch rounded-full" style={{ background: s.color }} />
                         <div>
-                          <p className="text-[10px] text-slate-300 uppercase tracking-widest">{s.label}</p>
-                          <p className="text-xl font-bold text-white">{s.count.toLocaleString()}</p>
+                          <p className="text-[10px] text-slate-600 uppercase tracking-widest">{s.label}</p>
+                          <p className="text-xl font-bold text-slate-900">{s.count.toLocaleString()}</p>
                         </div>
                       </div>
                     ))}
@@ -1588,14 +2815,15 @@ export default function InboundQualityDashboard() {
           const deltaVsTarget = (fd.cq_score - 98).toFixed(1);
 
           // Custom bar label renderer
-          const renderFatalBarLabel = (props: { x?: number; y?: number; width?: number; value?: number; index?: number }) => {
+          const renderFatalBarLabel = (props: { x?: string | number; y?: string | number; width?: string | number; value?: number; index?: number }) => {
             const { x = 0, y = 0, width = 0, value, index = 0 } = props;
+            const nx = Number(x), ny = Number(y), nw = Number(width);
             const row = chartData[index];
             if (!value) return <g />;
             return (
               <g>
-                <text x={x + width / 2} y={y - 6}  textAnchor="middle" fill="#22D3EE" fontSize={9} fontWeight="bold">{value}</text>
-                <text x={x + width / 2} y={y - 16} textAnchor="middle" fill="#EF4444" fontSize={8}>{row?.pct ?? 0}%</text>
+                <text x={nx + nw / 2} y={ny - 6}  textAnchor="middle" fill="#22D3EE" fontSize={9} fontWeight="bold">{value}</text>
+                <text x={nx + nw / 2} y={ny - 16} textAnchor="middle" fill="#EF4444" fontSize={8}>{row?.pct ?? 0}%</text>
               </g>
             );
           };
@@ -1625,11 +2853,11 @@ export default function InboundQualityDashboard() {
                   },
                   {
                     label: 'Audit Count', value: fd.audit_count.toLocaleString(), sub: null, color: '#38BDF8',
-                    onClick: () => setDrillModal({ title: 'Fatal Analysis — Day Wise Audit Count', accent: '#38BDF8', columns: [{ key: 'Date', label: 'Date' }, { key: 'Total', label: 'Total' }, { key: 'Null Fatal', label: 'Null Fatal' }, { key: 'Query Fatal', label: 'Query Fatal' }, { key: 'Complaint Fatal', label: 'Complaint Fatal' }, { key: 'Request Fatal', label: 'Request Fatal' }], rows: fd.day_wise.map(r => ({ Date: r.call_date, Total: r.total_count, 'Null Fatal': r.null_fatal, 'Query Fatal': r.query_fatal, 'Complaint Fatal': r.complaint_fatal, 'Request Fatal': r.request_fatal })) }),
+                    onClick: () => setDrillModal({ title: 'Fatal Analysis — Day Wise Audit Count', accent: '#38BDF8', columns: [{ key: 'Date', label: 'Date' }, { key: 'Total', label: 'Total' }, { key: 'Query Fatal', label: 'Query Fatal' }, { key: 'Complaint Fatal', label: 'Complaint Fatal' }, { key: 'Request Fatal', label: 'Request Fatal' }], rows: fd.day_wise.map(r => ({ Date: r.call_date, Total: r.total_count, 'Query Fatal': r.query_fatal, 'Complaint Fatal': r.complaint_fatal, 'Request Fatal': r.request_fatal })) }),
                   },
                   {
                     label: 'Fatal Count', value: fd.fatal_count.toLocaleString(), sub: null, color: '#EF4444',
-                    onClick: () => setDrillModal({ title: 'Top Fatal Contributors', accent: '#EF4444', columns: [{ key: 'Agent', label: 'Agent' }, { key: 'Audits', label: 'Audits' }, { key: 'Fatals', label: 'Fatals' }, { key: 'Fatal%', label: 'Fatal%' }], rows: fd.top_contributors.map(r => ({ Agent: r.agent_name, Audits: r.audit_count, Fatals: r.fatal_count, 'Fatal%': `${r.fatal_pct}%` })) }),
+                    onClick: () => setDrillModal({ title: 'Top Fatal Contributors', accent: '#EF4444', columns: [{ key: 'Agent', label: 'Agent' }, { key: 'Audits', label: 'Audits' }, { key: 'Fatals', label: 'Fatals' }, { key: 'Fatal%', label: 'Fatal%' }], rows: fd.top_contributors.map(r => ({ Agent: resolveAgent(r.agent_name), 'MAS ID': r.agent_name, Audits: r.audit_count, Fatals: r.fatal_count, 'Fatal%': `${r.fatal_pct}%` })) }),
                   },
                   {
                     label: 'Fatal%', value: `${fd.fatal_pct}%`, sub: null, color: fd.fatal_pct >= 20 ? '#EF4444' : '#F59E0B',
@@ -1637,13 +2865,13 @@ export default function InboundQualityDashboard() {
                   },
                 ].map(c => (
                   <div key={c.label}
-                    className="relative bg-[#1E293B] border border-white/5 rounded-xl px-4 py-4 overflow-hidden cursor-pointer hover:bg-white/[0.03] transition-colors"
+                    className="relative bg-white border border-slate-200 rounded-xl px-4 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
                     onClick={c.onClick}
                     title="Click for detail analysis">
                     <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ background: c.color }} />
                     <div className="pl-2">
                       <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">{c.label}</p>
-                      <p className="text-2xl font-bold text-white leading-none">{c.value}</p>
+                      <p className="text-2xl font-bold text-slate-900 leading-none">{c.value}</p>
                       {c.sub && <div className="mt-1">{c.sub}</div>}
                       <p className="text-[9px] text-slate-400 mt-1">Click to analyse</p>
                     </div>
@@ -1658,32 +2886,32 @@ export default function InboundQualityDashboard() {
                 <div className="space-y-4">
 
                   {/* Top 5 Fatal Contributor */}
-                  <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                    <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
                       <div className="w-1 h-4 rounded-full bg-red-500" />
-                      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Top 5 Fatal Contributor</h3>
-                      <ExportBtn onClick={() => downloadCSV(fd.top_contributors.map(r => ({ Agent: r.agent_name, Audits: r.audit_count, Fatals: r.fatal_count, 'Fatal%': r.fatal_pct })), 'fatal-contributors.csv')} />
+                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Top 5 Fatal Contributor</h3>
+                      <ExportBtn onClick={() => downloadCSV(fd.top_contributors.map(r => ({ 'MAS ID': r.agent_name, Agent: resolveAgent(r.agent_name), Audits: r.audit_count, Fatals: r.fatal_count, 'Fatal%': r.fatal_pct })), 'fatal-contributors.csv')} />
                     </div>
                     <table className="w-full text-xs">
                       <thead>
-                        <tr className="border-b border-white/5 bg-white/[0.02]">
+                        <tr className="border-b border-slate-200 bg-slate-50">
                           {['Agent Name','Audit Count','Fatal Count','Fatal%'].map(h => (
-                            <th key={h} className="py-2 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[10px]">{h}</th>
+                            <th key={h} className="py-2 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider text-[10px]">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {fd.top_contributors.map((r, i) => (
-                          <tr key={i} className="border-b border-white/[0.04]">
-                            <td className="py-2.5 px-4 text-slate-200">{r.agent_name}</td>
-                            <td className="py-2.5 px-4 text-slate-300 tabular-nums">{r.audit_count}</td>
+                          <tr key={i} className="border-b border-slate-100">
+                            <td className="py-2.5 px-4 text-slate-700">{agentTag(r.agent_name)}</td>
+                            <td className="py-2.5 px-4 text-slate-600 tabular-nums">{r.audit_count}</td>
                             <td className="py-2.5 px-4 text-red-400 font-bold tabular-nums">{r.fatal_count}</td>
                             <td className="py-2.5 px-4">
                               <div className="flex items-center gap-2">
-                                <div className="flex-1 h-4 rounded bg-white/5 overflow-hidden max-w-[80px]">
+                                <div className="flex-1 h-4 rounded bg-slate-100 overflow-hidden max-w-[80px]">
                                   <div className="h-full rounded bg-red-500 flex items-center justify-center"
                                     style={{ width: `${Math.min(r.fatal_pct, 100)}%` }}>
-                                    <span className="text-[9px] font-bold text-white px-1 whitespace-nowrap">{r.fatal_pct}%</span>
+                                    <span className="text-[9px] font-bold text-slate-900 px-1 whitespace-nowrap">{r.fatal_pct}%</span>
                                   </div>
                                 </div>
                               </div>
@@ -1699,22 +2927,22 @@ export default function InboundQualityDashboard() {
 
                   {/* Day Wise Fatal% chart */}
                   {chartData.length > 0 && (
-                    <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
                         <div className="w-1 h-4 rounded-full bg-red-500" />
-                        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Day Wise Fatal%</h3>
+                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Day Wise Fatal%</h3>
                       </div>
                       <div className="p-3">
                         <ResponsiveContainer width="100%" height={220}>
                           <ComposedChart data={chartData} margin={{ top: 28, right: 10, left: -20, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+                            <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
                             <XAxis dataKey="date" tick={{ fill: '#64748B', fontSize: 9 }} />
                             <YAxis tick={{ fill: '#64748B', fontSize: 9 }} allowDecimals={false} />
                             <Tooltip
-                              contentStyle={{ background: '#0F172A', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 11 }}
-                              formatter={(v: unknown, n: unknown) => [v, n === 'count' ? 'Fatal Count' : String(n)]}
+                              contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 11 }}
+                              formatter={(v: unknown, n: unknown) => [v as React.ReactNode, n === 'count' ? 'Fatal Count' : String(n)]}
                             />
-                            <Bar dataKey="count" fill="#0EA5E9" radius={[3,3,0,0]} label={renderFatalBarLabel} />
+                            <Bar dataKey="count" fill="#0EA5E9" radius={[3,3,0,0]}><LabelList content={renderFatalBarLabel as never} /></Bar>
                           </ComposedChart>
                         </ResponsiveContainer>
                       </div>
@@ -1726,12 +2954,12 @@ export default function InboundQualityDashboard() {
                 <div className="space-y-4">
 
                   {/* Scenario Wise Fatal Count — 4 cards */}
-                  <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                    <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
                       <div className="w-1 h-4 rounded-full bg-red-500" />
-                      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Scenario Wise Fatal Count</h3>
+                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Scenario Wise Fatal Count</h3>
                     </div>
-                    <div className="grid grid-cols-4 divide-x divide-white/5">
+                    <div className="grid grid-cols-4 divide-x divide-slate-200">
                       {[
                         { label: 'Query Fatal',     value: fd.query_fatal },
                         { label: 'Complaint Fatal',  value: fd.complaint_fatal },
@@ -1739,7 +2967,7 @@ export default function InboundQualityDashboard() {
                         { label: 'Sale Done Fatal',  value: fd.sale_done_fatal },
                       ].map(c => (
                         <div key={c.label} className="px-3 py-4 text-center">
-                          <p className="text-[9px] text-slate-300 uppercase tracking-wider mb-1">{c.label}</p>
+                          <p className="text-[9px] text-slate-600 uppercase tracking-wider mb-1">{c.label}</p>
                           <p className={`text-2xl font-bold ${c.value > 0 ? 'text-red-400' : 'text-slate-400'}`}>{c.value}</p>
                         </div>
                       ))}
@@ -1748,24 +2976,24 @@ export default function InboundQualityDashboard() {
 
                   {/* Day Wise / Fatal heat-map table */}
                   {fd.day_wise.length > 0 && (
-                    <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
                         <div className="w-1 h-4 rounded-full bg-red-500" />
-                        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Day Wise / Fatal</h3>
+                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Day Wise / Fatal</h3>
                         <ExportBtn onClick={() => downloadCSV(fd.day_wise.map(r => ({ Date: r.call_date, 'Query Fatal': r.query_fatal, 'Complaint Fatal': r.complaint_fatal, 'Request Fatal': r.request_fatal, 'Total Fatal': r.total_fatal, 'Fatal%': r.fatal_pct })), 'day-wise-fatal.csv')} />
                       </div>
                       <div className="overflow-y-auto max-h-52">
                         <table className="w-full text-xs">
-                          <thead className="sticky top-0 bg-[#1E293B] z-10">
-                            <tr className="border-b border-white/5 bg-white/[0.02]">
+                          <thead className="sticky top-0 bg-white z-10">
+                            <tr className="border-b border-slate-200 bg-slate-50">
                               {['Date','Query','Complaint','Request','Total'].map(h => (
-                                <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                                <th key={h} className="py-2 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                               ))}
                             </tr>
                           </thead>
                           <tbody>
                             {fd.day_wise.map((r, i) => (
-                              <tr key={i} className="border-b border-white/[0.04]">
+                              <tr key={i} className="border-b border-slate-100">
                                 <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
                                   {r.call_date.slice(5).replace('-','/')}
                                 </td>
@@ -1775,19 +3003,19 @@ export default function InboundQualityDashboard() {
                                     {v > 0 ? v : '—'}
                                   </td>
                                 ))}
-                                <td className="py-2 px-3 text-white font-bold tabular-nums">{r.total_fatal}</td>
+                                <td className="py-2 px-3 text-slate-900 font-bold tabular-nums">{r.total_fatal}</td>
                               </tr>
                             ))}
                           </tbody>
-                          <tfoot className="border-t border-white/10">
-                            <tr className="bg-white/[0.03]">
+                          <tfoot className="border-t border-slate-200">
+                            <tr className="bg-slate-50">
                               <td className="py-2 px-3 text-slate-400 font-semibold text-[10px]">Grand total</td>
                               {(['query_fatal','complaint_fatal','request_fatal'] as const).map(k => (
-                                <td key={k} className="py-2 px-3 text-white font-bold tabular-nums text-center">
+                                <td key={k} className="py-2 px-3 text-slate-900 font-bold tabular-nums text-center">
                                   {fd.day_wise.reduce((s,r) => s + r[k], 0)}
                                 </td>
                               ))}
-                              <td className="py-2 px-3 text-white font-bold tabular-nums">{fd.fatal_count}</td>
+                              <td className="py-2 px-3 text-slate-900 font-bold tabular-nums">{fd.fatal_count}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -1797,32 +3025,32 @@ export default function InboundQualityDashboard() {
 
                   {/* Week & Scenario Wise Fatal Count */}
                   {fd.week_scenario.length > 0 && (
-                    <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
                         <div className="w-1 h-4 rounded-full bg-red-500" />
-                        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Week &amp; Scenario Wise Fatal Count</h3>
+                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Week &amp; Scenario Wise Fatal Count</h3>
                       </div>
                       <table className="w-full text-xs">
                         <thead>
-                          <tr className="border-b border-white/5 bg-white/[0.02]">
+                          <tr className="border-b border-slate-200 bg-slate-50">
                             {['Week','Query','Complaint','Request','Sale Done','Total'].map(h => (
-                              <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                              <th key={h} className="py-2 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {[...fd.week_scenario].reverse().map((r, i) => (
-                            <tr key={i} className="border-b border-white/[0.04]">
-                              <td className="py-2.5 px-3 text-slate-300 font-medium">{r.week_label}</td>
+                            <tr key={i} className="border-b border-slate-100">
+                              <td className="py-2.5 px-3 text-slate-600 font-medium">{r.week_label}</td>
                               {[r.query_fatal_pct, r.complaint_fatal_pct, r.request_fatal_pct, r.sale_done_fatal_pct].map((v, ci) => (
                                 <td key={ci} className="py-2.5 px-3">{pctCell(v)}</td>
                               ))}
-                              <td className="py-2.5 px-3 text-slate-200 font-bold tabular-nums">{r.total_fatal}</td>
+                              <td className="py-2.5 px-3 text-slate-700 font-bold tabular-nums">{r.total_fatal}</td>
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot className="border-t border-white/10">
-                          <tr className="bg-white/[0.03]">
+                        <tfoot className="border-t border-slate-200">
+                          <tr className="bg-slate-50">
                             <td className="py-2.5 px-3 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
                             {[
                               fd.query_fatal    > 0 ? Math.round(fd.query_fatal    / (fd.audit_count||1) * 1000)/10 : 0,
@@ -1832,7 +3060,7 @@ export default function InboundQualityDashboard() {
                             ].map((v, ci) => (
                               <td key={ci} className="py-2.5 px-3">{pctCell(v)}</td>
                             ))}
-                            <td className="py-2.5 px-3 text-white font-bold tabular-nums">{fd.fatal_count}</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{fd.fatal_count}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1843,33 +3071,33 @@ export default function InboundQualityDashboard() {
 
               {/* ── Agent Wise Performance (full width) ── */}
               {fd.agent_performance.length > 0 && (
-                <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                  <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
                     <div className="w-1 h-4 rounded-full bg-red-500" />
-                    <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Agent Wise Performance</h3>
-                    <ExportBtn onClick={() => downloadCSV(fd.agent_performance.map(r => ({ Agent: r.agent_name, Audits: r.audit_count, 'CQ Score%': r.cq_score, Fatals: r.fatal_count, 'Fatal%': r.fatal_pct, 'Below Avg%': r.below_avg_pct, 'Avg%': r.avg_pct, 'Good%': r.good_pct, 'Excellent%': r.excellent_pct })), 'agent-performance.csv')} />
+                    <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Agent Wise Performance</h3>
+                    <ExportBtn onClick={() => downloadCSV(fd.agent_performance.map(r => ({ 'MAS ID': r.agent_name, Agent: resolveAgent(r.agent_name), Audits: r.audit_count, 'CQ Score%': r.cq_score, Fatals: r.fatal_count, 'Fatal%': r.fatal_pct, 'Below Avg%': r.below_avg_pct, 'Avg%': r.avg_pct, 'Good%': r.good_pct, 'Excellent%': r.excellent_pct })), 'agent-performance.csv')} />
                   </div>
                   <div className="overflow-x-auto overflow-y-auto max-h-80">
                     <table className="w-full text-xs min-w-[800px]">
-                      <thead className="sticky top-0 bg-[#1E293B] z-10">
-                        <tr className="border-b border-white/5 bg-white/[0.02]">
+                      <thead className="sticky top-0 bg-white z-10">
+                        <tr className="border-b border-slate-200 bg-slate-50">
                           {['Agent Name','Audit Count','CQ Score%','Fatal Count','Fatal%','Below Avg Call','Average Calls','Good Calls','Excellent Calls'].map(h => (
-                            <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
+                            <th key={h} className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {fd.agent_performance.map((r, i) => (
                           <tr key={i}
-                            className={`border-b border-white/[0.04] ${i % 2 === 0 ? '' : 'bg-white/[0.01]'} cursor-pointer hover:bg-white/[0.04] transition-colors`}
-                            title={`Click to drill into ${r.agent_name}'s calls`}
-                            onClick={() => openBandDetail('no_fatal', `${r.agent_name} — Call Breakdown`, r.cq_score >= 90 ? '#22C55E' : '#F59E0B')}>
-                            <td className="py-2.5 px-4 text-slate-200 whitespace-nowrap">{r.agent_name}</td>
-                            <td className="py-2.5 px-4 tabular-nums text-slate-300">{r.audit_count}</td>
+                            className={`border-b border-slate-100 ${i % 2 === 0 ? '' : 'bg-transparent'} cursor-pointer hover:bg-slate-100 transition-colors`}
+                            title={`Click to drill into ${resolveAgent(r.agent_name)}'s calls`}
+                            onClick={() => openBandDetail('no_fatal', `${resolveAgent(r.agent_name)} — Call Breakdown`, r.cq_score >= 90 ? '#22C55E' : '#F59E0B')}>
+                            <td className="py-2.5 px-4 text-slate-700 whitespace-nowrap">{agentTag(r.agent_name)}</td>
+                            <td className="py-2.5 px-4 tabular-nums text-slate-600">{r.audit_count}</td>
                             <td className="py-2.5 px-4">
                               <div className="flex items-center gap-2 min-w-[80px]">
-                                <div className="flex-1 h-4 rounded bg-white/5 overflow-hidden">
-                                  <div className="h-full rounded flex items-center justify-center text-[9px] font-bold text-white"
+                                <div className="flex-1 h-4 rounded bg-slate-100 overflow-hidden">
+                                  <div className="h-full rounded flex items-center justify-center text-[9px] font-bold text-slate-900"
                                     style={{
                                       width: `${Math.min(r.cq_score, 100)}%`,
                                       background: r.cq_score >= 90 ? '#22C55E' : r.cq_score >= 85 ? '#F59E0B' : '#EF4444',
@@ -1892,10 +3120,10 @@ export default function InboundQualityDashboard() {
                           </tr>
                         ))}
                       </tbody>
-                      <tfoot className="border-t border-white/10">
-                        <tr className="bg-white/[0.03]">
+                      <tfoot className="border-t border-slate-200">
+                        <tr className="bg-slate-50">
                           <td className="py-2.5 px-4 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
-                          <td className="py-2.5 px-4 text-white font-bold tabular-nums">{gt.audit}</td>
+                          <td className="py-2.5 px-4 text-slate-900 font-bold tabular-nums">{gt.audit}</td>
                           <td className="py-2.5 px-4">
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold"
                               style={{ background: gtCq >= 90 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', color: gtCq >= 90 ? '#22C55E' : '#EF4444' }}>
@@ -1911,7 +3139,7 @@ export default function InboundQualityDashboard() {
                             const totGood   = fd.agent_performance.reduce((s,r) => s + Math.round(r.good_pct      * r.audit_count / 100), 0);
                             const totExc    = fd.agent_performance.reduce((s,r) => s + Math.round(r.excellent_pct * r.audit_count / 100), 0);
                             return [totBelow, totAvg, totGood, totExc].map((v, ci) => (
-                              <td key={ci} className="py-2.5 px-4 text-slate-300 font-bold tabular-nums">
+                              <td key={ci} className="py-2.5 px-4 text-slate-600 font-bold tabular-nums">
                                 {totAudit > 0 ? `${Math.round(v / totAudit * 1000)/10}%` : '0%'}
                               </td>
                             ));
@@ -1987,13 +3215,13 @@ export default function InboundQualityDashboard() {
                   },
                 ].map(c => (
                   <div key={c.label}
-                    className="relative bg-[#1E293B] border border-white/5 rounded-xl px-4 py-4 overflow-hidden cursor-pointer hover:bg-white/[0.03] transition-colors"
+                    className="relative bg-white border border-slate-200 rounded-xl px-4 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
                     onClick={c.onClick}
                     title="Click for detail analysis">
                     <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ background: c.color }} />
                     <div className="pl-2">
                       <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">{c.label}</p>
-                      <p className="text-2xl font-bold text-white leading-none">{c.value}</p>
+                      <p className="text-2xl font-bold text-slate-900 leading-none">{c.value}</p>
                       {c.sub && <div className="mt-1">{c.sub}</div>}
                       <p className="text-[9px] text-slate-400 mt-1">Click to analyse</p>
                     </div>
@@ -2011,10 +3239,10 @@ export default function InboundQualityDashboard() {
                     const pieData = panel.items.map(it => ({ name: it.scenario1, value: it.count }));
                     const PIE_COLORS = ['#3B82F6','#22C55E','#F59E0B','#A855F7','#EF4444'];
                     return (
-                      <div key={panel.scenario} className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                        <div className="px-4 py-2.5 border-b border-white/5 flex items-center gap-2">
+                      <div key={panel.scenario} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                        <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2">
                           <div className="w-1 h-4 rounded-full" style={{ background: color }} />
-                          <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">
+                          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">
                             Top 5 {panel.scenario}
                           </h3>
                           <span className="ml-auto text-xs font-bold" style={{ color }}>
@@ -2026,20 +3254,20 @@ export default function InboundQualityDashboard() {
                           <div className="sm:w-[55%] overflow-hidden">
                             <table className="w-full text-xs">
                               <thead>
-                                <tr className="border-b border-white/5 bg-white/[0.02]">
+                                <tr className="border-b border-slate-200 bg-slate-50">
                                   {['Scenario 1','Count','%'].map(h => (
-                                    <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                                    <th key={h} className="py-2 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody>
                                 {panel.items.map((it, i) => (
-                                  <tr key={i} className={`border-b border-white/[0.04] ${i % 2 ? 'bg-white/[0.01]' : ''}`}>
-                                    <td className="py-2 px-3 text-slate-200 leading-snug">{it.scenario1}</td>
-                                    <td className="py-2 px-3 text-slate-300 font-semibold tabular-nums">{it.count.toLocaleString()}</td>
+                                  <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
+                                    <td className="py-2 px-3 text-slate-700 leading-snug">{it.scenario1}</td>
+                                    <td className="py-2 px-3 text-slate-600 font-semibold tabular-nums">{it.count.toLocaleString()}</td>
                                     <td className="py-2 px-3 tabular-nums">
                                       <div className="flex items-center gap-1.5">
-                                        <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden max-w-[40px]">
+                                        <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden max-w-[40px]">
                                           <div className="h-full rounded-full" style={{ width: `${it.pct}%`, background: color }} />
                                         </div>
                                         <span className="text-slate-400 text-[9px]">{it.pct}%</span>
@@ -2051,7 +3279,7 @@ export default function InboundQualityDashboard() {
                             </table>
                           </div>
 
-                          <div className="sm:w-[45%] border-t sm:border-t-0 sm:border-l border-white/5 flex flex-col items-center justify-center py-2">
+                          <div className="sm:w-[45%] border-t sm:border-t-0 sm:border-l border-slate-200 flex flex-col items-center justify-center py-2">
                             <ResponsiveContainer width="100%" height={140}>
                               <PieChart>
                                 <Pie
@@ -2084,7 +3312,7 @@ export default function InboundQualityDashboard() {
                                   ))}
                                 </Pie>
                                 <Tooltip
-                                  contentStyle={{ background: '#0F172A', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 10 }}
+                                  contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 10 }}
                                   formatter={(v: unknown, n: unknown) => [`${Number(v).toLocaleString()} calls`, String(n)]}
                                 />
                               </PieChart>
@@ -2093,7 +3321,7 @@ export default function InboundQualityDashboard() {
                               {pieData.map((d, pi) => (
                                 <div key={pi} className="flex items-center gap-1 text-[9px]">
                                   <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: PIE_COLORS[pi % PIE_COLORS.length] }} />
-                                  <span className="text-slate-300 truncate max-w-[80px]">{d.name}</span>
+                                  <span className="text-slate-600 truncate max-w-[80px]">{d.name}</span>
                                 </div>
                               ))}
                             </div>
@@ -2108,12 +3336,12 @@ export default function InboundQualityDashboard() {
                 <div className="space-y-4">
 
                   {/* Scenario Wise Count — 4 cards */}
-                  <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                    <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
                       <div className="w-1 h-4 rounded-full bg-purple-500" />
-                      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Scenario Wise Count</h3>
+                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Scenario Wise Count</h3>
                     </div>
-                    <div className="grid grid-cols-4 divide-x divide-white/5">
+                    <div className="grid grid-cols-4 divide-x divide-slate-200">
                       {[
                         { label: 'Query Count',     value: dd.query_count,     color: '#22C55E' },
                         { label: 'Complaint Count',  value: dd.complaint_count, color: '#EF4444' },
@@ -2132,23 +3360,23 @@ export default function InboundQualityDashboard() {
 
                   {/* Day Wise / Audit Count heat map */}
                   {dd.day_wise_audit.length > 0 && (
-                    <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
                         <div className="w-1 h-4 rounded-full bg-purple-500" />
-                        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Day Wise / Audit Count</h3>
+                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Day Wise / Audit Count</h3>
                       </div>
                       <div className="overflow-y-auto max-h-52">
                         <table className="w-full text-xs">
-                          <thead className="sticky top-0 bg-[#1E293B] z-10">
-                            <tr className="border-b border-white/5 bg-white/[0.02]">
+                          <thead className="sticky top-0 bg-white z-10">
+                            <tr className="border-b border-slate-200 bg-slate-50">
                               {['Date','Complaint','Request','Query','Total'].map(h => (
-                                <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                                <th key={h} className="py-2 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                               ))}
                             </tr>
                           </thead>
                           <tbody>
                             {dd.day_wise_audit.map((r, i) => (
-                              <tr key={i} className="border-b border-white/[0.04]">
+                              <tr key={i} className="border-b border-slate-100">
                                 <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
                                   {r.call_date.slice(5).replace('-', '/')}
                                 </td>
@@ -2158,19 +3386,19 @@ export default function InboundQualityDashboard() {
                                     {v > 0 ? v : '—'}
                                   </td>
                                 ))}
-                                <td className="py-2 px-3 text-white font-bold tabular-nums">{r.total}</td>
+                                <td className="py-2 px-3 text-slate-900 font-bold tabular-nums">{r.total}</td>
                               </tr>
                             ))}
                           </tbody>
-                          <tfoot className="border-t border-white/10">
-                            <tr className="bg-white/[0.03]">
+                          <tfoot className="border-t border-slate-200">
+                            <tr className="bg-slate-50">
                               <td className="py-2 px-3 text-slate-400 font-semibold text-[10px]">Grand total</td>
                               {(['complaint','request','query'] as const).map(k => (
-                                <td key={k} className="py-2 px-3 text-white font-bold tabular-nums text-center">
+                                <td key={k} className="py-2 px-3 text-slate-900 font-bold tabular-nums text-center">
                                   {dd.day_wise_audit.reduce((s, r) => s + r[k], 0)}
                                 </td>
                               ))}
-                              <td className="py-2 px-3 text-white font-bold tabular-nums">{dd.audit_count}</td>
+                              <td className="py-2 px-3 text-slate-900 font-bold tabular-nums">{dd.audit_count}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -2180,33 +3408,33 @@ export default function InboundQualityDashboard() {
 
                   {/* Week & Scenario Wise Audit Count */}
                   {dd.week_scenario_audit.length > 0 && (
-                    <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
                         <div className="w-1 h-4 rounded-full bg-purple-500" />
-                        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Week &amp; Scenario Wise Audit Count</h3>
+                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Week &amp; Scenario Wise Audit Count</h3>
                       </div>
                       <table className="w-full text-xs">
                         <thead>
-                          <tr className="border-b border-white/5 bg-white/[0.02]">
+                          <tr className="border-b border-slate-200 bg-slate-50">
                             {['Week','Query%','Complaint%','Request%','Sale Done%','Total'].map(h => (
-                              <th key={h} className="py-2 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                              <th key={h} className="py-2 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {dd.week_scenario_audit.map((r, i) => (
-                            <tr key={i} className="border-b border-white/[0.04]">
-                              <td className="py-2.5 px-3 text-slate-300 font-medium">{r.week_label}</td>
+                            <tr key={i} className="border-b border-slate-100">
+                              <td className="py-2.5 px-3 text-slate-600 font-medium">{r.week_label}</td>
                               <td className="py-2.5 px-3">{pctCellDetail(r.query_pct,     '#22C55E')}</td>
                               <td className="py-2.5 px-3">{pctCellDetail(r.complaint_pct, '#EF4444')}</td>
                               <td className="py-2.5 px-3">{pctCellDetail(r.request_pct,   '#22C55E')}</td>
                               <td className="py-2.5 px-3">{pctCellDetail(r.sale_done_pct, '#22C55E')}</td>
-                              <td className="py-2.5 px-3 text-slate-200 font-bold tabular-nums">{r.total.toLocaleString()}</td>
+                              <td className="py-2.5 px-3 text-slate-700 font-bold tabular-nums">{r.total.toLocaleString()}</td>
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot className="border-t border-white/10">
-                          <tr className="bg-white/[0.03]">
+                        <tfoot className="border-t border-slate-200">
+                          <tr className="bg-slate-50">
                             <td className="py-2.5 px-3 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
                             {(() => {
                               const tot = dd.audit_count || 1;
@@ -2219,7 +3447,7 @@ export default function InboundQualityDashboard() {
                                 <td key={ci} className="py-2.5 px-3">{pctCellDetail(v, color)}</td>
                               ));
                             })()}
-                            <td className="py-2.5 px-3 text-white font-bold tabular-nums">{dd.audit_count.toLocaleString()}</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{dd.audit_count.toLocaleString()}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -2229,17 +3457,17 @@ export default function InboundQualityDashboard() {
               </div>
 
               {/* ── Agent & Parameter Wise CQ Score% ── */}
-              <div className="mt-4 bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 flex-wrap">
+              <div className="mt-4 bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-3 flex-wrap">
                   <div className="w-1 h-4 rounded-full bg-purple-500 shrink-0" />
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Agent &amp; Parameter Wise CQ Score%</h3>
-                  <ExportBtn onClick={() => downloadCSV(agentParamData.map(r => ({ Agent: r.agent_name, 'TQ/MQ/BQ': r.cq_score > 95 ? 'TQ' : r.cq_score > 85 ? 'MQ' : 'BQ', Audits: r.audit_count, 'CQ Score%': r.cq_score, Fatals: r.fatal_count, 'Fatal%': r.fatal_pct, 'Opening%': r.opening_skill, 'Soft Skill%': r.soft_skill, 'Hold%': r.hold_procedure, 'Resolution%': r.resolution, 'Closing%': r.closing })), 'agent-param.csv')} />
+                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Agent &amp; Parameter Wise CQ Score%</h3>
+                  <ExportBtn onClick={() => downloadCSV(agentParamData.map(r => ({ 'MAS ID': r.agent_name, Agent: resolveAgent(r.agent_name), 'TQ/MQ/BQ': r.cq_score > 95 ? 'TQ' : r.cq_score > 85 ? 'MQ' : 'BQ', Audits: r.audit_count, 'CQ Score%': r.cq_score, Fatals: r.fatal_count, 'Fatal%': r.fatal_pct, 'Opening%': r.opening_skill, 'Soft Skill%': r.soft_skill, 'Hold%': r.hold_procedure, 'Resolution%': r.resolution, 'Closing%': r.closing })), 'agent-param.csv')} />
                   <div className="ml-auto flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] text-slate-300 uppercase tracking-wider">Scenario Wise</span>
+                    <span className="text-[10px] text-slate-600 uppercase tracking-wider">Scenario Wise</span>
                     <select
                       value={agentParamScenario}
                       onChange={e => setAgentParamScenario(e.target.value)}
-                      className="bg-[#0F172A] border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+                      className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
                     >
                       <option value="">Select Scenario Wise</option>
                       {scenarios.map(s => (
@@ -2286,21 +3514,21 @@ export default function InboundQualityDashboard() {
                   return (
                     <div className="overflow-x-auto overflow-y-auto max-h-72">
                       <table className="w-full text-xs min-w-[900px]">
-                        <thead className="sticky top-0 bg-[#1E293B] z-10">
-                          <tr className="border-b border-white/5 bg-white/[0.02]">
+                        <thead className="sticky top-0 bg-white z-10">
+                          <tr className="border-b border-slate-200 bg-slate-50">
                             {['Agent Name','TQ/MQ/BQ','Audit Count','CQ Score%','Fatal Count','Fatal%','Opening Score%','Soft Skills Score%','Hold Procedure%','Resolution Score%','Closing Score%'].map(h => (
-                              <th key={h} className="py-2.5 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
+                              <th key={h} className="py-2.5 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {agentParamData.map((r, i) => (
-                            <tr key={i} className={`border-b border-white/[0.04] ${i % 2 ? 'bg-white/[0.01]' : ''}`}>
-                              <td className="py-2.5 px-3 text-slate-200 whitespace-nowrap">{r.agent_name}</td>
+                            <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
+                              <td className="py-2.5 px-3 text-slate-700 whitespace-nowrap">{agentTag(r.agent_name)}</td>
                               <td className="py-2.5 px-3">{tqBadge(r.cq_score)}</td>
-                              <td className="py-2.5 px-3 text-slate-300 tabular-nums">{r.audit_count}</td>
+                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.audit_count}</td>
                               <td className="py-2.5 px-3">{scoreCell(r.cq_score)}</td>
-                              <td className="py-2.5 px-3 text-slate-300 tabular-nums">{r.fatal_count}</td>
+                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.fatal_count}</td>
                               <td className="py-2.5 px-3">
                                 <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct}%</span>
                               </td>
@@ -2312,13 +3540,13 @@ export default function InboundQualityDashboard() {
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot className="border-t border-white/10">
-                          <tr className="bg-white/[0.03]">
+                        <tfoot className="border-t border-slate-200">
+                          <tr className="bg-slate-50">
                             <td className="py-2.5 px-3 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
                             <td className="py-2.5 px-3">{tqBadge(Math.round(gt.cqSum / wa * 10) / 10)}</td>
-                            <td className="py-2.5 px-3 text-white font-bold tabular-nums">{gt.audit}</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.audit}</td>
                             <td className="py-2.5 px-3">{scoreCell(Math.round(gt.cqSum / wa * 10) / 10)}</td>
-                            <td className="py-2.5 px-3 text-white font-bold tabular-nums">{gt.fatal}</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.fatal}</td>
                             <td className="py-2.5 px-3">
                               <span className="font-bold" style={{ color: gt.fatal > 0 ? '#EF4444' : '#64748B' }}>
                                 {gt.audit > 0 ? `${Math.round(gt.fatal / gt.audit * 1000) / 10}%` : '0%'}
@@ -2336,17 +3564,17 @@ export default function InboundQualityDashboard() {
               </div>
 
               {/* ── Week Wise Quality Performance ── */}
-              <div className="mt-4 bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 flex-wrap">
+              <div className="mt-4 bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-3 flex-wrap">
                   <div className="w-1 h-4 rounded-full bg-purple-500 shrink-0" />
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Week Wise Quality Performance</h3>
+                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Week Wise Quality Performance</h3>
                   <div className="ml-auto flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-300 uppercase tracking-wider">Scenario Wise</span>
+                      <span className="text-[10px] text-slate-600 uppercase tracking-wider">Scenario Wise</span>
                       <select
                         value={weekWiseScenario}
                         onChange={e => setWeekWiseScenario(e.target.value)}
-                        className="bg-[#0F172A] border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+                        className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
                       >
                         <option value="">Select Scenario Wise</option>
                         {scenarios.map(s => (
@@ -2355,15 +3583,15 @@ export default function InboundQualityDashboard() {
                       </select>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-300 uppercase tracking-wider">Agent Username</span>
+                      <span className="text-[10px] text-slate-600 uppercase tracking-wider">Agent Username</span>
                       <select
                         value={weekWiseAgent}
                         onChange={e => setWeekWiseAgent(e.target.value)}
-                        className="bg-[#0F172A] border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+                        className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
                       >
                         <option value="">Select Agent Name</option>
                         {agentParamData.map(a => (
-                          <option key={a.agent_name} value={a.agent_name}>{a.agent_name}</option>
+                          <option key={a.agent_name} value={a.agent_name}>{resolveAgent(a.agent_name)}</option>
                         ))}
                       </select>
                     </div>
@@ -2394,19 +3622,19 @@ export default function InboundQualityDashboard() {
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs min-w-[900px]">
                         <thead>
-                          <tr className="border-b border-white/5 bg-white/[0.02]">
+                          <tr className="border-b border-slate-200 bg-slate-50">
                             {['Week','Audit Count','CQ Score%','Fatal Count','Fatal%','Opening Score%','Soft Skills Score%','Hold Procedure Score%','Resolution Score%','Closing Score%'].map(h => (
-                              <th key={h} className="py-2.5 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
+                              <th key={h} className="py-2.5 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {weekWiseData.map((r, i) => (
-                            <tr key={i} className={`border-b border-white/[0.04] ${i % 2 ? 'bg-white/[0.01]' : ''}`}>
-                              <td className="py-2.5 px-3 text-slate-300 font-medium">{r.week_label}</td>
-                              <td className="py-2.5 px-3 text-slate-300 tabular-nums">{r.audit_count}</td>
+                            <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
+                              <td className="py-2.5 px-3 text-slate-600 font-medium">{r.week_label}</td>
+                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.audit_count}</td>
                               <td className="py-2.5 px-3">{scoreCell(r.cq_score)}</td>
-                              <td className="py-2.5 px-3 text-slate-300 tabular-nums">{r.fatal_count}</td>
+                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.fatal_count}</td>
                               <td className="py-2.5 px-3">
                                 <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct}%</span>
                               </td>
@@ -2418,12 +3646,12 @@ export default function InboundQualityDashboard() {
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot className="border-t border-white/10">
-                          <tr className="bg-white/[0.03]">
+                        <tfoot className="border-t border-slate-200">
+                          <tr className="bg-slate-50">
                             <td className="py-2.5 px-3 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
-                            <td className="py-2.5 px-3 text-white font-bold tabular-nums">{gt.audit}</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.audit}</td>
                             <td className="py-2.5 px-3">{scoreCell(Math.round(gt.cqSum / wa * 10) / 10)}</td>
-                            <td className="py-2.5 px-3 text-white font-bold tabular-nums">{gt.fatal}</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.fatal}</td>
                             <td className="py-2.5 px-3">
                               <span className="font-bold" style={{ color: gt.fatal > 0 ? '#EF4444' : '#64748B' }}>
                                 {gt.audit > 0 ? `${Math.round(gt.fatal / gt.audit * 1000) / 10}%` : '0%'}
@@ -2441,17 +3669,17 @@ export default function InboundQualityDashboard() {
               </div>
 
               {/* ── Day Wise Quality Performance ── */}
-              <div className="mt-4 bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 flex-wrap">
+              <div className="mt-4 bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-3 flex-wrap">
                   <div className="w-1 h-4 rounded-full bg-purple-500 shrink-0" />
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Day Wise Quality Performance</h3>
+                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Day Wise Quality Performance</h3>
                   <div className="ml-auto flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-slate-500 uppercase tracking-wider">Scenario</span>
                       <select
                         value={dayWiseScenario}
                         onChange={e => setDayWiseScenario(e.target.value)}
-                        className="bg-[#0F172A] border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+                        className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
                       >
                         <option value="">Select Scenario Wise</option>
                         {scenarios.map(s => (
@@ -2460,15 +3688,15 @@ export default function InboundQualityDashboard() {
                       </select>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-300 uppercase tracking-wider">Agent</span>
+                      <span className="text-[10px] text-slate-600 uppercase tracking-wider">Agent</span>
                       <select
                         value={dayWiseAgent}
                         onChange={e => setDayWiseAgent(e.target.value)}
-                        className="bg-[#0F172A] border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+                        className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
                       >
                         <option value="">Select Agent Name</option>
                         {agentParamData.map(a => (
-                          <option key={a.agent_name} value={a.agent_name}>{a.agent_name}</option>
+                          <option key={a.agent_name} value={a.agent_name}>{resolveAgent(a.agent_name)}</option>
                         ))}
                       </select>
                     </div>
@@ -2498,20 +3726,20 @@ export default function InboundQualityDashboard() {
                   return (
                     <div className="overflow-x-auto overflow-y-auto max-h-72">
                       <table className="w-full text-xs min-w-[900px]">
-                        <thead className="sticky top-0 bg-[#1E293B] z-10">
-                          <tr className="border-b border-white/5 bg-white/[0.02]">
+                        <thead className="sticky top-0 bg-white z-10">
+                          <tr className="border-b border-slate-200 bg-slate-50">
                             {['Date','Audit Count','CQ Score%','Fatal Count','Fatal%','Opening Score%','Soft Skills Score%','Hold Procedure%','Resolution Score%','Closing Score%'].map(h => (
-                              <th key={h} className="py-2.5 px-3 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
+                              <th key={h} className="py-2.5 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {dayWiseData.map((r, i) => (
-                            <tr key={i} className={`border-b border-white/[0.04] ${i % 2 ? 'bg-white/[0.01]' : ''}`}>
+                            <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
                               <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">{r.call_date.slice(5).replace('-', '/')}</td>
-                              <td className="py-2.5 px-3 text-slate-300 tabular-nums">{r.audit_count}</td>
+                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.audit_count}</td>
                               <td className="py-2.5 px-3">{scoreCell(r.cq_score)}</td>
-                              <td className="py-2.5 px-3 text-slate-300 tabular-nums">{r.fatal_count}</td>
+                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.fatal_count}</td>
                               <td className="py-2.5 px-3">
                                 <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct}%</span>
                               </td>
@@ -2523,12 +3751,12 @@ export default function InboundQualityDashboard() {
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot className="border-t border-white/10">
-                          <tr className="bg-white/[0.03]">
+                        <tfoot className="border-t border-slate-200">
+                          <tr className="bg-slate-50">
                             <td className="py-2.5 px-3 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
-                            <td className="py-2.5 px-3 text-white font-bold tabular-nums">{gt.audit}</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.audit}</td>
                             <td className="py-2.5 px-3">{scoreCell(Math.round(gt.cqSum / wa * 10) / 10)}</td>
-                            <td className="py-2.5 px-3 text-white font-bold tabular-nums">{gt.fatal}</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.fatal}</td>
                             <td className="py-2.5 px-3">
                               <span className="font-bold" style={{ color: gt.fatal > 0 ? '#EF4444' : '#64748B' }}>
                                 {gt.audit > 0 ? `${Math.round(gt.fatal / gt.audit * 1000) / 10}%` : '0%'}
@@ -2545,11 +3773,11 @@ export default function InboundQualityDashboard() {
                 })()}
               </div>
               {/* ── Quality Parameters ── */}
-              <div className="mt-4 bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 flex-wrap">
+              <div className="mt-4 bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-3 flex-wrap">
                   <div className="w-1 h-4 rounded-full bg-purple-500 shrink-0" />
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">Quality Parameters</h3>
-                  <span className="text-[10px] text-slate-400 ml-1">count &amp; score by parameter</span>
+                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Quality Parameters</h3>
+                  <span className="text-[10px] text-slate-600 font-semibold ml-1">count &amp; score by parameter</span>
                   <ExportBtn onClick={() => downloadCSV(qualityParamData.map(r => ({ Parameter: r.parameter, 'Hit Count': r.hit_count, 'Applicable Count': r.total_count, 'Score%': r.score_pct })), 'quality-parameters.csv')} />
                   <div className="ml-auto flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
@@ -2557,7 +3785,7 @@ export default function InboundQualityDashboard() {
                       <select
                         value={qualityParamScenario}
                         onChange={e => setQualityParamScenario(e.target.value)}
-                        className="bg-[#0F172A] border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+                        className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
                       >
                         <option value="">All Scenarios</option>
                         {scenarios.map(s => (
@@ -2566,15 +3794,15 @@ export default function InboundQualityDashboard() {
                       </select>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-300 uppercase tracking-wider">Agent</span>
+                      <span className="text-[10px] text-slate-600 uppercase tracking-wider">Agent</span>
                       <select
                         value={qualityParamAgent}
                         onChange={e => setQualityParamAgent(e.target.value)}
-                        className="bg-[#0F172A] border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+                        className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
                       >
                         <option value="">All Agents</option>
                         {agentParamData.map(a => (
-                          <option key={a.agent_name} value={a.agent_name}>{a.agent_name}</option>
+                          <option key={a.agent_name} value={a.agent_name}>{resolveAgent(a.agent_name)}</option>
                         ))}
                       </select>
                     </div>
@@ -2589,13 +3817,13 @@ export default function InboundQualityDashboard() {
                   /* show top 10 rows (~440px), rest scrollable */
                   <div className="overflow-y-auto" style={{ maxHeight: '440px' }}>
                     <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-[#1E293B] z-10">
-                        <tr className="border-b border-white/5 bg-white/[0.02]">
-                          <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">#</th>
-                          <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">Parameter</th>
-                          <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">Hit Count</th>
-                          <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">Applicable Count</th>
-                          <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] min-w-[180px]">Score%</th>
+                      <thead className="sticky top-0 bg-white z-10">
+                        <tr className="border-b border-slate-200 bg-slate-50">
+                          <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">#</th>
+                          <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">Parameter</th>
+                          <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">Hit Count</th>
+                          <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">Applicable Count</th>
+                          <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px] min-w-[180px]">Score%</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2603,19 +3831,19 @@ export default function InboundQualityDashboard() {
                           const color = r.score_pct >= 90 ? '#22C55E' : r.score_pct >= 70 ? '#F59E0B' : r.score_pct > 0 ? '#EF4444' : '#64748B';
                           return (
                             <tr key={i}
-                              className={`border-b border-white/[0.04] ${i % 2 ? 'bg-white/[0.01]' : ''} ${i === 9 ? 'border-b-2 border-purple-500/30' : ''} cursor-pointer hover:bg-white/[0.04] transition-colors`}
+                              className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''} ${i === 9 ? 'border-b-2 border-purple-500/30' : ''} cursor-pointer hover:bg-slate-100 transition-colors`}
                               title={`Click to view ${r.parameter} detail`}
                               onClick={() => setDrillModal({ title: `Quality Parameter — ${r.parameter}`, accent: color, columns: [{ key: 'Parameter', label: 'Parameter' }, { key: 'Hit Count', label: 'Hit Count' }, { key: 'Applicable Count', label: 'Applicable Count' }, { key: 'Score%', label: 'Score%' }], rows: [{ Parameter: r.parameter, 'Hit Count': r.hit_count, 'Applicable Count': r.total_count, 'Score%': `${r.score_pct}%` }] })}>
                               <td className="py-3 px-4 text-slate-400 tabular-nums font-medium">{i + 1}</td>
-                              <td className="py-3 px-4 text-slate-200 font-medium">{r.parameter}</td>
+                              <td className="py-3 px-4 text-slate-700 font-medium">{r.parameter}</td>
                               <td className="py-3 px-4 tabular-nums">
-                                <span className="font-bold text-white">{r.hit_count.toLocaleString()}</span>
+                                <span className="font-bold text-slate-900">{r.hit_count.toLocaleString()}</span>
                                 <span className="text-slate-400 text-[10px] ml-1">hits</span>
                               </td>
                               <td className="py-3 px-4 text-slate-400 tabular-nums">{r.total_count.toLocaleString()}</td>
                               <td className="py-3 px-4">
                                 <div className="flex items-center gap-3">
-                                  <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden max-w-[140px]">
+                                  <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden max-w-[140px]">
                                     <div className="h-full rounded-full transition-all duration-500"
                                       style={{ width: `${r.score_pct}%`, background: color }} />
                                   </div>
@@ -2630,7 +3858,7 @@ export default function InboundQualityDashboard() {
                       </tbody>
                     </table>
                     {qualityParamData.length > 10 && (
-                      <div className="px-4 py-2 border-t border-white/5 text-[10px] text-slate-400 text-center">
+                      <div className="px-4 py-2 border-t border-slate-200 text-[10px] text-slate-400 text-center">
                         Showing {qualityParamData.length} parameters · scroll to see all
                       </div>
                     )}
@@ -2657,26 +3885,26 @@ export default function InboundQualityDashboard() {
                   {/* KPI strip */}
                   <div className="grid grid-cols-3 gap-4 mb-6">
                     <div
-                      className="bg-[#1E293B] border border-white/5 rounded-xl px-5 py-4 cursor-pointer hover:bg-white/[0.03] transition-colors"
+                      className="bg-white border border-slate-200 rounded-xl px-5 py-4 cursor-pointer hover:bg-slate-50 transition-colors"
                       title="Click to view all unique callers"
                       onClick={() => setDrillModal({ title: 'Repeat Analysis — All Unique Callers', accent: '#14B8A6', columns: [{ key: 'Mobile No', label: 'Mobile No' }, { key: 'Total Calls', label: 'Total Calls' }], rows: rd.pivot_rows.map(r => ({ 'Mobile No': maskPhone(r.mobile_no), 'Total Calls': r.grand_total })) })}>
-                      <p className="text-[10px] text-slate-300 uppercase tracking-widest mb-1">Total Unique Callers</p>
-                      <p className="text-2xl font-bold text-white">{rd.grand_unique.toLocaleString()}</p>
+                      <p className="text-[10px] text-slate-600 uppercase tracking-widest mb-1">Total Unique Callers</p>
+                      <p className="text-2xl font-bold text-slate-900">{rd.grand_unique.toLocaleString()}</p>
                       <p className="text-[9px] text-slate-400 mt-1">Click to view unique callers</p>
                     </div>
                     <div
-                      className="bg-[#1E293B] border border-white/5 rounded-xl px-5 py-4 cursor-pointer hover:bg-white/[0.03] transition-colors"
+                      className="bg-white border border-slate-200 rounded-xl px-5 py-4 cursor-pointer hover:bg-slate-50 transition-colors"
                       title="Click to view repeat callers breakdown"
                       onClick={() => setDrillModal({ title: 'Repeat Analysis — Repeat Callers by Day', accent: '#14B8A6', columns: [{ key: 'Date', label: 'Date' }, { key: 'Repeat Calls', label: 'Repeat Calls' }, { key: 'Unique Calls', label: 'Unique Calls' }, { key: 'Repeat%', label: 'Repeat%' }], rows: rd.day_wise.filter(r => r.repeat_calls > 0).map(r => ({ Date: r.call_date, 'Repeat Calls': r.repeat_calls, 'Unique Calls': r.unique_calls, 'Repeat%': `${r.repeat_pct}%` })) })}>
-                      <p className="text-[10px] text-slate-300 uppercase tracking-widest mb-1">Repeat Calls</p>
+                      <p className="text-[10px] text-slate-600 uppercase tracking-widest mb-1">Repeat Calls</p>
                       <p className="text-2xl font-bold text-teal-400">{rd.grand_repeat.toLocaleString()}</p>
                       <p className="text-[9px] text-slate-400 mt-1">Click to view day-wise</p>
                     </div>
                     <div
-                      className="bg-[#1E293B] border border-white/5 rounded-xl px-5 py-4 cursor-pointer hover:bg-white/[0.03] transition-colors"
+                      className="bg-white border border-slate-200 rounded-xl px-5 py-4 cursor-pointer hover:bg-slate-50 transition-colors"
                       title="Click to view repeat rate by day"
                       onClick={() => setDrillModal({ title: 'Repeat Analysis — Repeat% by Day', accent: '#EF4444', columns: [{ key: 'Date', label: 'Date' }, { key: 'Repeat%', label: 'Repeat%' }, { key: 'Repeat Calls', label: 'Repeat Calls' }, { key: 'Unique Calls', label: 'Unique Calls' }], rows: rd.day_wise.map(r => ({ Date: r.call_date, 'Repeat%': `${r.repeat_pct}%`, 'Repeat Calls': r.repeat_calls, 'Unique Calls': r.unique_calls })) })}>
-                      <p className="text-[10px] text-slate-300 uppercase tracking-widest mb-1">Repeat%</p>
+                      <p className="text-[10px] text-slate-600 uppercase tracking-widest mb-1">Repeat%</p>
                       <p className="text-2xl font-bold" style={{ color: rd.grand_pct > 0 ? '#EF4444' : '#22C55E' }}>
                         {rd.grand_pct}%
                       </p>
@@ -2685,25 +3913,25 @@ export default function InboundQualityDashboard() {
                   </div>
 
                   {/* Day-wise repeat table */}
-                  <div className="bg-[#1E293B] border border-white/5 rounded-xl mb-6 overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+                  <div className="bg-white border border-slate-200 rounded-xl mb-6 overflow-hidden">
+                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                       <h3 className="text-xs font-bold text-teal-300 uppercase tracking-widest">Day Wise Repeat Analysis</h3>
                       <ExportBtn onClick={() => downloadCSV(rd.day_wise.map(r => ({ Date: r.call_date, 'Unique Calls': r.unique_calls, 'Repeat Calls': r.repeat_calls, 'Repeat%': r.repeat_pct })), 'repeat-day-wise.csv')} />
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
-                        <thead className="bg-[#0F172A]">
+                        <thead className="bg-white">
                           <tr>
                             {['Date', 'Unique Calls', 'Repeat Calls', 'Repeat%'].map(h => (
-                              <th key={h} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                              <th key={h} className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {rd.day_wise.map((r, i) => (
-                            <tr key={i} className={`border-b border-white/[0.04] ${i % 2 ? 'bg-white/[0.01]' : ''}`}>
-                              <td className="py-2.5 px-4 text-slate-300 tabular-nums font-medium">{r.call_date}</td>
-                              <td className="py-2.5 px-4 text-slate-200 tabular-nums">{r.unique_calls.toLocaleString()}</td>
+                            <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
+                              <td className="py-2.5 px-4 text-slate-600 tabular-nums font-medium">{r.call_date}</td>
+                              <td className="py-2.5 px-4 text-slate-700 tabular-nums">{r.unique_calls.toLocaleString()}</td>
                               <td className="py-2.5 px-4 text-teal-300 tabular-nums font-semibold">{r.repeat_calls.toLocaleString()}</td>
                               <td className="py-2.5 px-4 tabular-nums">
                                 <span className="font-bold" style={{ color: r.repeat_pct > 0 ? '#EF4444' : '#22C55E' }}>
@@ -2720,7 +3948,7 @@ export default function InboundQualityDashboard() {
                             return (
                               <tr className="border-t-2 border-teal-500/30 bg-teal-500/5 font-bold">
                                 <td className="py-2.5 px-4 text-teal-300">Grand Total</td>
-                                <td className="py-2.5 px-4 text-white tabular-nums">{totUniq.toLocaleString()}</td>
+                                <td className="py-2.5 px-4 text-slate-900 tabular-nums">{totUniq.toLocaleString()}</td>
                                 <td className="py-2.5 px-4 text-teal-300 tabular-nums">{totRepeat.toLocaleString()}</td>
                                 <td className="py-2.5 px-4 tabular-nums">
                                   <span style={{ color: totPct > 0 ? '#EF4444' : '#22C55E' }}>{totPct}%</span>
@@ -2734,8 +3962,8 @@ export default function InboundQualityDashboard() {
                   </div>
 
                   {/* Repeat Count — Phone × Date pivot */}
-                  <div className="bg-[#1E293B] border border-white/5 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                       <h3 className="text-xs font-bold text-teal-300 uppercase tracking-widest">
                         Repeat Count Number &amp; Date Wise
                         <span className="ml-2 text-slate-500 normal-case font-normal">({rd.pivot_rows.length} callers · {rd.pivot_dates.length} dates)</span>
@@ -2756,11 +3984,11 @@ export default function InboundQualityDashboard() {
                     ) : (
                       <div className="overflow-auto" style={{ maxHeight: '520px' }}>
                         <table className="text-xs border-collapse" style={{ minWidth: `${Math.max(600, 160 + rd.pivot_dates.length * 80)}px` }}>
-                          <thead className="sticky top-0 z-10 bg-[#0F172A]">
+                          <thead className="sticky top-0 z-10 bg-white">
                             <tr>
-                              <th className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[9px] sticky left-0 bg-[#0F172A] z-20 min-w-[140px]">Phone No</th>
+                              <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px] sticky left-0 bg-white z-20 min-w-[140px]">Phone No</th>
                               {rd.pivot_dates.map(d => (
-                                <th key={d} className="py-2.5 px-3 text-center text-slate-300 font-semibold uppercase tracking-wider text-[9px] min-w-[70px]">
+                                <th key={d} className="py-2.5 px-3 text-center text-slate-600 font-semibold uppercase tracking-wider text-[9px] min-w-[70px]">
                                   {d.slice(5)}
                                 </th>
                               ))}
@@ -2769,8 +3997,8 @@ export default function InboundQualityDashboard() {
                           </thead>
                           <tbody>
                             {rd.pivot_rows.map((row, i) => (
-                              <tr key={i} className={`border-b border-white/[0.04] ${i % 2 ? 'bg-white/[0.01]' : ''}`}>
-                                <td className="py-2 px-4 text-slate-300 font-medium tabular-nums sticky left-0 bg-inherit" style={{ background: i % 2 ? 'rgba(255,255,255,0.01)' : '#1E293B' }}>
+                              <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
+                                <td className="py-2 px-4 text-slate-600 font-medium tabular-nums sticky left-0 bg-inherit" style={{ background: i % 2 ? '#F8FAFC' : '#FFFFFF' }}>
                                   {maskPhone(row.mobile_no)}
                                 </td>
                                 {rd.pivot_dates.map(d => {
@@ -2827,7 +4055,7 @@ export default function InboundQualityDashboard() {
                                 <tr className="border-t-2 border-teal-500/30 bg-teal-500/5 font-bold sticky bottom-0">
                                   <td className="py-2.5 px-4 text-teal-300 sticky left-0" style={{ background: 'rgba(20,184,166,0.05)' }}>Grand Total</td>
                                   {colTotals.map((t, ci) => (
-                                    <td key={ci} className="py-2.5 px-3 text-center text-white tabular-nums">{t > 0 ? t : '—'}</td>
+                                    <td key={ci} className="py-2.5 px-3 text-center text-slate-900 tabular-nums">{t > 0 ? t : '—'}</td>
                                   ))}
                                   <td className="py-2.5 px-4 text-center text-teal-300 tabular-nums">{grandTotal}</td>
                                 </tr>
@@ -2861,19 +4089,19 @@ export default function InboundQualityDashboard() {
               <div className="overflow-auto" style={{ maxHeight: '70vh' }}>
                 <table className="w-full text-xs">
                   <thead className="sticky top-0">
-                    <tr className="border-b border-white/10 bg-[#0F172A]">
+                    <tr className="border-b border-slate-200 bg-white">
                       {drillModal.columns.map(c => (
-                        <th key={c.key} className="py-2.5 px-4 text-left text-slate-300 font-semibold uppercase tracking-wider text-[10px] whitespace-nowrap">
+                        <th key={c.key} className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider text-[10px] whitespace-nowrap">
                           {c.label}
                         </th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-slate-200">
                     {drillModal.rows.map((row, i) => (
-                      <tr key={i} className={i % 2 ? 'bg-white/[0.01]' : ''}>
+                      <tr key={i} className={i % 2 ? 'bg-transparent' : ''}>
                         {drillModal.columns.map(c => (
-                          <td key={c.key} className="py-2.5 px-4 text-white tabular-nums">
+                          <td key={c.key} className="py-2.5 px-4 text-slate-900 tabular-nums">
                             {String(row[c.key] ?? '—')}
                           </td>
                         ))}
@@ -2889,6 +4117,74 @@ export default function InboundQualityDashboard() {
             </>
           )}
         </DrillModal>
+      )}
+
+      {socialThreatOpen && (
+        <SocialThreatDetailModal
+          detail={socialThreatDetail}
+          loading={socialThreatLoading}
+          onClose={() => { setSocialThreatOpen(false); setSocialThreatDetail(null); }}
+          onLeadClick={handleLeadClick}
+        />
+      )}
+
+      {scamDetailOpen && (
+        <ScamDetailModal
+          detail={scamDetail}
+          loading={scamDetailLoading}
+          onClose={() => { setScamDetailOpen(false); setScamDetail(null); }}
+          onLeadClick={handleLeadClick}
+        />
+      )}
+
+      {abuseDetailOpen && (
+        <AbuseDetailModal
+          detail={abuseDetail}
+          loading={abuseDetailLoading}
+          onClose={() => { setAbuseDetailOpen(false); setAbuseDetail(null); }}
+          onLeadClick={handleLeadClick}
+        />
+      )}
+
+      {threatDetailOpen && (
+        <NegSignalDetailModal
+          signal="Threat"
+          detail={threatDetail}
+          loading={threatDetailLoading}
+          onClose={() => { setThreatDetailOpen(false); setThreatDetail(null); }}
+          onLeadClick={handleLeadClick}
+        />
+      )}
+
+      {frustDetailOpen && (
+        <NegSignalDetailModal
+          signal="Frustration"
+          detail={frustDetail}
+          loading={frustDetailLoading}
+          onClose={() => { setFrustDetailOpen(false); setFrustDetail(null); }}
+          onLeadClick={handleLeadClick}
+        />
+      )}
+
+      {posModalOpen && (
+        <PosSignalDetailModal
+          keyword={posModalKeyword}
+          color={posModalColor}
+          phrases={posModalPhrases}
+          phrasesLoading={posModalPhrasesLoading}
+          leads={posModalLeads}
+          leadsLoading={posModalLeadsLoading}
+          onClose={() => { setPosModalOpen(false); setPosModalPhrases([]); setPosModalLeads([]); }}
+          onLeadClick={handleLeadClick}
+        />
+      )}
+
+      {transcriptLeadId && (
+        <TranscriptModal
+          data={transcriptData}
+          loading={transcriptLoading}
+          onClose={() => { setTranscriptLeadId(null); setTranscriptData(null); }}
+        />
       )}
     </div>
   );

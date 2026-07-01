@@ -67,3 +67,14 @@ export async function getClientsSummary(req: Request, res: Response) {
     res.status(500).json({ message: msg });
   }
 }
+
+export async function getAgentNPS(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getAgentNPS(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}

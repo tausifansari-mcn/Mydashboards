@@ -36,7 +36,7 @@ function downloadCSV(rows: Record<string, unknown>[], filename: string) {
 function ExportBtn({ onClick, title = 'Export CSV' }: { onClick: () => void; title?: string }) {
   return (
     <button onClick={onClick} title={title}
-      className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-slate-500 hover:text-emerald-400 border border-white/5 hover:border-emerald-500/30 transition-colors shrink-0">
+      className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-slate-500 hover:text-emerald-400 border border-slate-200 hover:border-emerald-500/30 transition-colors shrink-0">
       <Download size={11} /> CSV
     </button>
   );
@@ -51,14 +51,14 @@ function PQDrillModal({ title, accent, onClose, children }: PQDrillModalProps) {
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
   return createPortal(
-    <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-start justify-center overflow-y-auto py-6 px-4"
+    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto py-6 px-4"
       onClick={onClose}>
-      <div className="bg-[#0F172A] border border-white/10 rounded-2xl w-full max-w-4xl shadow-2xl"
+      <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-4xl shadow-2xl"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200">
           <div className="w-1 h-5 rounded-full" style={{ background: accent }} />
-          <p className="text-sm font-bold text-white flex-1">{title}</p>
-          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors"><X size={18} /></button>
+          <p className="text-sm font-bold text-slate-900 flex-1">{title}</p>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition-colors"><X size={18} /></button>
         </div>
         <div className="p-6">{children}</div>
       </div>
@@ -138,6 +138,15 @@ interface ObjectionAnalysisResponse {
   posSubcategory: POSSubcategoryRow[];
 }
 
+interface AgentNPSRow {
+  agentName: string;
+  detractor: number;
+  passive:   number;
+  promoter:  number;
+  total:     number;
+  npsScore:  number;
+}
+
 interface KPIResponse {
   cst: CSTData;
   crt: CRTData;
@@ -176,7 +185,7 @@ const funnelCSTColors = ['#3B82F6', '#22C55E', '#14B8A6', '#A78BFA', '#F59E0B'];
 const funnelCRTColors = ['#EF4444', '#F59E0B', '#A78BFA', '#3B82F6'];
 
 const TT: React.CSSProperties = {
-  background: '#1E293B', border: '1px solid rgba(255,255,255,0.08)',
+  background: '#FFFFFF', border: '1px solid #E2E8F0',
   borderRadius: 8, fontSize: 11, color: '#E2E8F0',
 };
 
@@ -554,12 +563,13 @@ export default function ProcessQualityDashboard() {
     }
   }, [processLoaded, clientId, canAccessOutboundClient, navigate]);
   const [startDate, setStartDate] = useState(
-    toLocalDT(new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0))
+    toLocalDT(new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0))
   );
   const [endDate, setEndDate] = useState(toLocalDT(now));
   const [kpi, setKpi] = useState<KPIResponse | null>(null);
   const [detailAnalysis, setDetailAnalysis] = useState<DetailAnalysisResponse | null>(null);
   const [objectionAnalysis, setObjectionAnalysis] = useState<ObjectionAnalysisResponse | null>(null);
+  const [agentNPS, setAgentNPS] = useState<AgentNPSRow[]>([]);
   const [clientName, setClientName] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -586,6 +596,10 @@ export default function ProcessQualityDashboard() {
     api.get<{ data: ObjectionAnalysisResponse }>(`/quality/objection-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
       .then(r => setObjectionAnalysis(r.data?.data ?? null))
       .catch(() => setObjectionAnalysis(null));
+
+    api.get<{ data: AgentNPSRow[] }>(`/quality/agent-nps?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      .then(r => setAgentNPS(r.data?.data ?? []))
+      .catch(() => setAgentNPS([]));
   }, [clientId, sd, ed]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -610,31 +624,54 @@ export default function ProcessQualityDashboard() {
   const [pqDrillModal, setPQDrillModal] = useState<{ title: string; accent: string; rows: Record<string,unknown>[]; columns: { key: string; label: string }[] } | null>(null);
 
   return (
-    <div className="min-h-screen bg-[#0F172A] text-white flex flex-col">
-      <div className="bg-[#0B1120] border-b border-white/5 sticky top-0 z-30">
+    <div className="min-h-screen text-slate-900 flex flex-col" style={{ background: '#EEF4FF' }}>
+      {/* ── MAS Brand Header ── */}
+      <div className="sticky top-0 z-30 shadow-xl" style={{ background: 'linear-gradient(135deg, #1565C0 0%, #1976D2 55%, #0D47A1 100%)' }}>
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
           <button onClick={() => navigate('/quality')}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors text-xs">
-            <ChevronLeft size={16} /> AI Quality
+            className="flex items-center gap-1.5 text-blue-200 hover:text-white transition-colors text-xs font-semibold bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg border border-white/10">
+            <ChevronLeft size={14} /> AI Quality
           </button>
-          <div className="w-px h-4 bg-slate-700" />
-          <BarChart3 size={15} className="text-purple-400 shrink-0" />
-          <div>
-            <h1 className="text-sm font-bold text-white leading-none">{clientName || `Process #${clientId}`}</h1>
-            <p className="text-[10px] text-slate-500 mt-0.5">Process Quality · CST · CRT</p>
+          <div className="w-px h-5 bg-white/20" />
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white shadow-md">
+              <img src="/Logo.png" alt="MAS" className="h-8 w-8 object-contain p-0.5" />
+            </div>
+            <div>
+              <h1 className="text-sm font-black text-white leading-none">{clientName || `Process #${clientId}`}</h1>
+              <p className="text-[10px] font-semibold mt-0.5" style={{ color: '#43A832' }}>Process Quality · CST · CRT</p>
+            </div>
           </div>
+          <div className="ml-auto flex items-center gap-1.5">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: '#43A832' }} />
+              <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: '#43A832' }} />
+            </span>
+            <span className="text-[11px] font-bold" style={{ color: '#43A832' }}>Live</span>
+          </div>
+        </div>
+        {/* Brand stripe */}
+        <div className="flex h-0.5">
+          <div className="flex-1" style={{ background: '#43A832' }} />
+          <div className="flex-1" style={{ background: '#D32F2F' }} />
+          <div className="flex-1 bg-white/20" />
         </div>
       </div>
 
       <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-8 w-full space-y-8">
         {/* Date Range */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <label className="text-[11px] text-slate-500 uppercase tracking-wider">From</label>
+        <div className="flex items-center gap-3 flex-wrap bg-white border-2 border-[#1565C020] rounded-2xl px-5 py-3 shadow-sm">
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full" style={{ background: '#1565C0' }} />
+            <span className="text-xs font-black text-slate-800 uppercase tracking-widest">Date Range</span>
+          </div>
+          <div className="w-px h-5 bg-slate-200 mx-1" />
+          <label className="text-[11px] text-slate-600 font-bold uppercase tracking-wider">From</label>
           <input type="datetime-local" value={startDate} onChange={e => setStartDate(e.target.value)}
-            className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500" />
-          <label className="text-[11px] text-slate-500 uppercase tracking-wider">To</label>
+            className="bg-[#E3F2FD] border-2 border-[#1565C040] rounded-xl px-3 py-1.5 text-xs text-slate-900 font-semibold focus:outline-none focus:border-[#1565C0] focus:ring-2 focus:ring-[#1565C020] transition-all" />
+          <label className="text-[11px] text-slate-600 font-bold uppercase tracking-wider">To</label>
           <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
-            className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500" />
+            className="bg-[#E3F2FD] border-2 border-[#1565C040] rounded-xl px-3 py-1.5 text-xs text-slate-900 font-semibold focus:outline-none focus:border-[#1565C0] focus:ring-2 focus:ring-[#1565C020] transition-all" />
         </div>
 
         {/* ─── Slide Navigation ──────────────────────────────────────────── */}
@@ -645,24 +682,27 @@ export default function ProcessQualityDashboard() {
             { label: 'NPS & CSAT',         color: 'sky'    },
             { label: 'Detail Analysis',    color: 'orange' },
           ] as const;
-          const activeColors: Record<string, string> = {
-            purple: 'border-purple-400 text-purple-300',
-            sky:    'border-sky-400 text-sky-300',
-            orange: 'border-orange-400 text-orange-300',
-            violet: 'border-violet-400 text-violet-300',
+          const activeColors: Record<string, { border: string; text: string; bg: string }> = {
+            purple: { border: '#1565C0', text: '#1565C0', bg: '#E3F2FD' },
+            sky:    { border: '#1565C0', text: '#1565C0', bg: '#E3F2FD' },
+            orange: { border: '#43A832', text: '#43A832', bg: '#E8F5E9' },
+            violet: { border: '#D32F2F', text: '#D32F2F', bg: '#FFEBEE' },
           };
           return (
-            <div className="flex gap-0 border-b border-white/10 -mt-4 overflow-x-auto">
-              {SLIDES.map((s, i) => (
+            <div className="flex gap-1 border-b border-slate-200 -mt-4 overflow-x-auto bg-white px-2">
+              {SLIDES.map((s, i) => {
+                const ac = activeColors[s.color];
+                return (
                 <button key={i} onClick={() => setActiveSlide(i)}
-                  className={`px-5 py-2.5 text-[11px] font-bold uppercase tracking-wider border-b-2 transition-colors whitespace-nowrap shrink-0 ${
-                    activeSlide === i
-                      ? activeColors[s.color]
-                      : 'border-transparent text-slate-500 hover:text-slate-300 hover:border-white/20'
-                  }`}>
+                  className="px-5 py-2.5 text-[11px] font-black uppercase tracking-wider border-b-2 transition-all whitespace-nowrap shrink-0"
+                  style={activeSlide === i
+                    ? { borderColor: ac.border, color: ac.text, background: ac.bg + '80' }
+                    : { borderColor: 'transparent', color: '#64748B' }
+                  }>
                   {s.label}
                 </button>
-              ))}
+                );
+              })}
             </div>
           );
         })()}
@@ -678,40 +718,40 @@ export default function ProcessQualityDashboard() {
         {(cst || crt) && (
           <div className="flex gap-4">
             {cst && (
-              <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/30 bg-[#1E293B] overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-white/5 flex items-center gap-2 bg-emerald-500/5">
+              <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/30 bg-white overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-emerald-500/5">
                   <TrendingUp size={13} className="text-emerald-400" />
                   <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">CST — Customer Success Track</span>
                   <button onClick={() => showDetail('cstSection')} className="ml-auto text-slate-500 hover:text-emerald-400 transition-colors"><Info size={12} /></button>
                 </div>
-                <div className="flex flex-row gap-px bg-white/5">
+                <div className="flex flex-row gap-px bg-slate-100">
                   {CST_METRICS(cst).map((m, i) => (
                     <div key={i} onClick={() => {
                         setModalMetric(m);
                         setPQDrillModal(null);
                       }}
-                      className="flex-1 min-w-0 bg-[#1E293B] px-3 py-3 cursor-pointer hover:bg-white/5 transition-colors"
+                      className="flex-1 min-w-0 bg-white px-3 py-3 cursor-pointer hover:bg-slate-100 transition-colors"
                       title="Click for metric details & calculation">
                       <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">{m.label}</span>
-                      <p className="text-lg font-bold text-white">{m.value}</p>
+                      <p className="text-lg font-black text-slate-900">{m.value}</p>
                     </div>
                   ))}
                 </div>
               </div>
             )}
             {crt && (
-              <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-[#1E293B] overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-white/5 flex items-center gap-2 bg-red-500/5">
+              <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-white overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-red-500/5">
                   <XCircle size={13} className="text-red-400" />
                   <span className="text-[10px] font-bold uppercase tracking-widest text-red-400">CRT — Customer Rejection Track</span>
                   <button onClick={() => showDetail('crtSection')} className="ml-auto text-slate-500 hover:text-red-400 transition-colors"><Info size={12} /></button>
                 </div>
-                <div className="flex flex-row gap-px bg-white/5">
+                <div className="flex flex-row gap-px bg-slate-100">
                   {CRT_METRICS(crt).map((m, i) => (
                     <div key={i} onClick={() => setModalMetric(m)}
-                      className="flex-1 min-w-0 bg-[#1E293B] px-3 py-3 cursor-pointer hover:bg-white/5 transition-colors">
+                      className="flex-1 min-w-0 bg-white px-3 py-3 cursor-pointer hover:bg-slate-100 transition-colors">
                       <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">{m.label}</span>
-                      <p className="text-lg font-bold text-white">{m.value}</p>
+                      <p className="text-lg font-black text-slate-900">{m.value}</p>
                     </div>
                   ))}
                 </div>
@@ -727,8 +767,8 @@ export default function ProcessQualityDashboard() {
             const pct = (v: number) => cstBase > 0 ? `${((v / cstBase) * 100).toFixed(0)}%` : '–';
             const cstLabeled = cstFunnel.map(s => ({ ...s, label: `${s.name}: ${s.value.toLocaleString()}` }));
             return (
-              <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/30 bg-[#1E293B] overflow-hidden">
-                <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2 bg-emerald-500/5">
+              <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/30 bg-white overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-emerald-500/5">
                   <TrendingUp size={14} className="text-emerald-400" />
                   <span className="text-[11px] font-bold uppercase tracking-widest text-emerald-400">CST Funnel</span>
                   <button onClick={() => showDetail('cstFunnel')} className="ml-auto text-slate-500 hover:text-emerald-400 transition-colors"><Info size={13} /></button>
@@ -747,7 +787,7 @@ export default function ProcessQualityDashboard() {
                         {cstLabeled.map((_, i) => (
                           <Cell key={i} fill={funnelCSTColors[i % funnelCSTColors.length]} />
                         ))}
-                        <LabelList dataKey="label" position="insideCenter"
+                        <LabelList dataKey="label" position="center"
                           fill="#ffffff" stroke="none" fontSize={11} fontWeight={700} />
                       </Funnel>
                     </FunnelChart>
@@ -763,8 +803,8 @@ export default function ProcessQualityDashboard() {
             const pct = (v: number) => crtBase > 0 ? `${((v / crtBase) * 100).toFixed(0)}%` : '–';
             const crtLabeled = sortedCRT.map(s => ({ ...s, label: `${s.name}: ${s.value.toLocaleString()}` }));
             return (
-              <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-[#1E293B] overflow-hidden">
-                <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2 bg-red-500/5">
+              <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-white overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-red-500/5">
                   <XCircle size={14} className="text-red-400" />
                   <span className="text-[11px] font-bold uppercase tracking-widest text-red-400">CRT Funnel</span>
                   <button onClick={() => showDetail('crtFunnel')} className="ml-auto text-slate-500 hover:text-red-400 transition-colors"><Info size={13} /></button>
@@ -783,7 +823,7 @@ export default function ProcessQualityDashboard() {
                         {crtLabeled.map((_, i) => (
                           <Cell key={i} fill={funnelCRTColors[i % funnelCRTColors.length]} />
                         ))}
-                        <LabelList dataKey="label" position="insideCenter"
+                        <LabelList dataKey="label" position="center"
                           fill="#ffffff" stroke="none" fontSize={11} fontWeight={700} />
                       </Funnel>
                     </FunnelChart>
@@ -796,11 +836,11 @@ export default function ProcessQualityDashboard() {
 
         {/* ─── Rejected Status Pie Chart ──────────────────────────────────── */}
         {pie.length > 0 && (
-          <div className="rounded-xl border border-white/5 bg-[#1E293B] overflow-hidden">
-            <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
               <BarChart3 size={14} className="text-slate-400" />
               <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Rejected Status Distribution</span>
-              <button onClick={() => showDetail('rejectedPie')} className="ml-auto text-slate-500 hover:text-slate-300 transition-colors"><Info size={13} /></button>
+              <button onClick={() => showDetail('rejectedPie')} className="ml-auto text-slate-500 hover:text-slate-600 transition-colors"><Info size={13} /></button>
             </div>
             <div className="flex items-center justify-center p-4">
               <ResponsiveContainer width="100%" height={300}>
@@ -819,7 +859,7 @@ export default function ProcessQualityDashboard() {
                   <div key={i} className="flex items-center gap-2 text-[11px]">
                     <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: pieColors[s.name] || COLORS[i % COLORS.length] }} />
                     <span className="text-slate-400">{s.name}</span>
-                    <span className="text-white font-semibold ml-auto">{s.value.toLocaleString()}</span>
+                    <span className="text-slate-900 font-semibold ml-auto">{s.value.toLocaleString()}</span>
                   </div>
                 ))}
               </div>
@@ -834,13 +874,13 @@ export default function ProcessQualityDashboard() {
         <div className="space-y-8">
           <div className="flex items-center gap-2 mb-6">
             <div className="w-1 h-6 bg-purple-500 rounded-full" />
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider">Missed Opportunity Analysis</h2>
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Missed Opportunity Analysis</h2>
           </div>
 
           {/* Metrics */}
           {opp && (
             <div className="flex flex-row gap-6 mb-6">
-              <div className="flex-1 min-w-0 rounded-xl border border-purple-500/30 bg-[#1E293B] overflow-hidden">
+              <div className="flex-1 min-w-0 rounded-xl border border-purple-500/30 bg-white overflow-hidden">
                 <div className="p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <div className="p-1.5 rounded" style={{ backgroundColor: '#A78BFA18', color: '#A78BFA' }}>
@@ -848,10 +888,10 @@ export default function ProcessQualityDashboard() {
                     </div>
                     <span className="text-[10px] text-slate-500 uppercase tracking-wider">Total Opportunities</span>
                   </div>
-                  <p className="text-2xl font-bold text-white pl-1">{opp.totalOpportunities.toLocaleString()}</p>
+                  <p className="text-2xl font-bold text-slate-900 pl-1">{opp.totalOpportunities.toLocaleString()}</p>
                 </div>
               </div>
-              <div className="flex-1 min-w-0 rounded-xl border border-purple-500/30 bg-[#1E293B] overflow-hidden">
+              <div className="flex-1 min-w-0 rounded-xl border border-purple-500/30 bg-white overflow-hidden">
                 <div className="p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <div className="p-1.5 rounded" style={{ backgroundColor: '#22C55E18', color: '#22C55E' }}>
@@ -859,7 +899,7 @@ export default function ProcessQualityDashboard() {
                     </div>
                     <span className="text-[10px] text-slate-500 uppercase tracking-wider">MO Count</span>
                   </div>
-                  <p className="text-2xl font-bold text-white pl-1">{opp.moCount.toLocaleString()}</p>
+                  <p className="text-2xl font-bold text-slate-900 pl-1">{opp.moCount.toLocaleString()}</p>
                 </div>
               </div>
             </div>
@@ -867,8 +907,8 @@ export default function ProcessQualityDashboard() {
 
           {/* Objection Category Pie */}
           {opp && opp.objectionCategoryPie.length > 0 && (
-            <div className="mt-6 rounded-xl border border-purple-500/20 bg-[#1E293B] overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+            <div className="mt-6 rounded-xl border border-purple-500/20 bg-white overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                 <BarChart3 size={14} className="text-purple-400" />
 
                 <span className="text-[11px] font-bold uppercase tracking-widest text-purple-400">Objection Category Distribution</span>
@@ -903,12 +943,12 @@ export default function ProcessQualityDashboard() {
                         <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-black/20">
                           <span className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: color }} />
                           <div className="flex-1 min-w-0">
-                            <p className="text-[11px] font-semibold text-white truncate">{s.name}</p>
+                            <p className="text-[11px] font-semibold text-slate-900 truncate">{s.name}</p>
                             <div className="flex items-center gap-2 mt-1">
                               <div className="flex-1 h-1 rounded-full bg-slate-700/60 overflow-hidden">
                                 <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
                               </div>
-                              <span className="text-[10px] text-slate-400 shrink-0">{s.value.toLocaleString()} · {pct}%</span>
+                              <span className="text-[10px] text-slate-600 font-semibold shrink-0">{s.value.toLocaleString()} · {pct}%</span>
                             </div>
                           </div>
                         </div>
@@ -922,14 +962,14 @@ export default function ProcessQualityDashboard() {
 
           {/* MO BreakDown + Category Table — side by side */}
           {opp && (
-            <div className="mt-6 rounded-xl border border-purple-500/20 bg-[#1E293B] overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+            <div className="mt-6 rounded-xl border border-purple-500/20 bg-white overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                 <BarChart3 size={14} className="text-purple-400" />
                 <span className="text-[11px] font-bold uppercase tracking-widest text-purple-400">MO BreakDown</span>
                 <button onClick={() => showDetail('moBreakdown')} className="ml-auto text-slate-500 hover:text-purple-400 transition-colors"><Info size={13} /></button>
               </div>
 
-              <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-white/5">
+              <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
 
                 {/* Left — Pie chart */}
                 <div className="lg:w-72 shrink-0 p-5 flex flex-col items-center justify-center">
@@ -961,8 +1001,8 @@ export default function ProcessQualityDashboard() {
                             <div key={i} className="flex items-center gap-3">
                               <span className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: color }} />
                               <div className="flex-1">
-                                <p className="text-[11px] text-white font-bold">{s.name}</p>
-                                <p className="text-[10px] text-slate-400">{s.value.toLocaleString()} · {pct}%</p>
+                                <p className="text-[11px] text-slate-900 font-bold">{s.name}</p>
+                                <p className="text-[10px] text-slate-600 font-semibold">{s.value.toLocaleString()} · {pct}%</p>
                               </div>
                             </div>
                           );
@@ -976,19 +1016,19 @@ export default function ProcessQualityDashboard() {
 
                 {/* Right — Category table */}
                 <div className="flex-1 overflow-x-auto">
-                  <div className="flex items-center justify-end px-4 py-2 border-b border-white/5">
+                  <div className="flex items-center justify-end px-4 py-2 border-b border-slate-200">
                     <ExportBtn onClick={() => opp && downloadCSV(opp.moCategoryTable.map(r => ({ 'MO Category': r.category, Insight: r.insight, Count: r.count, 'Count%': `${r.pct}%` })), 'mo-category.csv')} />
                   </div>
                   <table className="w-full text-[11px]">
                     <thead>
-                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-white/5">
+                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200">
                         <th className="px-4 py-2.5 text-left">MO Category</th>
                         <th className="px-4 py-2.5 text-left">Insight</th>
                         <th className="px-4 py-2.5 text-right">Count</th>
                         <th className="px-4 py-2.5 text-right">Count %</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-slate-200">
                       {opp.moCategoryTable.length > 0 ? opp.moCategoryTable.map((row, i) => {
                         const catColors: Record<string, string> = {
                           'No Need':             '#64748B',
@@ -1002,7 +1042,7 @@ export default function ProcessQualityDashboard() {
                         };
                         const color = catColors[row.category] ?? '#64748B';
                         return (
-                          <tr key={i} className="hover:bg-white/[0.02] transition-colors">
+                          <tr key={i} className="hover:bg-slate-50 transition-colors">
                             <td className="px-4 py-2.5">
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
                                 style={{ backgroundColor: `${color}20`, color }}>
@@ -1010,13 +1050,13 @@ export default function ProcessQualityDashboard() {
                               </span>
                             </td>
                             <td className="px-4 py-2.5 text-slate-400">{row.insight}</td>
-                            <td className="px-4 py-2.5 text-right font-semibold text-white">{row.count.toLocaleString()}</td>
+                            <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{row.count.toLocaleString()}</td>
                             <td className="px-4 py-2.5 text-right">
                               <div className="flex items-center justify-end gap-2">
                                 <div className="w-16 h-1.5 rounded-full bg-slate-700/60 overflow-hidden">
                                   <div className="h-full rounded-full" style={{ width: `${row.pct}%`, backgroundColor: color }} />
                                 </div>
-                                <span className="font-semibold text-slate-300 w-10 text-right">{row.pct}%</span>
+                                <span className="font-semibold text-slate-600 w-10 text-right">{row.pct}%</span>
                               </div>
                             </td>
                           </tr>
@@ -1034,8 +1074,8 @@ export default function ProcessQualityDashboard() {
 
           {/* NED/ED Table */}
           {opp && opp.nedTable.length > 0 && (
-            <div className="mt-6 rounded-xl border border-purple-500/20 bg-[#1E293B] overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+            <div className="mt-6 rounded-xl border border-purple-500/20 bg-white overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
                 <BarChart3 size={14} className="text-purple-400" />
                 <span className="text-[11px] font-bold uppercase tracking-widest text-purple-400">NED / ED Analysis</span>
                 <button onClick={() => showDetail('nedTable')} className="ml-auto text-slate-500 hover:text-purple-400 transition-colors mr-1"><Info size={13} /></button>
@@ -1044,7 +1084,7 @@ export default function ProcessQualityDashboard() {
               <div className="overflow-x-auto">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-white/5">
+                    <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200">
                       <th className="px-4 py-2.5 text-left">NED/ED Category</th>
                       <th className="px-4 py-2.5 text-left">NED/ED-QS</th>
                       <th className="px-4 py-2.5 text-left">NED/ED Status</th>
@@ -1052,32 +1092,32 @@ export default function ProcessQualityDashboard() {
                       <th className="px-4 py-2.5 text-right">Count %</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-slate-200">
                     {opp.nedTable.map((row, i) => {
                       const color = OBJ_CAT_COLORS[row.nedCategory] ?? '#64748B';
                       const statusColor = row.nedStatus === 'Workable' ? '#22C55E' : '#EF4444';
                       return (
-                        <tr key={i} className="hover:bg-white/[0.02] transition-colors">
+                        <tr key={i} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-2.5">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
                               style={{ backgroundColor: `${color}20`, color }}>
                               {row.nedCategory}
                             </span>
                           </td>
-                          <td className="px-4 py-2.5 text-slate-300">{row.nedQS}</td>
+                          <td className="px-4 py-2.5 text-slate-600">{row.nedQS}</td>
                           <td className="px-4 py-2.5">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
                               style={{ backgroundColor: `${statusColor}20`, color: statusColor }}>
                               {row.nedStatus}
                             </span>
                           </td>
-                          <td className="px-4 py-2.5 text-right font-semibold text-white">{row.count.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{row.count.toLocaleString()}</td>
                           <td className="px-4 py-2.5 text-right">
                             <div className="flex items-center justify-end gap-2">
                               <div className="w-16 h-1.5 rounded-full bg-slate-700/60 overflow-hidden">
                                 <div className="h-full rounded-full" style={{ width: `${row.pct}%`, backgroundColor: color }} />
                               </div>
-                              <span className="font-semibold text-slate-300 w-10 text-right">{row.pct}%</span>
+                              <span className="font-semibold text-slate-600 w-10 text-right">{row.pct}%</span>
                             </div>
                           </td>
                         </tr>
@@ -1097,21 +1137,21 @@ export default function ProcessQualityDashboard() {
         <div className="space-y-8">
           <div className="flex items-center gap-2 mb-6">
             <div className="w-1 h-6 bg-sky-500 rounded-full" />
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider">Estimate NPS &amp; CSAT</h2>
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Estimate NPS &amp; CSAT</h2>
           </div>
 
           {nps && (
             <div className="flex flex-col lg:flex-row gap-6">
 
               {/* ── Card 1: NPS Gauge ── */}
-              <div className="flex-1 min-w-0 rounded-xl border border-sky-500/20 bg-[#1E293B] overflow-hidden">
-                <div className="px-5 py-3 border-b border-white/5">
+              <div className="flex-1 min-w-0 rounded-xl border border-sky-500/20 bg-white overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200">
                   <span className="text-[11px] font-bold uppercase tracking-widest text-sky-400">Net Promoter Score (NPS)</span>
                   <button onClick={() => showDetail('npsGauge')} className="ml-auto text-slate-500 hover:text-sky-400 transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="p-4 flex flex-col items-center">
                   <svg viewBox="0 0 300 200" width="100%" style={{ maxWidth: 300 }}>
-                    <path d={gaugeArc(180, 0)} fill="#0F172A" />
+                    <path d={gaugeArc(180, 0)} fill="#E2E8F0" />
                     {(() => {
                       const t = nps.total;
                       const dPct = t > 0 ? nps.detractor / t : 0;
@@ -1151,7 +1191,7 @@ export default function ProcessQualityDashboard() {
                           <line x1={G_CX} y1={G_CY} x2={nx.toFixed(2)} y2={ny.toFixed(2)}
                             stroke="#F1F5F9" strokeWidth={2.5} strokeLinecap="round" />
                           <circle cx={G_CX} cy={G_CY} r={6} fill="#F1F5F9" />
-                          <circle cx={G_CX} cy={G_CY} r={3} fill="#0F172A" />
+                          <circle cx={G_CX} cy={G_CY} r={3} fill="#E2E8F0" />
                         </>
                       );
                     })()}
@@ -1172,7 +1212,7 @@ export default function ProcessQualityDashboard() {
                         <div key={i} className="flex items-center gap-1.5 text-[11px]">
                           <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: seg.color }} />
                           <span className="text-slate-400">{seg.label}</span>
-                          <span className="font-bold text-white ml-1">{seg.count.toLocaleString()}</span>
+                          <span className="font-bold text-slate-900 ml-1">{seg.count.toLocaleString()}</span>
                           <span className="text-slate-500">({pct}%)</span>
                         </div>
                       );
@@ -1182,14 +1222,14 @@ export default function ProcessQualityDashboard() {
               </div>
 
               {/* ── Card 2: CSAT Gauge ── */}
-              <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/20 bg-[#1E293B] overflow-hidden">
-                <div className="px-5 py-3 border-b border-white/5">
+              <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/20 bg-white overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200">
                   <span className="text-[11px] font-bold uppercase tracking-widest text-emerald-400">Customer Satisfaction (CSAT)</span>
                   <button onClick={() => showDetail('csatGauge')} className="ml-auto text-slate-500 hover:text-emerald-400 transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="p-4 flex flex-col items-center">
                   <svg viewBox="0 0 300 200" width="100%" style={{ maxWidth: 300 }}>
-                    <path d={gaugeArc(180, 0)} fill="#0F172A" />
+                    <path d={gaugeArc(180, 0)} fill="#E2E8F0" />
                     {nps.csatPct > 0 && (
                       <path
                         d={gaugeArc(180, Math.max(180 - (Math.min(nps.csatPct, 100) / 100) * 180, 0.5))}
@@ -1207,7 +1247,7 @@ export default function ProcessQualityDashboard() {
                           <line x1={G_CX} y1={G_CY} x2={nx.toFixed(2)} y2={ny.toFixed(2)}
                             stroke="#F1F5F9" strokeWidth={2.5} strokeLinecap="round" />
                           <circle cx={G_CX} cy={G_CY} r={6} fill="#F1F5F9" />
-                          <circle cx={G_CX} cy={G_CY} r={3} fill="#0F172A" />
+                          <circle cx={G_CX} cy={G_CY} r={3} fill="#E2E8F0" />
                         </>
                       );
                     })()}
@@ -1231,7 +1271,7 @@ export default function ProcessQualityDashboard() {
                         <div key={i} className="flex items-center gap-1.5 text-[11px]">
                           <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: seg.color }} />
                           <span className="text-slate-400">{seg.label}</span>
-                          <span className="font-bold text-white ml-1">{seg.count.toLocaleString()}</span>
+                          <span className="font-bold text-slate-900 ml-1">{seg.count.toLocaleString()}</span>
                           <span className="text-slate-500">({pct}%)</span>
                         </div>
                       );
@@ -1241,8 +1281,8 @@ export default function ProcessQualityDashboard() {
               </div>
 
               {/* ── Card 3: Feedback Status Breakup ── */}
-              <div className="flex-1 min-w-0 rounded-xl border border-purple-500/20 bg-[#1E293B] overflow-hidden">
-                <div className="px-5 py-3 border-b border-white/5">
+              <div className="flex-1 min-w-0 rounded-xl border border-purple-500/20 bg-white overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200">
                   <span className="text-[11px] font-bold uppercase tracking-widest text-purple-400">Feedback Status Breakup</span>
                   <button onClick={() => showDetail('feedbackPie')} className="ml-auto text-slate-500 hover:text-purple-400 transition-colors"><Info size={13} /></button>
                 </div>
@@ -1284,7 +1324,7 @@ export default function ProcessQualityDashboard() {
                           <div key={i} className="flex items-center gap-1.5 text-[11px]">
                             <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: d.color }} />
                             <span className="text-slate-400">{d.name}:</span>
-                            <span className="font-bold text-white">{d.value.toLocaleString()}</span>
+                            <span className="font-bold text-slate-900">{d.value.toLocaleString()}</span>
                           </div>
                         ))}
                       </div>
@@ -1320,8 +1360,8 @@ export default function ProcessQualityDashboard() {
             const gT   = allDays.reduce((a, r) => a + r.totalFeedbacks, 0);
             const gNPS = gT > 0 ? ((gPr - gD) / gT * 100).toFixed(2) : '0.00';
             return (
-              <div className="mt-6 rounded-xl border border-sky-500/20 bg-[#1E293B] overflow-hidden">
-                <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2 bg-sky-500/5">
+              <div className="mt-6 rounded-xl border border-sky-500/20 bg-white overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-sky-500/5">
                   <BarChart3 size={14} className="text-sky-400" />
                   <span className="text-[11px] font-bold uppercase tracking-widest text-sky-400">NPS and CSAT Analysis</span>
                   <span className="ml-2 text-[10px] text-slate-500">{allDays.length} days · scroll to see all</span>
@@ -1339,7 +1379,7 @@ export default function ProcessQualityDashboard() {
                       <col style={{ width: '22%' }} />
                     </colgroup>
                     <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
-                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-white/5 bg-[#0F172A]">
+                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200 bg-white">
                         <th className="px-4 py-2.5 text-left">Call Date</th>
                         <th className="px-4 py-2.5 text-right">Detractor</th>
                         <th className="px-4 py-2.5 text-right">Passive</th>
@@ -1348,10 +1388,10 @@ export default function ProcessQualityDashboard() {
                         <th className="px-4 py-2.5 text-right">Total Feedbacks</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-slate-200">
                       {rows.map((row, i) => (
-                        <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                          <td className="px-4 py-2 text-slate-300 whitespace-nowrap">{fmtDate(row.calldate)}</td>
+                        <tr key={i} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-2 text-slate-600 whitespace-nowrap">{fmtDate(row.calldate)}</td>
                           <td className="px-4 py-2 text-right font-semibold" style={cell(row.detractor, maxD, '220,38,38')}>
                             {row.detractor.toLocaleString()}
                           </td>
@@ -1369,13 +1409,13 @@ export default function ProcessQualityDashboard() {
                       ))}
                     </tbody>
                     <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 10 }}>
-                      <tr className="border-t border-white/10 bg-[#1E293B]">
-                        <td className="px-4 py-2.5 font-bold text-white text-[11px]">Grand Total</td>
-                        <td className="px-4 py-2.5 text-right font-bold text-white">{gD.toLocaleString()}</td>
-                        <td className="px-4 py-2.5 text-right font-bold text-white">{gP.toLocaleString()}</td>
-                        <td className="px-4 py-2.5 text-right font-bold text-white">{gPr.toLocaleString()}</td>
+                      <tr className="border-t border-slate-200 bg-white">
+                        <td className="px-4 py-2.5 font-bold text-slate-900 text-[11px]">Grand Total</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gD.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gP.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gPr.toLocaleString()}</td>
                         <td className="px-4 py-2.5 text-right font-bold text-sky-300">{gNPS}</td>
-                        <td className="px-4 py-2.5 text-right font-bold text-white">{gT.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gT.toLocaleString()}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -1391,8 +1431,8 @@ export default function ProcessQualityDashboard() {
               return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             };
             return (
-              <div className="mt-6 rounded-xl border border-sky-500/20 bg-[#1E293B] overflow-hidden">
-                <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2 bg-sky-500/5">
+              <div className="mt-6 rounded-xl border border-sky-500/20 bg-white overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-sky-500/5">
                   <BarChart3 size={14} className="text-sky-400" />
                   <span className="text-[11px] font-bold uppercase tracking-widest text-sky-400">NPS and CSAT Day Wise Trend</span>
                   <button onClick={() => showDetail('npsTrend')} className="ml-auto text-slate-500 hover:text-sky-400 transition-colors"><Info size={13} /></button>
@@ -1400,7 +1440,7 @@ export default function ProcessQualityDashboard() {
                 <div className="p-4">
                   <ResponsiveContainer width="100%" height={340}>
                     <LineChart data={nps.days} margin={{ top: 24, right: 60, left: 10, bottom: 20 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
                       <XAxis
                         dataKey="calldate"
                         tickFormatter={fmtShort}
@@ -1469,6 +1509,94 @@ export default function ProcessQualityDashboard() {
               </div>
             );
           })()}
+
+          {/* ── Agent-wise Detractor / Passive / Promoter ── */}
+          {agentNPS.length > 0 && (() => {
+            const gD  = agentNPS.reduce((a, r) => a + r.detractor, 0);
+            const gP  = agentNPS.reduce((a, r) => a + r.passive,   0);
+            const gPr = agentNPS.reduce((a, r) => a + r.promoter,  0);
+            const gT  = agentNPS.reduce((a, r) => a + r.total,     0);
+            const gNPS = gT > 0 ? ((gPr - gD) / gT * 100).toFixed(2) : '0.00';
+            const maxD  = Math.max(...agentNPS.map(r => r.detractor), 1);
+            const maxP  = Math.max(...agentNPS.map(r => r.passive),   1);
+            const maxPr = Math.max(...agentNPS.map(r => r.promoter),  1);
+            const cell  = (v: number, max: number, rgb: string) => ({
+              backgroundColor: max > 0 ? `rgba(${rgb},${(v / max) * 0.7 + 0.08})` : 'transparent',
+              color: max > 0 && v / max > 0.55 ? '#fff' : '#E2E8F0',
+            });
+            const npsColor = (s: number) => s >= 50 ? '#22C55E' : s >= 0 ? '#F59E0B' : '#EF4444';
+            return (
+              <div className="mt-6 rounded-xl border border-violet-500/20 bg-white overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-violet-500/5">
+                  <Users size={14} className="text-violet-400" />
+                  <span className="text-[11px] font-bold uppercase tracking-widest text-violet-400">Agent Wise — Detractor / Passive / Promoter</span>
+                  <span className="ml-2 text-[10px] text-slate-500">{agentNPS.length} agents · sorted by NPS</span>
+                  <div className="ml-auto">
+                    <ExportBtn onClick={() => downloadCSV(agentNPS.map(r => ({
+                      Agent: r.agentName,
+                      Detractor: r.detractor,
+                      Passive: r.passive,
+                      Promoter: r.promoter,
+                      Total: r.total,
+                      'NPS Score': r.npsScore,
+                    })), 'agent-nps.csv')} />
+                  </div>
+                </div>
+                <div style={{ maxHeight: 400, overflowY: 'auto', overflowX: 'auto' }}>
+                  <table className="w-full text-[11px]" style={{ tableLayout: 'fixed', minWidth: 560 }}>
+                    <colgroup>
+                      <col style={{ width: '30%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '12%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '12%' }} />
+                      <col style={{ width: '18%' }} />
+                    </colgroup>
+                    <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200 bg-white">
+                        <th className="px-4 py-2.5 text-left">Agent Name</th>
+                        <th className="px-4 py-2.5 text-right" style={{ color: '#EF4444' }}>Detractor</th>
+                        <th className="px-4 py-2.5 text-right" style={{ color: '#F59E0B' }}>Passive</th>
+                        <th className="px-4 py-2.5 text-right" style={{ color: '#22C55E' }}>Promoter</th>
+                        <th className="px-4 py-2.5 text-right">Total</th>
+                        <th className="px-4 py-2.5 text-right">NPS Score</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {agentNPS.map((row, i) => (
+                        <tr key={i} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-2 text-slate-700 font-medium truncate">{row.agentName}</td>
+                          <td className="px-4 py-2 text-right font-semibold" style={cell(row.detractor, maxD, '220,38,38')}>
+                            {row.detractor.toLocaleString()}
+                          </td>
+                          <td className="px-4 py-2 text-right font-semibold" style={cell(row.passive, maxP, '249,115,22')}>
+                            {row.passive.toLocaleString()}
+                          </td>
+                          <td className="px-4 py-2 text-right font-semibold" style={cell(row.promoter, maxPr, '34,197,94')}>
+                            {row.promoter.toLocaleString()}
+                          </td>
+                          <td className="px-4 py-2 text-right text-slate-600">{row.total.toLocaleString()}</td>
+                          <td className="px-4 py-2 text-right font-bold" style={{ color: npsColor(row.npsScore) }}>
+                            {row.npsScore}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 10 }}>
+                      <tr className="border-t border-slate-200 bg-white">
+                        <td className="px-4 py-2.5 font-bold text-slate-900 text-[11px]">Grand Total</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gD.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gP.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gPr.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gT.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right font-bold" style={{ color: npsColor(Number(gNPS)) }}>{gNPS}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
         </div>
         )}
 
@@ -1477,43 +1605,43 @@ export default function ProcessQualityDashboard() {
         <div className="space-y-8">
           <div className="flex items-center gap-2 mb-6">
             <div className="w-1 h-6 bg-orange-500 rounded-full" />
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider">Detail Analysis</h2>
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Detail Analysis</h2>
           </div>
 
           {/* CST + CRT side by side */}
           {(cst || crt) && (
             <div className="flex gap-4">
               {cst && (
-                <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/30 bg-[#1E293B] overflow-hidden">
-                  <div className="px-4 py-2.5 border-b border-white/5 flex items-center gap-2 bg-emerald-500/5">
+                <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/30 bg-white overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-emerald-500/5">
                     <TrendingUp size={13} className="text-emerald-400" />
                     <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">CST — Customer Success Track</span>
                     <button onClick={() => showDetail('cstSection')} className="ml-auto text-slate-500 hover:text-emerald-400 transition-colors"><Info size={12} /></button>
                   </div>
-                  <div className="flex flex-row gap-px bg-white/5">
+                  <div className="flex flex-row gap-px bg-slate-100">
                     {CST_METRICS(cst).map((m, i) => (
                       <div key={i} onClick={() => setModalMetric(m)}
-                        className="flex-1 min-w-0 bg-[#1E293B] px-3 py-3 cursor-pointer hover:bg-white/5 transition-colors">
+                        className="flex-1 min-w-0 bg-white px-3 py-3 cursor-pointer hover:bg-slate-100 transition-colors">
                         <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">{m.label}</span>
-                        <p className="text-lg font-bold text-white">{m.value}</p>
+                        <p className="text-lg font-black text-slate-900">{m.value}</p>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
               {crt && (
-                <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-[#1E293B] overflow-hidden">
-                  <div className="px-4 py-2.5 border-b border-white/5 flex items-center gap-2 bg-red-500/5">
+                <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-white overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-red-500/5">
                     <XCircle size={13} className="text-red-400" />
                     <span className="text-[10px] font-bold uppercase tracking-widest text-red-400">CRT — Customer Rejection Track</span>
                     <button onClick={() => showDetail('crtSection')} className="ml-auto text-slate-500 hover:text-red-400 transition-colors"><Info size={12} /></button>
                   </div>
-                  <div className="flex flex-row gap-px bg-white/5">
+                  <div className="flex flex-row gap-px bg-slate-100">
                     {CRT_METRICS(crt).map((m, i) => (
                       <div key={i} onClick={() => setModalMetric(m)}
-                        className="flex-1 min-w-0 bg-[#1E293B] px-3 py-3 cursor-pointer hover:bg-white/5 transition-colors">
+                        className="flex-1 min-w-0 bg-white px-3 py-3 cursor-pointer hover:bg-slate-100 transition-colors">
                         <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">{m.label}</span>
-                        <p className="text-lg font-bold text-white">{m.value}</p>
+                        <p className="text-lg font-black text-slate-900">{m.value}</p>
                       </div>
                     ))}
                   </div>
@@ -1528,7 +1656,7 @@ export default function ProcessQualityDashboard() {
             <div className="mt-8">
               <div className="flex items-center gap-2 mb-5">
                 <div className="w-1 h-5 bg-blue-400 rounded-full" />
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">OP Analysis</h3>
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">OP Analysis</h3>
               </div>
 
               {/* ── Table 1: OP Category Wise Success ── */}
@@ -1547,16 +1675,16 @@ export default function ProcessQualityDashboard() {
                 const gSale  = rows.reduce((a, r) => a + r.saleCount,  0);
 
                 return (
-                  <div className="rounded-xl border border-blue-500/20 bg-[#1E293B] overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2 bg-blue-500/5">
+                  <div className="rounded-xl border border-blue-500/20 bg-white overflow-hidden">
+                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-blue-500/5">
                       <BarChart3 size={14} className="text-blue-400" />
                       <span className="text-[11px] font-bold uppercase tracking-widest text-blue-400">OP Category Wise Success</span>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-[11px]">
                         <thead>
-                          <tr className="border-b border-white/5">
-                            <th className="px-4 py-2.5 text-left text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-[#0F172A]">Opening Pitch Category</th>
+                          <tr className="border-b border-slate-200">
+                            <th className="px-4 py-2.5 text-left text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-white">Opening Pitch Category</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-blue-900/30">Total Calls ▼</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-emerald-900/20">OPS Count</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-emerald-900/20">OPS%</th>
@@ -1566,45 +1694,45 @@ export default function ProcessQualityDashboard() {
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider">Conv%</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-white/5">
+                        <tbody className="divide-y divide-slate-200">
                           {rows.map((row, i) => (
-                            <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                              <td className="px-4 py-2 text-slate-200 font-medium">{row.openingCategory}</td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                            <tr key={i} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-4 py-2 text-slate-700 font-medium">{row.openingCategory}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.totalCalls, maxT, '59,130,246') }}>
                                 {row.totalCalls.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.opsCount, maxOps, '34,197,94') }}>
                                 {row.opsCount.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.opsCount, maxOps, '34,197,94') }}>
                                 {pct(row.opsCount, row.totalCalls)}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.orCount, maxOr, '239,68,68') }}>
                                 {row.orCount.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.orCount, maxOr, '239,68,68') }}>
                                 {pct(row.orCount, row.totalCalls)}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-slate-200">{row.saleCount.toLocaleString()}</td>
-                              <td className="px-4 py-2 text-right font-semibold text-slate-200">{pct(row.saleCount, row.totalCalls)}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-slate-700">{row.saleCount.toLocaleString()}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-slate-700">{pct(row.saleCount, row.totalCalls)}</td>
                             </tr>
                           ))}
                         </tbody>
                         <tfoot>
-                          <tr className="border-t border-white/10 bg-white/5">
-                            <td className="px-4 py-2.5 font-bold text-white text-[11px]">Grand Total</td>
-                            <td className="px-4 py-2.5 text-right font-bold text-white">{gTotal.toLocaleString()}</td>
+                          <tr className="border-t border-slate-200 bg-slate-100">
+                            <td className="px-4 py-2.5 font-bold text-slate-900 text-[11px]">Grand Total</td>
+                            <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gTotal.toLocaleString()}</td>
                             <td className="px-4 py-2.5 text-right font-bold text-emerald-300">{gOps.toLocaleString()}</td>
                             <td className="px-4 py-2.5 text-right font-bold text-emerald-300">{pct(gOps, gTotal)}</td>
                             <td className="px-4 py-2.5 text-right font-bold text-red-300">{gOr.toLocaleString()}</td>
                             <td className="px-4 py-2.5 text-right font-bold text-red-300">{pct(gOr, gTotal)}</td>
-                            <td className="px-4 py-2.5 text-right font-bold text-white">{gSale.toLocaleString()}</td>
-                            <td className="px-4 py-2.5 text-right font-bold text-white">{pct(gSale, gTotal)}</td>
+                            <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gSale.toLocaleString()}</td>
+                            <td className="px-4 py-2.5 text-right font-bold text-slate-900">{pct(gSale, gTotal)}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1629,16 +1757,16 @@ export default function ProcessQualityDashboard() {
                 const gSale  = rows.reduce((a, r) => a + r.saleCount,  0);
 
                 return (
-                  <div className="mt-6 rounded-xl border border-teal-500/20 bg-[#1E293B] overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2 bg-teal-500/5">
+                  <div className="mt-6 rounded-xl border border-teal-500/20 bg-white overflow-hidden">
+                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-teal-500/5">
                       <BarChart3 size={14} className="text-teal-400" />
                       <span className="text-[11px] font-bold uppercase tracking-widest text-teal-400">Context Setting Analysis</span>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-[11px]">
                         <thead>
-                          <tr className="border-b border-white/5">
-                            <th className="px-4 py-2.5 text-left text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-[#0F172A]">Context Setting Category</th>
+                          <tr className="border-b border-slate-200">
+                            <th className="px-4 py-2.5 text-left text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-white">Context Setting Category</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-blue-900/30">Total Calls ▼</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-emerald-900/20">OPS Count</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-emerald-900/20">OPS%</th>
@@ -1648,45 +1776,45 @@ export default function ProcessQualityDashboard() {
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider">Conv%</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-white/5">
+                        <tbody className="divide-y divide-slate-200">
                           {rows.map((row, i) => (
-                            <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                              <td className="px-4 py-2 text-slate-200 font-medium">{row.contactGroup}</td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                            <tr key={i} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-4 py-2 text-slate-700 font-medium">{row.contactGroup}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.totalCalls, maxT, '59,130,246') }}>
                                 {row.totalCalls.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.opsCount, maxOps, '34,197,94') }}>
                                 {row.opsCount.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.opsCount, maxOps, '34,197,94') }}>
                                 {pct(row.opsCount, row.totalCalls)}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.orCount, maxOr, '239,68,68') }}>
                                 {row.orCount.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.orCount, maxOr, '239,68,68') }}>
                                 {pct(row.orCount, row.totalCalls)}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-slate-200">{row.saleCount.toLocaleString()}</td>
-                              <td className="px-4 py-2 text-right font-semibold text-slate-200">{pct(row.saleCount, row.totalCalls)}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-slate-700">{row.saleCount.toLocaleString()}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-slate-700">{pct(row.saleCount, row.totalCalls)}</td>
                             </tr>
                           ))}
                         </tbody>
                         <tfoot>
-                          <tr className="border-t border-white/10 bg-white/5">
-                            <td className="px-4 py-2.5 font-bold text-white text-[11px]">Grand Total</td>
-                            <td className="px-4 py-2.5 text-right font-bold text-white">{gTotal.toLocaleString()}</td>
+                          <tr className="border-t border-slate-200 bg-slate-100">
+                            <td className="px-4 py-2.5 font-bold text-slate-900 text-[11px]">Grand Total</td>
+                            <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gTotal.toLocaleString()}</td>
                             <td className="px-4 py-2.5 text-right font-bold text-emerald-300">{gOps.toLocaleString()}</td>
                             <td className="px-4 py-2.5 text-right font-bold text-emerald-300">{pct(gOps, gTotal)}</td>
                             <td className="px-4 py-2.5 text-right font-bold text-red-300">{gOr.toLocaleString()}</td>
                             <td className="px-4 py-2.5 text-right font-bold text-red-300">{pct(gOr, gTotal)}</td>
-                            <td className="px-4 py-2.5 text-right font-bold text-white">{gSale.toLocaleString()}</td>
-                            <td className="px-4 py-2.5 text-right font-bold text-white">{pct(gSale, gTotal)}</td>
+                            <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gSale.toLocaleString()}</td>
+                            <td className="px-4 py-2.5 text-right font-bold text-slate-900">{pct(gSale, gTotal)}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1712,8 +1840,8 @@ export default function ProcessQualityDashboard() {
               const gSale  = allRows.reduce((a, r) => a + r.saleCount,  0);
 
               return (
-                <div className="mt-8 rounded-xl border border-amber-500/20 bg-[#1E293B] overflow-hidden">
-                  <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2 bg-amber-500/5">
+                <div className="mt-8 rounded-xl border border-amber-500/20 bg-white overflow-hidden">
+                  <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-amber-500/5">
                     <BarChart3 size={14} className="text-amber-400" />
                     <span className="text-[11px] font-bold uppercase tracking-widest text-amber-400">Offered Pitch Analysis</span>
                   </div>
@@ -1733,43 +1861,43 @@ export default function ProcessQualityDashboard() {
                           <col style={{ width: '10%' }} />
                         </colgroup>
                         <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
-                          <tr className="border-b border-white/5">
-                            <th className="px-4 py-2.5 text-left text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-[#0F172A]">Discount Type</th>
+                          <tr className="border-b border-slate-200">
+                            <th className="px-4 py-2.5 text-left text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-white">Discount Type</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-blue-950">Total Offer ▼</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-red-950">OR Count</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-red-950">OR%</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-emerald-950">OS Count</th>
                             <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-emerald-950">OS%</th>
-                            <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-[#0F172A]">Sale Count</th>
-                            <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-[#0F172A]">Conv%</th>
+                            <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-white">Sale Count</th>
+                            <th className="px-4 py-2.5 text-right text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-white">Conv%</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-white/5">
+                        <tbody className="divide-y divide-slate-200">
                           {allRows.map((row, i) => (
-                            <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                              <td className="px-4 py-2 text-slate-200 font-medium truncate">{row.discountType}</td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                            <tr key={i} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-4 py-2 text-slate-700 font-medium truncate">{row.discountType}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.totalOffer, maxT, '59,130,246') }}>
                                 {row.totalOffer.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.orCount, maxOr, '239,68,68') }}>
                                 {row.orCount.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.orCount, maxOr, '239,68,68') }}>
                                 {pct(row.orCount, row.totalOffer)}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.osCount, maxOs, '34,197,94') }}>
                                 {row.osCount.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.osCount, maxOs, '34,197,94') }}>
                                 {pct(row.osCount, row.totalOffer)}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-slate-200">{row.saleCount.toLocaleString()}</td>
-                              <td className="px-4 py-2 text-right font-semibold text-slate-200">{pct(row.saleCount, row.totalOffer)}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-slate-700">{row.saleCount.toLocaleString()}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-slate-700">{pct(row.saleCount, row.totalOffer)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1777,7 +1905,7 @@ export default function ProcessQualityDashboard() {
                     </div>
 
                     {/* Grand Total pinned below scroll area */}
-                    <table className="w-full text-[11px] border-collapse border-t border-white/10" style={{ tableLayout: 'fixed' }}>
+                    <table className="w-full text-[11px] border-collapse border-t border-slate-200" style={{ tableLayout: 'fixed' }}>
                       <colgroup>
                         <col style={{ width: '30%' }} />
                         <col style={{ width: '10%' }} />
@@ -1789,15 +1917,15 @@ export default function ProcessQualityDashboard() {
                         <col style={{ width: '10%' }} />
                       </colgroup>
                       <tbody>
-                        <tr className="bg-white/5">
-                          <td className="px-4 py-2.5 font-bold text-white text-[11px]">Grand Total</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-white">{gTotal.toLocaleString()}</td>
+                        <tr className="bg-slate-100">
+                          <td className="px-4 py-2.5 font-bold text-slate-900 text-[11px]">Grand Total</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gTotal.toLocaleString()}</td>
                           <td className="px-4 py-2.5 text-right font-bold text-red-300">{gOr.toLocaleString()}</td>
                           <td className="px-4 py-2.5 text-right font-bold text-red-300">{pct(gOr, gTotal)}</td>
                           <td className="px-4 py-2.5 text-right font-bold text-emerald-300">{gOs.toLocaleString()}</td>
                           <td className="px-4 py-2.5 text-right font-bold text-emerald-300">{pct(gOs, gTotal)}</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-white">{gSale.toLocaleString()}</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-white">{pct(gSale, gTotal)}</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gSale.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-slate-900">{pct(gSale, gTotal)}</td>
                         </tr>
                       </tbody>
                     </table>
@@ -1847,8 +1975,8 @@ export default function ProcessQualityDashboard() {
               );
 
               return (
-                <div className={`mt-6 rounded-xl border ${borderColor} bg-[#1E293B] overflow-hidden`}>
-                  <div className={`px-5 py-3 border-b border-white/5 flex items-center gap-2 ${headerColor}`}>
+                <div className={`mt-6 rounded-xl border ${borderColor} bg-white overflow-hidden`}>
+                  <div className={`px-5 py-3 border-b border-slate-200 flex items-center gap-2 ${headerColor}`}>
                     <BarChart3 size={14} className={iconColor} />
                     <span className={`text-[11px] font-bold uppercase tracking-widest ${iconColor}`}>{title}</span>
                     <div className="ml-auto">
@@ -1860,45 +1988,45 @@ export default function ProcessQualityDashboard() {
                       <table className="w-full text-[11px] border-collapse" style={{ tableLayout: 'fixed' }}>
                         {colgroup}
                         <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
-                          <tr className="border-b border-white/5">
-                            <th className="px-4 py-2.5 text-left text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-[#0F172A]">{dimLabel}</th>
+                          <tr className="border-b border-slate-200">
+                            <th className="px-4 py-2.5 text-left text-slate-400 font-semibold text-[10px] uppercase tracking-wider bg-white">{dimLabel}</th>
                             <th className={COL_HDR('bg-blue-950')}>Obj. Count ▼</th>
                             <th className={COL_HDR('bg-red-950')}>Failed Reb.</th>
                             <th className={COL_HDR('bg-red-950')}>FR%</th>
                             <th className={COL_HDR('bg-emerald-950')}>Succ. Reb.</th>
                             <th className={COL_HDR('bg-emerald-950')}>SR%</th>
-                            <th className={COL_HDR('bg-[#0F172A]')}>Sale</th>
-                            <th className={COL_HDR('bg-[#0F172A]')}>Conv%</th>
+                            <th className={COL_HDR('bg-white')}>Sale</th>
+                            <th className={COL_HDR('bg-white')}>Conv%</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-white/5">
+                        <tbody className="divide-y divide-slate-200">
                           {rows.map((row, i) => (
-                            <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                              <td className="px-4 py-2 text-slate-200 font-medium truncate">{row.label}</td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                            <tr key={i} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-4 py-2 text-slate-700 font-medium truncate">{row.label}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.objectionCount, maxObj, '59,130,246') }}>
                                 {row.objectionCount.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.failedRebuttal, maxFail, '239,68,68') }}>
                                 {row.failedRebuttal.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.failedRebuttal, maxFail, '239,68,68') }}>
                                 {pct(row.failedRebuttal, row.objectionCount)}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.successfulRebuttal, maxSucc, '34,197,94') }}>
                                 {row.successfulRebuttal.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-white"
+                              <td className="px-4 py-2 text-right font-semibold text-slate-900"
                                 style={{ backgroundColor: heatBg(row.successfulRebuttal, maxSucc, '34,197,94') }}>
                                 {pct(row.successfulRebuttal, row.objectionCount)}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-slate-200">
+                              <td className="px-4 py-2 text-right font-semibold text-slate-700">
                                 {row.saleCount.toLocaleString()}
                               </td>
-                              <td className="px-4 py-2 text-right font-semibold text-slate-200">
+                              <td className="px-4 py-2 text-right font-semibold text-slate-700">
                                 {pct(row.saleCount, row.objectionCount)}
                               </td>
                             </tr>
@@ -1906,18 +2034,18 @@ export default function ProcessQualityDashboard() {
                         </tbody>
                       </table>
                     </div>
-                    <table className="w-full text-[11px] border-collapse border-t border-white/10" style={{ tableLayout: 'fixed' }}>
+                    <table className="w-full text-[11px] border-collapse border-t border-slate-200" style={{ tableLayout: 'fixed' }}>
                       {colgroup}
                       <tbody>
-                        <tr className="bg-white/5">
-                          <td className="px-4 py-2.5 font-bold text-white text-[11px]">Grand Total</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-white">{gObj.toLocaleString()}</td>
+                        <tr className="bg-slate-100">
+                          <td className="px-4 py-2.5 font-bold text-slate-900 text-[11px]">Grand Total</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gObj.toLocaleString()}</td>
                           <td className="px-4 py-2.5 text-right font-bold text-red-300">{gFail.toLocaleString()}</td>
                           <td className="px-4 py-2.5 text-right font-bold text-red-300">{pct(gFail, gObj)}</td>
                           <td className="px-4 py-2.5 text-right font-bold text-emerald-300">{gSucc.toLocaleString()}</td>
                           <td className="px-4 py-2.5 text-right font-bold text-emerald-300">{pct(gSucc, gObj)}</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-white">{gSale.toLocaleString()}</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-white">{pct(gSale, gObj)}</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-slate-900">{gSale.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-slate-900">{pct(gSale, gObj)}</td>
                         </tr>
                       </tbody>
                     </table>
@@ -1930,7 +2058,7 @@ export default function ProcessQualityDashboard() {
               <>
                 <div className="mt-10 flex items-center gap-3">
                   <div className="w-1 h-6 bg-violet-500 rounded-full" />
-                  <h2 className="text-sm font-bold text-white uppercase tracking-wider">Customer Objection Analysis</h2>
+                  <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Customer Objection Analysis</h2>
                 </div>
 
                 {renderTable(
@@ -1961,24 +2089,24 @@ export default function ProcessQualityDashboard() {
           <div onClick={() => setChartDetail(null)}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
             <div onClick={e => e.stopPropagation()}
-              className="bg-[#1E293B] border border-white/10 rounded-xl max-w-xl w-full mx-4 overflow-hidden shadow-2xl max-h-[85vh] flex flex-col">
-              <div className="px-5 py-4 border-b border-white/5 flex items-center gap-3 shrink-0">
+              className="bg-white border border-slate-200 rounded-xl max-w-xl w-full mx-4 overflow-hidden shadow-2xl max-h-[85vh] flex flex-col">
+              <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 shrink-0">
                 <div className="p-1.5 rounded bg-sky-500/10">
                   <Info size={15} className="text-sky-400" />
                 </div>
-                <p className="text-sm font-bold text-white flex-1">{chartDetail.title}</p>
+                <p className="text-sm font-bold text-slate-900 flex-1">{chartDetail.title}</p>
                 <button onClick={() => setChartDetail(null)}
-                  className="text-slate-500 hover:text-white transition-colors text-lg leading-none">&times;</button>
+                  className="text-slate-500 hover:text-slate-900 transition-colors text-lg leading-none">&times;</button>
               </div>
               <div className="p-5 space-y-5 overflow-y-auto">
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Description</p>
-                  <p className="text-sm text-slate-300 leading-relaxed">{chartDetail.description}</p>
+                  <p className="text-sm text-slate-600 leading-relaxed">{chartDetail.description}</p>
                 </div>
                 {chartDetail.scale && (
                   <div>
                     <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Scale / Interpretation</p>
-                    <div className="bg-[#0F172A] rounded-lg p-3">
+                    <div className="bg-white rounded-lg p-3">
                       <code className="text-xs text-amber-400 font-mono whitespace-pre-wrap leading-relaxed">{chartDetail.scale}</code>
                     </div>
                   </div>
@@ -1988,7 +2116,7 @@ export default function ProcessQualityDashboard() {
                     <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Key Insights</p>
                     <ul className="space-y-2">
                       {chartDetail.insights.map((ins, i) => (
-                        <li key={i} className="flex items-start gap-2 text-xs text-slate-300">
+                        <li key={i} className="flex items-start gap-2 text-xs text-slate-600">
                           <span className="text-sky-400 mt-0.5 shrink-0">▸</span>
                           <span className="leading-relaxed">{ins}</span>
                         </li>
@@ -2006,26 +2134,26 @@ export default function ProcessQualityDashboard() {
           <div onClick={() => setModalMetric(null)}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
             <div onClick={e => e.stopPropagation()}
-              className="bg-[#1E293B] border border-white/10 rounded-xl max-w-lg w-full mx-4 overflow-hidden shadow-2xl">
-              <div className="px-5 py-4 border-b border-white/5 flex items-center gap-3">
+              className="bg-white border border-slate-200 rounded-xl max-w-lg w-full mx-4 overflow-hidden shadow-2xl">
+              <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
                 <div className="p-1.5 rounded" style={{ backgroundColor: `${modalMetric.color}18`, color: modalMetric.color }}>
                   <modalMetric.icon size={16} />
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-white">{modalMetric.label}</p>
-                  <p className="text-2xl font-extrabold text-white mt-0.5">{modalMetric.value}</p>
+                  <p className="text-sm font-bold text-slate-900">{modalMetric.label}</p>
+                  <p className="text-2xl font-extrabold text-slate-900 mt-0.5">{modalMetric.value}</p>
                 </div>
                 <button onClick={() => setModalMetric(null)}
-                  className="ml-auto text-slate-500 hover:text-white transition-colors text-lg leading-none">&times;</button>
+                  className="ml-auto text-slate-500 hover:text-slate-900 transition-colors text-lg leading-none">&times;</button>
               </div>
               <div className="p-5 space-y-5">
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Description</p>
-                  <p className="text-sm text-slate-300 leading-relaxed">{modalMetric.description}</p>
+                  <p className="text-sm text-slate-600 leading-relaxed">{modalMetric.description}</p>
                 </div>
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Calculation</p>
-                  <div className="bg-[#0F172A] rounded-lg p-3">
+                  <div className="bg-white rounded-lg p-3">
                     <code className="text-xs text-emerald-400 font-mono whitespace-pre-wrap">{modalMetric.calculation}</code>
                   </div>
                 </div>
@@ -2040,7 +2168,7 @@ export default function ProcessQualityDashboard() {
             <div className="overflow-auto" style={{ maxHeight: '65vh' }}>
               <table className="w-full text-xs">
                 <thead className="sticky top-0">
-                  <tr className="border-b border-white/10 bg-[#0F172A]">
+                  <tr className="border-b border-slate-200 bg-white">
                     {pqDrillModal.columns.map(c => (
                       <th key={c.key} className="py-2.5 px-4 text-left text-slate-400 font-semibold uppercase tracking-wider text-[10px] whitespace-nowrap">
                         {c.label}
@@ -2048,11 +2176,11 @@ export default function ProcessQualityDashboard() {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y divide-slate-200">
                   {pqDrillModal.rows.map((row, i) => (
-                    <tr key={i} className={i % 2 ? 'bg-white/[0.01]' : ''}>
+                    <tr key={i} className={i % 2 ? 'bg-transparent' : ''}>
                       {pqDrillModal.columns.map(c => (
-                        <td key={c.key} className="py-2.5 px-4 text-slate-200 tabular-nums">
+                        <td key={c.key} className="py-2.5 px-4 text-slate-700 tabular-nums">
                           {String(row[c.key] ?? '—')}
                         </td>
                       ))}

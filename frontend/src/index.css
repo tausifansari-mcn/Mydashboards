@@ -2,25 +2,117 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── MAS Brand tokens ─────────────────────────────── */
+:root {
+  --mas-blue:       #1565C0;
+  --mas-blue-dark:  #0D47A1;
+  --mas-blue-light: #E3F2FD;
+  --mas-green:      #43A832;
+  --mas-green-dark: #2E7D32;
+  --mas-green-light:#E8F5E9;
+  --mas-red:        #D32F2F;
+  --mas-red-dark:   #B71C1C;
+  --mas-red-light:  #FFEBEE;
+  --mas-bg:         #EEF4FF;
+  --mas-text:       #0D1B2A;
+}
+
 @layer base {
   * { box-sizing: border-box; }
+
   body {
     font-family: 'Fira Sans', Inter, system-ui, sans-serif;
-    background-color: #F8FAFC;
-    color: #1e293b;
+    background-color: #EEF4FF;
+    color: #0D1B2A;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-weight: 500;
   }
+
+  h1,h2,h3,h4,h5,h6 { color: #0D1B2A; font-weight: 800; }
+  p  { color: #1E293B; }
+  label { color: #334155; font-weight: 600; }
+  th { color: #0D1B2A; font-weight: 800; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; }
+  td { color: #1E293B; font-weight: 500; }
+
   ::-webkit-scrollbar { width: 5px; height: 5px; }
-  ::-webkit-scrollbar-track { background: #f1f5f9; }
-  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
-  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  ::-webkit-scrollbar-track { background: #E3F2FD; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb { background: #1565C0; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: #0D47A1; }
 }
 
 @layer utilities {
-  .bg-primary-dark { background-color: #1e3a8a; }
+  /* ── MAS brand background utilities ── */
+  .bg-mas-blue       { background-color: #1565C0; }
+  .bg-mas-blue-light { background-color: #E3F2FD; }
+  .bg-mas-green      { background-color: #43A832; }
+  .bg-mas-green-light{ background-color: #E8F5E9; }
+  .bg-mas-red        { background-color: #D32F2F; }
+  .bg-mas-red-light  { background-color: #FFEBEE; }
+  .bg-primary-dark   { background-color: #0D47A1; }
+
+  .text-mas-blue     { color: #1565C0; }
+  .text-mas-green    { color: #43A832; }
+  .text-mas-red      { color: #D32F2F; }
+  .text-mas-dark     { color: #0D1B2A; }
+
+  /* ── MAS gradient ── */
+  .bg-mas-gradient {
+    background: linear-gradient(135deg, #1565C0 0%, #1976D2 50%, #0D47A1 100%);
+  }
+
+  /* ── Cards ── */
+  .card-white {
+    @apply bg-white rounded-2xl shadow-sm border-2;
+    border-color: #E3F2FD;
+  }
+  .card-blue  { background: #E3F2FD; border: 2px solid #1565C030; border-radius: 1rem; }
+  .card-green { background: #E8F5E9; border: 2px solid #43A83230; border-radius: 1rem; }
+  .card-red   { background: #FFEBEE; border: 2px solid #D32F2F30; border-radius: 1rem; }
+
+  /* ── Readable text ── */
+  .text-label  { @apply text-slate-700 font-bold text-xs uppercase tracking-wider; }
+  .text-metric { @apply text-slate-900 font-black; }
+  .text-muted  { @apply text-slate-500 font-medium; }
 }
 
-/* Chart expand modal — override recharts fixed heights */
+/* ── Chart expand modal ── */
 .chart-expand-modal .recharts-responsive-container {
   height: clamp(420px, 58vh, 620px) !important;
 }
+
+/* ── Input light theme ── */
+input[type="datetime-local"],
+input[type="date"],
+input[type="text"],
+input[type="search"] { color-scheme: light; }
+
+/* ── Recharts global overrides for clarity ── */
+.recharts-cartesian-axis-tick-value {
+  fill: #334155 !important;
+  font-weight: 700 !important;
+  font-size: 11px !important;
+}
+.recharts-legend-item-text {
+  color: #1E293B !important;
+  font-weight: 700 !important;
+}
+.recharts-tooltip-label {
+  color: #0D1B2A !important;
+  font-weight: 800 !important;
+}
+
+/* ── MAS branded table ── */
+thead th {
+  background: #E3F2FD;
+  color: #0D47A1;
+  font-weight: 800;
+  border-bottom: 2px solid #1565C020;
+}
+tbody tr:hover { background: #F0F7FF; }
+tbody tr:hover td { color: #0D1B2A; }
+
+/* ── Hover card glow effects ── */
+.hover-blue:hover  { box-shadow: 0 12px 32px #1565C028; border-color: #1565C060 !important; }
+.hover-green:hover { box-shadow: 0 12px 32px #43A83228; border-color: #43A83260 !important; }
+.hover-red:hover   { box-shadow: 0 12px 32px #D32F2F28; border-color: #D32F2F60 !important; }
