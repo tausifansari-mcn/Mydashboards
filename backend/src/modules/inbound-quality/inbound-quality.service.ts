@@ -173,8 +173,116 @@ const NEG_CAT = `CASE
   WHEN LOWER(q.top_negative_words) LIKE '%shut up%' THEN 'Frustration'
   WHEN LOWER(q.top_negative_words) LIKE '%randipana%' THEN 'Abuse'
   WHEN LOWER(q.top_negative_words) LIKE '%bullshit%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%unhappy%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%terrible%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%horrible%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%awful%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%very bad%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%bad experience%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%worst%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%not satisfied%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%not happy%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%rude%' THEN 'Abuse'
+  WHEN LOWER(q.top_negative_words) LIKE '%abusive%' THEN 'Abuse'
+  WHEN LOWER(q.top_negative_words) LIKE '%insult%' THEN 'Abuse'
+  WHEN LOWER(q.top_negative_words) LIKE '%offensive%' THEN 'Abuse'
+  WHEN LOWER(q.top_negative_words) LIKE '%consumer court%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%social media%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%lawyer%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%blackmail%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%police complaint%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%legal action%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%consumer forum%' THEN 'Threat'
   ELSE 'No'
 END`;
+
+// ─── Dynamic NEG_CAT extension via DB keyword rules ───────────────────────────
+// Starts with the static CASE; DB rules are appended (refreshed hourly).
+// Admins add rows to db_audit.neg_category_keywords — picked up without a code deploy.
+let NEG_CAT_EXPR = NEG_CAT;
+
+async function refreshNegCatExpr(): Promise<void> {
+  try {
+    await querySource(`
+      CREATE TABLE IF NOT EXISTS db_audit.neg_category_keywords (
+        id       INT AUTO_INCREMENT PRIMARY KEY,
+        pattern  VARCHAR(500) NOT NULL COMMENT 'keyword to LIKE-match (case-insensitive)',
+        category VARCHAR(50)  NOT NULL COMMENT 'Frustration|Threat|Abuse|Slang|Sarcasm',
+        enabled  TINYINT(1)   NOT NULL DEFAULT 1,
+        INDEX idx_enabled (enabled)
+      )
+    `, []);
+
+    // Seed default patterns on first run
+    const [cntRow] = await querySource<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM db_audit.neg_category_keywords', [],
+    );
+    if ((cntRow?.c ?? 0) === 0) {
+      await querySource(`
+        INSERT INTO db_audit.neg_category_keywords (pattern, category) VALUES
+        ('tampered','Threat'),('expired','Frustration'),('outdated','Frustration'),
+        ('not working','Frustration'),('broken','Frustration'),('defective','Frustration'),
+        ('complain','Frustration'),('overcharged','Threat'),('defraud','Threat'),
+        ('cheated','Threat'),('baar baar','Frustration'),('pareshaan','Frustration'),
+        ('nuksan','Threat'),('haani','Threat'),('badnaam','Threat'),
+        ('galat','Frustration'),('jhooth','Threat'),('bewakoof','Abuse'),
+        ('gaali','Abuse'),('band karo','Frustration'),('waste','Frustration')
+      `, []);
+    }
+
+    const rules = await querySource<{ pattern: string; category: string }>(
+      'SELECT pattern, category FROM db_audit.neg_category_keywords WHERE enabled = 1 ORDER BY id ASC',
+      [],
+    );
+    if (!rules.length) return;
+
+    const esc = (s: string) => s.replace(/'/g, "''");
+    const dynamicWhens = rules
+      .map(r => `  WHEN LOWER(q.top_negative_words) LIKE '%${esc(r.pattern.toLowerCase())}%' THEN '${esc(r.category)}'`)
+      .join('\n');
+
+    const cutIdx = NEG_CAT.lastIndexOf("\n  ELSE 'No'\nEND");
+    const coreWhens = NEG_CAT.slice(0, cutIdx);
+    NEG_CAT_EXPR = `${coreWhens}\n${dynamicWhens}\n  ELSE 'No'\nEND`;
+  } catch (err) {
+    NEG_CAT_EXPR = NEG_CAT; // keep static on error
+  }
+}
+
+// Initial load + hourly refresh (unref so it doesn't block process exit)
+refreshNegCatExpr().catch(() => {});
+const _negCatTimer = setInterval(() => refreshNegCatExpr().catch(() => {}), 60 * 60 * 1000);
+if (typeof _negCatTimer.unref === 'function') _negCatTimer.unref();
+
+// ─── Keyword management ───────────────────────────────────────────────────────
+export interface NegKeywordRow { id: number; pattern: string; category: string; enabled: boolean; }
+
+export async function getNegKeywords(): Promise<NegKeywordRow[]> {
+  return querySource<NegKeywordRow>(
+    'SELECT id, pattern, category, enabled FROM db_audit.neg_category_keywords ORDER BY category, id',
+    [],
+  );
+}
+
+export async function addNegKeyword(pattern: string, category: string): Promise<void> {
+  await querySource(
+    'INSERT INTO db_audit.neg_category_keywords (pattern, category) VALUES (?, ?)',
+    [pattern, category],
+  );
+  await refreshNegCatExpr(); // Apply immediately
+}
+
+export async function updateNegKeyword(id: number, enabled: boolean): Promise<void> {
+  await querySource(
+    'UPDATE db_audit.neg_category_keywords SET enabled = ? WHERE id = ?',
+    [enabled ? 1 : 0, id],
+  );
+  await refreshNegCatExpr();
+}
+
+export async function reloadNegRules(): Promise<void> {
+  await refreshNegCatExpr();
+}
 
 export interface InboundQualityFilters {
   startDate: string;
@@ -279,6 +387,7 @@ export interface InboundProcessKPIs {
   frustration_count:          number;
   threat_count:               number;
   abuse_count:                number;
+  cuss_abuse_count:           number;
   slang_count:                number;
   sarcasm_count:              number;
   pie_data:                   PieSlice[];
@@ -308,6 +417,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
     closing:                    number | null;
     social_media_court_threat:  number;
     potential_scam:             number;
+    cuss_abuse_count:           number;
   }>(`
     SELECT
       q.ClientId                                                                   AS client_id,
@@ -322,45 +432,57 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
       SUM(CASE WHEN q.quality_percentage = 0                                    THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-        ELSE COALESCE(q.customer_concern_acknowledged, 0) END
+        ELSE (
+          IF(q.call_answered_within_5_seconds  = 1, 0.5, 0) +
+          IF(q.customer_concern_acknowledged   = 1, 0.5, 0)
+        ) END
       ) * 100, 1) AS opening_skill,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
         ELSE (
-          IF(q.professionalism_maintained        = 1, 0.111111111111111, 0) +
-          IF(q.assurance_or_appreciation_provided= 1, 0.111111111111111, 0) +
-          IF(q.express_empathy                   = 1, 0.111111111111111, 0) +
-          IF(q.pronunciation_and_clarity         = 1, 0.111111111111111, 0) +
-          IF(q.enthusiasm_and_no_fumbling        = 1, 0.111111111111111, 0) +
-          IF(q.active_listening                  = 1, 0.111111111111111, 0) +
-          IF(q.politeness_and_no_sarcasm         = 1, 0.111111111111111, 0) +
-          IF(q.proper_grammar                    = 1, 0.111111111111111, 0) +
-          IF(q.accurate_issue_probing            = 1, 0.111111111111111, 0)
+          IF(q.professionalism_maintained         = 1, 0.125, 0) +
+          IF(q.assurance_or_appreciation_provided = 1, 0.125, 0) +
+          IF(q.pronunciation_and_clarity          = 1, 0.125, 0) +
+          IF(q.enthusiasm_and_no_fumbling         = 1, 0.125, 0) +
+          IF(q.active_listening                   = 1, 0.125, 0) +
+          IF(q.politeness_and_no_sarcasm          = 1, 0.125, 0) +
+          IF(q.proper_grammar                     = 1, 0.125, 0) +
+          IF(q.accurate_issue_probing             = 1, 0.125, 0)
         ) END
       ) * 100, 1) AS soft_skill,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
         ELSE (
-          IF(q.proper_hold_procedure         = 1, 0.5, 0) +
-          IF(q.proper_transfer_and_language  = 1, 0.5, 0)
+          IF(q.proper_hold_procedure       = 1, 0.333, 0) +
+          IF(q.proper_transfer_and_language= 1, 0.333, 0) +
+          IF(q.dead_air_under_10_seconds   = 1, 0.334, 0)
         ) END
       ) * 100, 1) AS hold_procedure,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
         ELSE (
-          IF(q.address_recorded_completely       = 1, 0.5, 0) +
-          IF(q.correct_and_complete_information  = 1, 0.5, 0)
+          IF(q.case_escalated_correctly         = 1, 0.25, 0) +
+          IF(q.address_recorded_completely      = 1, 0.25, 0) +
+          IF(q.correct_and_complete_information = 1, 0.25, 0) +
+          IF(q.upselling_or_offers_suggested    = 1, 0.25, 0)
         ) END
       ) * 100, 1) AS resolution,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-        ELSE COALESCE(q.professionalism_maintained, 0) END
+        ELSE (
+          IF(q.further_assistance_offered = 1, 0.5, 0) +
+          IF(q.proper_call_closure        = 1, 0.5, 0)
+        ) END
       ) * 100, 1) AS closing,
       SUM(CASE WHEN
-        (CASE WHEN LOWER(TRIM(q.system_manipulation))         = 'yes' THEN 1 ELSE 0 END +
-         CASE WHEN LOWER(TRIM(q.financial_fraud))             = 'yes' THEN 1 ELSE 0 END +
-         CASE WHEN LOWER(TRIM(q.collusion))                   = 'yes' THEN 1 ELSE 0 END +
-         CASE WHEN LOWER(TRIM(q.policy_communication_failure))= 'yes' THEN 1 ELSE 0 END) = 0
+        NOT (
+          LOWER(TRIM(q.financial_fraud)) = 'yes'
+          OR LOWER(q.top_negative_words) LIKE '%scam%'
+          OR LOWER(q.top_negative_words) LIKE '%fraud%'
+          OR LOWER(q.top_negative_words) LIKE '%cheat%'
+          OR LOWER(q.top_negative_words) LIKE '%fake%'
+          OR LOWER(q.top_negative_words) LIKE '%loot%'
+        )
         AND (
           LOWER(q.sensetive_word) LIKE '%social%'   OR
           LOWER(q.sensetive_word) LIKE '%court%'    OR
@@ -370,11 +492,19 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
         )
       THEN 1 ELSE 0 END) AS social_media_court_threat,
       SUM(CASE WHEN
-        (CASE WHEN LOWER(TRIM(q.system_manipulation))         = 'yes' THEN 1 ELSE 0 END +
-         CASE WHEN LOWER(TRIM(q.financial_fraud))             = 'yes' THEN 1 ELSE 0 END +
-         CASE WHEN LOWER(TRIM(q.collusion))                   = 'yes' THEN 1 ELSE 0 END +
-         CASE WHEN LOWER(TRIM(q.policy_communication_failure))= 'yes' THEN 1 ELSE 0 END) > 0
-      THEN 1 ELSE 0 END) AS potential_scam
+        LOWER(TRIM(q.financial_fraud)) = 'yes'
+        OR LOWER(q.top_negative_words) LIKE '%scam%'
+        OR LOWER(q.top_negative_words) LIKE '%fraud%'
+        OR LOWER(q.top_negative_words) LIKE '%cheat%'
+        OR LOWER(q.top_negative_words) LIKE '%fake%'
+        OR LOWER(q.top_negative_words) LIKE '%loot%'
+      THEN 1 ELSE 0 END) AS potential_scam,
+      SUM(CASE WHEN
+        (COALESCE(q.agent_english_cuss_count,   0) +
+         COALESCE(q.agent_hindi_cuss_count,     0) +
+         COALESCE(q.customer_english_cuss_count,0) +
+         COALESCE(q.customer_hindi_cuss_count,  0)) > 0
+      THEN 1 ELSE 0 END) AS cuss_abuse_count
     FROM db_audit.call_quality_assessment q
     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
     WHERE q.CallDate BETWEEN ? AND ?
@@ -388,7 +518,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
     audit_count: 0, cq_score: null, cq_score_no_fatal: null,
     excellent: 0, good: 0, average_count: 0, below_average: 0, fatal_count: 0,
     opening_skill: null, soft_skill: null, hold_procedure: null, resolution: null, closing: null,
-    social_media_court_threat: 0, potential_scam: 0,
+    social_media_court_threat: 0, potential_scam: 0, cuss_abuse_count: 0,
   };
 
   const excellent     = Number(r.excellent);
@@ -406,9 +536,9 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
   }>(`
     SELECT
       CASE
-        WHEN length_in_sec < 60  THEN 'Short(<60sec)'
-        WHEN length_in_sec < 301 THEN 'Average(1min-5min)'
-        WHEN length_in_sec < 600 THEN 'Long(5min-10min)'
+        WHEN CAST(q.length_in_sec AS UNSIGNED) < 60  THEN 'Short(<1min)'
+        WHEN CAST(q.length_in_sec AS UNSIGNED) < 301 THEN 'Average(1min-5min)'
+        WHEN CAST(q.length_in_sec AS UNSIGNED) < 600 THEN 'Long(5min-10min)'
         ELSE 'Extremely Long(>10min)'
       END                                                                         AS category,
       COUNT(*)                                                                    AS audit_count,
@@ -422,35 +552,42 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
       AND q.length_in_sec IS NOT NULL
+      AND TRIM(q.length_in_sec) != ''
       ${clientFilter}
     GROUP BY category
     ORDER BY
       CASE category
-        WHEN 'Short(<60sec)'          THEN 1
+        WHEN 'Short(<1min)'           THEN 1
         WHEN 'Average(1min-5min)'     THEN 2
         WHEN 'Long(5min-10min)'       THEN 3
         WHEN 'Extremely Long(>10min)' THEN 4
       END
   `, params);
 
-  const acht_data: AchtRow[] = achtRaw.map(a => ({
-    category:    String(a.category),
-    audit_count: Number(a.audit_count),
-    score_pct:   Number(a.score_pct   ?? 0),
-    fatal_count: Number(a.fatal_count),
-    fatal_pct:   Number(a.fatal_pct   ?? 0),
-  }));
+  // Always include all 4 categories (fill missing with zeros so UI always shows them)
+  const ACHT_CATEGORIES = ['Short(<1min)', 'Average(1min-5min)', 'Long(5min-10min)', 'Extremely Long(>10min)'];
+  const achtMap = new Map(achtRaw.map(a => [String(a.category), a]));
+  const acht_data: AchtRow[] = ACHT_CATEGORIES.map(cat => {
+    const a = achtMap.get(cat);
+    return {
+      category:    cat,
+      audit_count: a ? Number(a.audit_count) : 0,
+      score_pct:   a ? Number(a.score_pct ?? 0) : 0,
+      fatal_count: a ? Number(a.fatal_count) : 0,
+      fatal_pct:   a ? Number(a.fatal_pct ?? 0) : 0,
+    };
+  });
 
   const opening_skill  = Number(r.opening_skill  ?? 0);
   const soft_skill     = Number(r.soft_skill     ?? 0);
   const hold_procedure = Number(r.hold_procedure ?? 0);
   const resolution     = Number(r.resolution     ?? 0);
   const closing        = Number(r.closing        ?? 0);
-  const avg_score      = Number(((opening_skill + soft_skill + hold_procedure + resolution + closing) / 5).toFixed(1));
+  const avg_score      = Number(r.cq_score ?? 0);
 
   // ── Negative signal categorisation ──────────────────────────────────────────
   const negRows = await querySource<{ neg_cat: string; cnt: number }>(`
-    SELECT ${NEG_CAT} AS neg_cat, COUNT(*) AS cnt
+    SELECT ${NEG_CAT_EXPR} AS neg_cat, COUNT(*) AS cnt
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -483,6 +620,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
     frustration_count:          negMap['Frustration'] ?? 0,
     threat_count:               negMap['Threat']      ?? 0,
     abuse_count:                negMap['Abuse']       ?? 0,
+    cuss_abuse_count:           Number(r.cuss_abuse_count),
     slang_count:                negMap['Slang']       ?? 0,
     sarcasm_count:              negMap['Sarcasm']     ?? 0,
     pie_data: [
@@ -569,10 +707,14 @@ export async function getDailyScores(filters: InboundQualityFilters): Promise<Da
 // ─── New Alert Field CASE expression ─────────────────────────────────────────
 // Priority: Scam Leads > Social Media/Court Threat > Top Negative Signals > Not
 const ALERT_FIELD = `CASE
-  WHEN (CASE WHEN LOWER(TRIM(q.system_manipulation))         = 'yes' THEN 1 ELSE 0 END +
-        CASE WHEN LOWER(TRIM(q.financial_fraud))             = 'yes' THEN 1 ELSE 0 END +
-        CASE WHEN LOWER(TRIM(q.collusion))                   = 'yes' THEN 1 ELSE 0 END +
-        CASE WHEN LOWER(TRIM(q.policy_communication_failure))= 'yes' THEN 1 ELSE 0 END) > 0
+  WHEN (
+    LOWER(TRIM(q.financial_fraud)) = 'yes'
+    OR LOWER(q.top_negative_words) LIKE '%scam%'
+    OR LOWER(q.top_negative_words) LIKE '%fraud%'
+    OR LOWER(q.top_negative_words) LIKE '%cheat%'
+    OR LOWER(q.top_negative_words) LIKE '%fake%'
+    OR LOWER(q.top_negative_words) LIKE '%loot%'
+  )
   THEN 'Scam Leads'
   WHEN (LOWER(q.sensetive_word) LIKE '%court%'    OR
         LOWER(q.sensetive_word) LIKE '%consumer%' OR
@@ -635,10 +777,14 @@ export async function getScenarios(filters: InboundQualityFilters): Promise<Scen
 
 // ─── Sensitive Word Analysis constants ───────────────────────────────────────
 // Rows that have any sensitive word but are NOT scam leads
-const SCAM_EXCLUSION = `(CASE WHEN LOWER(TRIM(q.system_manipulation))='yes' THEN 1 ELSE 0 END +
-    CASE WHEN LOWER(TRIM(q.financial_fraud))='yes' THEN 1 ELSE 0 END +
-    CASE WHEN LOWER(TRIM(q.collusion))='yes' THEN 1 ELSE 0 END +
-    CASE WHEN LOWER(TRIM(q.policy_communication_failure))='yes' THEN 1 ELSE 0 END) = 0`;
+const SCAM_EXCLUSION = `NOT (
+    LOWER(TRIM(q.financial_fraud)) = 'yes'
+    OR LOWER(q.top_negative_words) LIKE '%scam%'
+    OR LOWER(q.top_negative_words) LIKE '%fraud%'
+    OR LOWER(q.top_negative_words) LIKE '%cheat%'
+    OR LOWER(q.top_negative_words) LIKE '%fake%'
+    OR LOWER(q.top_negative_words) LIKE '%loot%'
+  )`;
 
 const HAS_SENSITIVE_WORD = `(LOWER(q.sensetive_word) LIKE '%akash%'
     OR LOWER(q.sensetive_word) LIKE '%social%'
@@ -714,6 +860,385 @@ export async function getSocialMediaThreats(filters: InboundQualityFilters): Pro
   }));
 }
 
+export interface SocialThreatDetailRow {
+  lead_id:      string;
+  agent_id:     string;
+  threat_word:  string;
+  threat_type:  'Social Media' | 'Court & Legal';
+  scenario:     string;
+  scenario1:    string;
+  date:         string;
+  client_id:    string;
+}
+
+export async function getSocialThreatDetail(
+  filters: InboundQualityFilters,
+): Promise<{ total: number; rows: SocialThreatDetailRow[] }> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  const rows = await querySource<{
+    lead_id: string; agent_id: string; threat_word: string;
+    threat_type: string; scenario: string; scenario1: string;
+    date: string; client_id: string;
+  }>(`
+    SELECT
+      COALESCE(q.lead_id, '')                                                 AS lead_id,
+      q.User                                                                  AS agent_id,
+      COALESCE(NULLIF(TRIM(q.sensetive_word), ''), '—')                       AS threat_word,
+      CASE
+        WHEN LOWER(q.sensetive_word) LIKE '%social%' THEN 'Social Media'
+        ELSE 'Court & Legal'
+      END                                                                     AS threat_type,
+      COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')                     AS scenario,
+      COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')                     AS scenario1,
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                              AS date,
+      q.ClientId                                                              AS client_id
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+      AND NOT (
+        LOWER(TRIM(q.financial_fraud)) = 'yes'
+        OR LOWER(q.top_negative_words) LIKE '%scam%'
+        OR LOWER(q.top_negative_words) LIKE '%fraud%'
+        OR LOWER(q.top_negative_words) LIKE '%cheat%'
+        OR LOWER(q.top_negative_words) LIKE '%fake%'
+        OR LOWER(q.top_negative_words) LIKE '%loot%'
+      )
+      AND (
+        LOWER(q.sensetive_word) LIKE '%social%'   OR
+        LOWER(q.sensetive_word) LIKE '%court%'    OR
+        LOWER(q.sensetive_word) LIKE '%consumer%' OR
+        LOWER(q.sensetive_word) LIKE '%legal%'    OR
+        LOWER(q.sensetive_word) LIKE '%fir%'
+      )
+    ORDER BY q.CallDate DESC
+    LIMIT 500
+  `, params);
+
+  return {
+    total: rows.length,
+    rows: rows.map(r => ({
+      lead_id:     String(r.lead_id),
+      agent_id:    String(r.agent_id),
+      threat_word: String(r.threat_word),
+      threat_type: (r.threat_type === 'Social Media' ? 'Social Media' : 'Court & Legal') as SocialThreatDetailRow['threat_type'],
+      scenario:    String(r.scenario),
+      scenario1:   String(r.scenario1),
+      date:        String(r.date),
+      client_id:   String(r.client_id),
+    })),
+  };
+}
+
+// ─── Top Positive Signals ─────────────────────────────────────────────────────
+export interface PosKeywordRow {
+  keyword:        string;
+  customer_count: number;
+  agent_count:    number;
+  total:          number;
+}
+
+export async function getTopPositiveSignals(filters: InboundQualityFilters): Promise<PosKeywordRow[]> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  const rows = await querySource<{ keyword: string; customer_count: number; agent_count: number }>(`
+    SELECT
+      kw.keyword,
+      SUM(CASE WHEN LOWER(q.top_positive_words)       LIKE CONCAT('%', kw.pattern, '%') THEN 1 ELSE 0 END) AS customer_count,
+      SUM(CASE WHEN LOWER(q.top_positive_words_agent) LIKE CONCAT('%', kw.pattern, '%') THEN 1 ELSE 0 END) AS agent_count
+    FROM db_audit.call_quality_assessment q
+    CROSS JOIN (
+      SELECT 'Thank You'     AS keyword, 'thank'      AS pattern UNION ALL
+      SELECT 'Appreciate',               'appreciat'             UNION ALL
+      SELECT 'Great',                    'great'                 UNION ALL
+      SELECT 'Good',                     'good'                  UNION ALL
+      SELECT 'Help / Assist',            'help'                  UNION ALL
+      SELECT 'Understanding',            'understand'            UNION ALL
+      SELECT 'Patience',                 'patient'               UNION ALL
+      SELECT 'Happy',                    'happy'                 UNION ALL
+      SELECT 'Satisfied',                'satisf'                UNION ALL
+      SELECT 'Excellent',                'excellent'             UNION ALL
+      SELECT 'Nice',                     'nice'                  UNION ALL
+      SELECT 'Wonderful',                'wonder'
+    ) kw
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+    GROUP BY kw.keyword, kw.pattern
+    ORDER BY (customer_count + agent_count) DESC
+  `, params);
+
+  return rows
+    .map(r => ({
+      keyword:        String(r.keyword),
+      customer_count: Number(r.customer_count),
+      agent_count:    Number(r.agent_count),
+      total:          Number(r.customer_count) + Number(r.agent_count),
+    }))
+    .filter(r => r.total > 0)
+    .sort((a, b) => b.total - a.total);
+}
+
+export interface PosKeywordPhraseRow {
+  source: 'Customer' | 'Agent';
+  phrase: string;
+  count:  number;
+}
+
+export async function getPosKeywordPhrases(
+  filters: InboundQualityFilters,
+  pattern: string,
+): Promise<PosKeywordPhraseRow[]> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const likePattern  = `%${pattern.toLowerCase()}%`;
+  const params       = [startDate, endDate, ...(clientId ? [clientId] : []), likePattern];
+
+  const [custRows, agentRows] = await Promise.all([
+    querySource<{ phrase: string; cnt: number }>(`
+      SELECT TRIM(q.top_positive_words) AS phrase, COUNT(*) AS cnt
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+        ${clientFilter}
+        AND LOWER(q.top_positive_words) LIKE ?
+        AND TRIM(q.top_positive_words) NOT IN ('','None','N/A')
+      GROUP BY phrase ORDER BY cnt DESC LIMIT 12
+    `, params),
+    querySource<{ phrase: string; cnt: number }>(`
+      SELECT TRIM(q.top_positive_words_agent) AS phrase, COUNT(*) AS cnt
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+        ${clientFilter}
+        AND LOWER(q.top_positive_words_agent) LIKE ?
+        AND TRIM(q.top_positive_words_agent) NOT IN ('','None','N/A','Not applicable','Not Available')
+      GROUP BY phrase ORDER BY cnt DESC LIMIT 12
+    `, params),
+  ]);
+
+  return [
+    ...custRows.map(r  => ({ source: 'Customer' as const, phrase: String(r.phrase), count: Number(r.cnt) })),
+    ...agentRows.map(r => ({ source: 'Agent'    as const, phrase: String(r.phrase), count: Number(r.cnt) })),
+  ].sort((a, b) => b.count - a.count);
+}
+
+// ─── Transcript fetch ─────────────────────────────────────────────────────────
+export async function getTranscript(leadId: string): Promise<{ lead_id: string; agent_id: string; date: string; transcript: string } | null> {
+  const rows = await querySource<{ lead_id: string; agent_id: string; date: string; transcript: string }>(`
+    SELECT
+      COALESCE(lead_id, '')                               AS lead_id,
+      COALESCE(NULLIF(TRIM(User), ''), 'Unknown')         AS agent_id,
+      DATE_FORMAT(CallDate, '%Y-%m-%d %H:%i')             AS date,
+      COALESCE(Transcribe_Text, '')                       AS transcript
+    FROM db_audit.call_quality_assessment
+    WHERE lead_id = ?
+    LIMIT 1
+  `, [leadId]);
+  if (!rows.length) return null;
+  const r = rows[0];
+  return {
+    lead_id:    String(r.lead_id),
+    agent_id:   String(r.agent_id),
+    date:       String(r.date),
+    transcript: String(r.transcript),
+  };
+}
+
+// ─── Score Component Detail ───────────────────────────────────────────────────
+export interface ScoreParamDetail {
+  column: string;
+  label:  string;
+  pct:    number;
+}
+export interface ScoreComponentData {
+  total:         number;
+  opening_skill: ScoreParamDetail[];
+  soft_skill:    ScoreParamDetail[];
+  hold_procedure:ScoreParamDetail[];
+  resolution:    ScoreParamDetail[];
+  closing:       ScoreParamDetail[];
+}
+
+const SCORE_LABEL: Record<string, string> = {
+  call_answered_within_5_seconds:     'Call Answered Within 5s',
+  customer_concern_acknowledged:      'Customer Concern Acknowledged',
+  professionalism_maintained:         'Professionalism Maintained',
+  assurance_or_appreciation_provided: 'Assurance / Appreciation',
+  pronunciation_and_clarity:          'Pronunciation & Clarity',
+  enthusiasm_and_no_fumbling:         'Enthusiasm & No Fumbling',
+  active_listening:                   'Active Listening',
+  politeness_and_no_sarcasm:          'Politeness & No Sarcasm',
+  proper_grammar:                     'Proper Grammar',
+  accurate_issue_probing:             'Accurate Issue Probing',
+  proper_hold_procedure:              'Proper Hold Procedure',
+  proper_transfer_and_language:       'Proper Transfer & Language',
+  dead_air_under_10_seconds:          'Dead Air Under 10s',
+  case_escalated_correctly:           'Case Escalated Correctly',
+  address_recorded_completely:        'Address Recorded Completely',
+  correct_and_complete_information:   'Correct & Complete Info',
+  upselling_or_offers_suggested:      'Upselling / Offers Suggested',
+  further_assistance_offered:         'Further Assistance Offered',
+  proper_call_closure:                'Proper Call Closure',
+};
+
+export async function getScoreComponentDetail(filters: InboundQualityFilters): Promise<ScoreComponentData> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? 'AND q.ClientId = ?' : '';
+  const params: (string | number)[] = clientId
+    ? [startDate, endDate, clientId]
+    : [startDate, endDate];
+
+  const rows = await querySource<Record<string, unknown>>(`
+    SELECT
+      COUNT(*) AS total,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.call_answered_within_5_seconds,0)     = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS call_answered_within_5_seconds,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.customer_concern_acknowledged,0)      = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS customer_concern_acknowledged,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.professionalism_maintained,0)         = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS professionalism_maintained,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.assurance_or_appreciation_provided,0) = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS assurance_or_appreciation_provided,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.pronunciation_and_clarity,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pronunciation_and_clarity,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.enthusiasm_and_no_fumbling,0)         = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS enthusiasm_and_no_fumbling,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.active_listening,0)                   = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS active_listening,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.politeness_and_no_sarcasm,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS politeness_and_no_sarcasm,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_grammar,0)                     = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_grammar,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.accurate_issue_probing,0)             = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS accurate_issue_probing,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_hold_procedure,0)              = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_hold_procedure,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_transfer_and_language,0)       = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_transfer_and_language,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.dead_air_under_10_seconds,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS dead_air_under_10_seconds,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.case_escalated_correctly,0)           = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS case_escalated_correctly,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.address_recorded_completely,0)        = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS address_recorded_completely,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.correct_and_complete_information,0)   = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS correct_and_complete_information,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.upselling_or_offers_suggested,0)      = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS upselling_or_offers_suggested,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.further_assistance_offered,0)         = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS further_assistance_offered,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_call_closure,0)                = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_call_closure
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+  `, params);
+
+  const empty: ScoreComponentData = { total: 0, opening_skill: [], soft_skill: [], hold_procedure: [], resolution: [], closing: [] };
+  if (!rows.length) return empty;
+
+  const r = rows[0];
+  const p = (col: string): ScoreParamDetail => ({ column: col, label: SCORE_LABEL[col] ?? col, pct: Number(r[col] ?? 0) });
+
+  return {
+    total:          Number(r.total ?? 0),
+    opening_skill:  [
+      p('call_answered_within_5_seconds'),
+      p('customer_concern_acknowledged'),
+    ],
+    soft_skill:     [
+      p('professionalism_maintained'),
+      p('assurance_or_appreciation_provided'),
+      p('pronunciation_and_clarity'),
+      p('enthusiasm_and_no_fumbling'),
+      p('active_listening'),
+      p('politeness_and_no_sarcasm'),
+      p('proper_grammar'),
+      p('accurate_issue_probing'),
+    ],
+    hold_procedure: [
+      p('proper_hold_procedure'),
+      p('proper_transfer_and_language'),
+      p('dead_air_under_10_seconds'),
+    ],
+    resolution:     [
+      p('case_escalated_correctly'),
+      p('address_recorded_completely'),
+      p('correct_and_complete_information'),
+      p('upselling_or_offers_suggested'),
+    ],
+    closing:        [
+      p('further_assistance_offered'),
+      p('proper_call_closure'),
+    ],
+  };
+}
+
+// ─── Per-call leads for a positive keyword ───────────────────────────────────
+export interface PosKeywordLeadRow {
+  lead_id:   string;
+  agent_id:  string;
+  source:    'Customer' | 'Agent';
+  phrase:    string;
+  scenario:  string;
+  scenario1: string;
+  date:      string;
+}
+
+export async function getPosKeywordLeads(
+  filters: InboundQualityFilters,
+  pattern: string,
+): Promise<PosKeywordLeadRow[]> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND ClientId = ?' : '';
+  const likePattern  = `%${pattern.toLowerCase()}%`;
+  const params       = [startDate, endDate, ...(clientId ? [clientId] : []), likePattern];
+
+  const [custRows, agentRows] = await Promise.all([
+    querySource<{ lead_id: string; agent_id: string; phrase: string; scenario: string; scenario1: string; date: string }>(`
+      SELECT
+        COALESCE(lead_id, '')                               AS lead_id,
+        COALESCE(NULLIF(TRIM(User), ''), 'Unknown')         AS agent_id,
+        COALESCE(top_positive_words, '')                    AS phrase,
+        COALESCE(NULLIF(TRIM(scenario),  ''), 'Unknown')    AS scenario,
+        COALESCE(NULLIF(TRIM(scenario1), ''), '')           AS scenario1,
+        DATE_FORMAT(CallDate, '%Y-%m-%d')                   AS date
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ?
+        AND quality_percentage IS NOT NULL
+        ${clientFilter}
+        AND LOWER(top_positive_words) LIKE ?
+      ORDER BY CallDate DESC
+      LIMIT 200
+    `, params),
+    querySource<{ lead_id: string; agent_id: string; phrase: string; scenario: string; scenario1: string; date: string }>(`
+      SELECT
+        COALESCE(lead_id, '')                               AS lead_id,
+        COALESCE(NULLIF(TRIM(User), ''), 'Unknown')         AS agent_id,
+        COALESCE(top_positive_words_agent, '')              AS phrase,
+        COALESCE(NULLIF(TRIM(scenario),  ''), 'Unknown')    AS scenario,
+        COALESCE(NULLIF(TRIM(scenario1), ''), '')           AS scenario1,
+        DATE_FORMAT(CallDate, '%Y-%m-%d')                   AS date
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ?
+        AND quality_percentage IS NOT NULL
+        ${clientFilter}
+        AND LOWER(top_positive_words_agent) LIKE ?
+      ORDER BY CallDate DESC
+      LIMIT 200
+    `, params),
+  ]);
+
+  return [
+    ...custRows.map(r => ({
+      lead_id:   String(r.lead_id),
+      agent_id:  String(r.agent_id),
+      source:    'Customer' as const,
+      phrase:    String(r.phrase),
+      scenario:  String(r.scenario),
+      scenario1: String(r.scenario1),
+      date:      String(r.date),
+    })),
+    ...agentRows.map(r => ({
+      lead_id:   String(r.lead_id),
+      agent_id:  String(r.agent_id),
+      source:    'Agent' as const,
+      phrase:    String(r.phrase),
+      scenario:  String(r.scenario),
+      scenario1: String(r.scenario1),
+      date:      String(r.date),
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+}
+
 export async function getTopNegativeSignalDetails(filters: InboundQualityFilters): Promise<NegSignalDetailRow[]> {
   const { startDate, endDate, clientId } = filters;
   const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
@@ -723,7 +1248,7 @@ export async function getTopNegativeSignalDetails(filters: InboundQualityFilters
     SELECT
       CASE WHEN TRIM(q.scenario)  = '' OR q.scenario  IS NULL THEN 'Unknown' ELSE TRIM(q.scenario)  END AS scenario,
       CASE WHEN TRIM(q.scenario1) = '' OR q.scenario1 IS NULL THEN 'Unknown' ELSE TRIM(q.scenario1) END AS scenario1,
-      ${NEG_CAT} AS neg_signal,
+      ${NEG_CAT_EXPR} AS neg_signal,
       COUNT(*) AS cnt
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
@@ -771,6 +1296,344 @@ export async function getPotentialScams(filters: InboundQualityFilters): Promise
     count:     Number(r.cnt),
     pct:       total > 0 ? Math.round((Number(r.cnt) / total) * 1000) / 10 : 0,
   }));
+}
+
+// ─── Abuse Detail ─────────────────────────────────────────────────────────────
+
+const ABUSE_MEANING: Record<string, string> = {
+  // Hindi — Devanagari
+  'चूतिया': 'Very strong profanity',
+  'साले':   'Abusive insult (brother-in-law)',
+  'साला':   'Abusive insult (brother-in-law)',
+  'बेवकूफ': 'Idiot / Fool',
+  'बमडा':   'Abusive slang',
+  'चोर':    'Thief',
+  'गंदी':   'Dirty / Filthy',
+  'घटिया':  'Inferior / Low quality (rude)',
+  'फ़ालतू': 'Useless / Worthless',
+  'बदतमीज़ी': 'Rude behaviour',
+  'कुत्ते हो': 'You are a dog (insult)',
+  'स्कैम':   'Scam',
+  // Hindi — Romanized
+  'bevakuf':    'Idiot / Fool',
+  'bevakoof':   'Idiot / Fool',
+  'ullu':       'Owl (fool) — insult',
+  'pagal':      'Crazy / Mad',
+  'bakwass':    'Nonsense / Rubbish',
+  'saala':      'Abusive insult',
+  'saale':      'Abusive insult',
+  'chutiya':    'Very strong profanity',
+  'chor':       'Thief',
+  'harami':     'Bastard',
+  'kamina':     'Scoundrel',
+  'gadha':      'Donkey (fool)',
+  // English
+  'fuck':       'Strong profanity',
+  'fucking':    'Strong profanity',
+  'Fuck':       'Strong profanity',
+  'bullshit':   'Profanity / Nonsense',
+  'bloody':     'Mild profanity',
+  'bastard':    'Strong insult',
+  'idiot':      'Fool / Stupid',
+  'stupid':     'Foolish',
+  'damn':       'Mild profanity',
+  'shit':       'Profanity',
+  'scammer':    'Fraudster',
+  'scammo':     'Fraudster (slang)',
+  'fraud':      'Fraudster / Cheat',
+  'bogus':      'Fake / False',
+  'cheat':      'Cheater',
+  'man':        'Casual (context-dependent)',
+  'crazy':      'Crazy / Mad',
+  'third class':'Very low quality (insult)',
+};
+
+function abuseMeaning(word: string): string {
+  return ABUSE_MEANING[word.trim()] ?? ABUSE_MEANING[word.trim().toLowerCase()] ?? '—';
+}
+
+export interface AbuseDetailRow {
+  speaker:   'Agent' | 'Customer';
+  lead_id:   string;
+  agent_id:  string;
+  word:      string;
+  meaning:   string;
+  scenario:  string;
+  scenario1: string;
+  date:      string;
+  client_id: string;
+}
+
+export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ total: number; rows: AbuseDetailRow[] }> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  const [agentRows, custRows] = await Promise.all([
+    querySource<{ word: string; count: number; scenario: string; scenario1: string; user: string; lead_id: string; date: string; client_id: string }>(`
+      SELECT
+        TRIM(q.agent_hindi_cuss_words)  AS word,
+        q.agent_hindi_cuss_count        AS count,
+        COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown') AS scenario,
+        COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
+        q.User                          AS user,
+        COALESCE(q.lead_id, '')         AS lead_id,
+        DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
+        q.ClientId                      AS client_id
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+        ${clientFilter}
+        AND q.agent_hindi_cuss_count > 0
+        AND q.agent_hindi_cuss_words IS NOT NULL
+        AND TRIM(q.agent_hindi_cuss_words) != ''
+      UNION ALL
+      SELECT
+        TRIM(q.agent_english_cuss_words) AS word,
+        q.agent_english_cuss_count       AS count,
+        COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown') AS scenario,
+        COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
+        q.User AS user,
+        COALESCE(q.lead_id, '') AS lead_id,
+        DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
+        q.ClientId AS client_id
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+        ${clientFilter}
+        AND q.agent_english_cuss_count > 0
+        AND q.agent_english_cuss_words IS NOT NULL
+        AND TRIM(q.agent_english_cuss_words) != ''
+      ORDER BY date DESC
+    `, [...params, ...params]),
+
+    querySource<{ word: string; count: number; scenario: string; scenario1: string; user: string; lead_id: string; date: string; client_id: string }>(`
+      SELECT
+        TRIM(q.customer_hindi_cuss_words)  AS word,
+        q.customer_hindi_cuss_count        AS count,
+        COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown') AS scenario,
+        COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
+        q.User AS user,
+        COALESCE(q.lead_id, '') AS lead_id,
+        DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
+        q.ClientId AS client_id
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+        ${clientFilter}
+        AND q.customer_hindi_cuss_count > 0
+        AND q.customer_hindi_cuss_words IS NOT NULL
+        AND TRIM(q.customer_hindi_cuss_words) != ''
+      UNION ALL
+      SELECT
+        TRIM(q.customer_english_cuss_words) AS word,
+        q.customer_english_cuss_count       AS count,
+        COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown') AS scenario,
+        COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
+        q.User AS user,
+        COALESCE(q.lead_id, '') AS lead_id,
+        DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
+        q.ClientId AS client_id
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+        ${clientFilter}
+        AND q.customer_english_cuss_count > 0
+        AND q.customer_english_cuss_words IS NOT NULL
+        AND TRIM(q.customer_english_cuss_words) != ''
+      ORDER BY date DESC
+    `, [...params, ...params]),
+  ]);
+
+  const rows: AbuseDetailRow[] = [
+    ...agentRows.map(r => ({
+      speaker:   'Agent' as const,
+      lead_id:   String(r.lead_id ?? ''),
+      agent_id:  String(r.user),
+      word:      String(r.word),
+      meaning:   abuseMeaning(String(r.word)),
+      scenario:  String(r.scenario),
+      scenario1: String(r.scenario1),
+      date:      String(r.date),
+      client_id: String(r.client_id),
+    })),
+    ...custRows.map(r => ({
+      speaker:   'Customer' as const,
+      lead_id:   String(r.lead_id ?? ''),
+      agent_id:  String(r.user),
+      word:      String(r.word),
+      meaning:   abuseMeaning(String(r.word)),
+      scenario:  String(r.scenario),
+      scenario1: String(r.scenario1),
+      date:      String(r.date),
+      client_id: String(r.client_id),
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+
+  return { total: rows.length, rows };
+}
+
+// ─── Threat / Frustration Detail ─────────────────────────────────────────────
+
+export interface NegCallDetailRow {
+  lead_id:   string;
+  agent_id:  string;
+  word:      string;
+  scenario:  string;
+  scenario1: string;
+  date:      string;
+  client_id: string;
+}
+
+export async function getNegSignalDetail(
+  filters: InboundQualityFilters,
+  signal: 'Threat' | 'Frustration',
+): Promise<{ total: number; rows: NegCallDetailRow[] }> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [
+    startDate, endDate,
+    ...(clientId ? [clientId] : []),
+    signal,
+  ];
+
+  const rows = await querySource<{
+    lead_id: string; agent_id: string; word: string;
+    scenario: string; scenario1: string; date: string; client_id: string;
+  }>(`
+    SELECT
+      COALESCE(q.lead_id, '') AS lead_id,
+      q.User                  AS agent_id,
+      q.top_negative_words    AS word,
+      COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown') AS scenario,
+      COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
+      q.ClientId              AS client_id
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+      AND q.top_negative_words IS NOT NULL
+      AND TRIM(q.top_negative_words) != ''
+      AND LOWER(TRIM(q.top_negative_words)) != 'none'
+      AND (${NEG_CAT_EXPR}) = ?
+    ORDER BY q.CallDate DESC
+    LIMIT 500
+  `, params);
+
+  return {
+    total: rows.length,
+    rows: rows.map(r => ({
+      lead_id:   String(r.lead_id),
+      agent_id:  String(r.agent_id),
+      word:      String(r.word),
+      scenario:  String(r.scenario),
+      scenario1: String(r.scenario1),
+      date:      String(r.date),
+      client_id: String(r.client_id),
+    })),
+  };
+}
+
+// ─── Potential Scam Detail ────────────────────────────────────────────────────
+
+const SCAM_CONDITION = `(
+  LOWER(TRIM(q.financial_fraud)) = 'yes'
+  OR LOWER(q.top_negative_words) LIKE '%scam%'
+  OR LOWER(q.top_negative_words) LIKE '%fraud%'
+  OR LOWER(q.top_negative_words) LIKE '%cheat%'
+  OR LOWER(q.top_negative_words) LIKE '%fake%'
+  OR LOWER(q.top_negative_words) LIKE '%loot%'
+)`;
+
+export interface ScamFlagCounts {
+  financial_fraud: number;
+  scam_words:      number;
+}
+
+export interface ScamWordRow {
+  word:      string;
+  scenario:  string;
+  scenario1: string;
+  count:     number;
+  pct:       number;
+  lead_id?:  string;
+  agent_id?: string;
+  date?:     string;
+  flag?:     string;
+}
+
+export interface PotentialScamDetail {
+  flags:    ScamFlagCounts;
+  wordRows: ScamWordRow[];
+}
+
+export async function getPotentialScamsDetail(filters: InboundQualityFilters): Promise<PotentialScamDetail> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  const [flagRows, wordRows] = await Promise.all([
+    querySource<{ financial_fraud: string; scam_words: string }>(`
+      SELECT
+        SUM(CASE WHEN LOWER(TRIM(q.financial_fraud)) = 'yes' THEN 1 ELSE 0 END) AS financial_fraud,
+        SUM(CASE WHEN
+          LOWER(TRIM(q.financial_fraud)) != 'yes'
+          AND (
+            LOWER(q.top_negative_words) LIKE '%scam%'  OR
+            LOWER(q.top_negative_words) LIKE '%fraud%' OR
+            LOWER(q.top_negative_words) LIKE '%cheat%' OR
+            LOWER(q.top_negative_words) LIKE '%fake%'  OR
+            LOWER(q.top_negative_words) LIKE '%loot%'
+          )
+        THEN 1 ELSE 0 END) AS scam_words
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+        ${clientFilter}
+        AND ${SCAM_CONDITION}
+    `, params),
+
+    querySource<{ lead_id: string; agent_id: string; word: string; scenario: string; scenario1: string; date: string; flag: string }>(`
+      SELECT
+        COALESCE(q.lead_id, '')       AS lead_id,
+        q.User                         AS agent_id,
+        COALESCE(NULLIF(TRIM(q.top_negative_words), ''), '—') AS word,
+        COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')    AS scenario,
+        COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')    AS scenario1,
+        DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')             AS date,
+        CASE WHEN LOWER(TRIM(q.financial_fraud)) = 'yes'
+             THEN 'Financial Fraud'
+             ELSE 'Scam' END AS flag
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+        ${clientFilter}
+        AND ${SCAM_CONDITION}
+      ORDER BY q.CallDate DESC
+      LIMIT 300
+    `, params),
+  ]);
+
+  const f = flagRows[0] ?? { financial_fraud: '0', scam_words: '0' };
+
+  return {
+    flags: {
+      financial_fraud: Number(f.financial_fraud),
+      scam_words:      Number(f.scam_words),
+    },
+    wordRows: wordRows.map(r => ({
+      word:      String(r.word),
+      scenario:  String(r.scenario),
+      scenario1: String(r.scenario1),
+      count:     1,
+      pct:       0,
+      lead_id:   String(r.lead_id),
+      agent_id:  String(r.agent_id),
+      date:      String(r.date),
+      flag:      String(r.flag),
+    })),
+  };
 }
 
 // ─── Sensitive Word Analysis ───────────────────────────────────────────────────
@@ -868,7 +1731,6 @@ export interface DayWiseFatalRow {
   total_count:     number;
   total_fatal:     number;
   fatal_pct:       number;
-  null_fatal:      number;
   query_fatal:     number;
   complaint_fatal: number;
   request_fatal:   number;
@@ -947,18 +1809,19 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
 
     querySource<{
       call_date: string; total_count: number; total_fatal: number;
-      null_fatal: number; query_fatal: number; complaint_fatal: number; request_fatal: number;
+      query_fatal: number; complaint_fatal: number; request_fatal: number;
     }>(`
       SELECT
         DATE_FORMAT(q.CallDate,'%Y-%m-%d') AS call_date,
         COUNT(*) AS total_count,
-        SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS total_fatal,
-        SUM(CASE WHEN (q.scenario IS NULL OR TRIM(q.scenario)='') AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS null_fatal,
+        SUM(CASE WHEN q.quality_percentage=0 AND q.scenario IS NOT NULL AND TRIM(q.scenario)!='' THEN 1 ELSE 0 END) AS total_fatal,
         SUM(CASE WHEN TRIM(q.scenario)='Query'     AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS query_fatal,
         SUM(CASE WHEN TRIM(q.scenario)='Complaint' AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS complaint_fatal,
         SUM(CASE WHEN TRIM(q.scenario)='Request'   AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS request_fatal
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${clientFilter}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
+        AND q.scenario IS NOT NULL AND TRIM(q.scenario) != ''
+        ${clientFilter}
       GROUP BY DATE_FORMAT(q.CallDate,'%Y-%m-%d')
       HAVING total_fatal > 0 ORDER BY call_date DESC
     `, params),
@@ -1037,7 +1900,6 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
       fatal_pct:       Number(r.total_count) > 0
         ? Math.round(Number(r.total_fatal) / Number(r.total_count) * 1000) / 10
         : 0,
-      null_fatal:      Number(r.null_fatal),
       query_fatal:     Number(r.query_fatal),
       complaint_fatal: Number(r.complaint_fatal),
       request_fatal:   Number(r.request_fatal),
@@ -1406,27 +2268,28 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters): Promise
         FROM db_audit.call_quality_assessment
         WHERE CallDate BETWEEN ? AND ? ${subClient}
           AND MobileNo IS NOT NULL AND TRIM(MobileNo) != ''
+          AND quality_percentage IS NOT NULL
         GROUP BY MobileNo
-        HAVING COUNT(DISTINCT DATE(CallDate)) > 1
+        HAVING COUNT(*) > 1
       ) r ON q.MobileNo = r.MobileNo
       WHERE q.CallDate BETWEEN ? AND ? ${mainClient}
         AND q.MobileNo IS NOT NULL AND TRIM(q.MobileNo) != ''
+        AND q.quality_percentage IS NOT NULL
       GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
       ORDER BY call_date ASC
     `, [...base, ...base]),
 
-    // Grand totals
+    // Grand totals:
+    //   grand_unique = COUNT(DISTINCT MobileNo)        — first-occurrence rows (like COUNTIF=1)
+    //   grand_repeat = COUNT(*) - COUNT(DISTINCT MobileNo) — subsequent calls (like COUNTIF>1)
     querySource<{ grand_unique: number; grand_repeat: number }>(`
       SELECT
-        COUNT(DISTINCT MobileNo) AS grand_unique,
-        SUM(CASE WHEN day_cnt > 1 THEN 1 ELSE 0 END) AS grand_repeat
-      FROM (
-        SELECT MobileNo, COUNT(DISTINCT DATE(CallDate)) AS day_cnt
-        FROM db_audit.call_quality_assessment
-        WHERE CallDate BETWEEN ? AND ? ${subClient}
-          AND MobileNo IS NOT NULL AND TRIM(MobileNo) != ''
-        GROUP BY MobileNo
-      ) sub
+        COUNT(DISTINCT MobileNo)                       AS grand_unique,
+        COUNT(*) - COUNT(DISTINCT MobileNo)            AS grand_repeat
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ? ${subClient}
+        AND MobileNo IS NOT NULL AND TRIM(MobileNo) != ''
+        AND quality_percentage IS NOT NULL
     `, base),
 
     // Pivot: all phones × all dates (call count per combination)
@@ -1438,6 +2301,7 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters): Promise
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? ${mainClient}
         AND q.MobileNo IS NOT NULL AND TRIM(q.MobileNo) != ''
+        AND q.quality_percentage IS NOT NULL
       GROUP BY q.MobileNo, DATE_FORMAT(q.CallDate, '%Y-%m-%d')
       ORDER BY q.MobileNo ASC, call_date ASC
     `, base),
@@ -1484,6 +2348,48 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters): Promise
     pivot_dates,
     pivot_rows,
   };
+}
+
+// ─── Repeat Call Detail (pivot cell drill-down) ───────────────────────────────
+
+export interface RepeatCallDetailRow {
+  CallDate:           string;
+  scenario:           string;
+  scenario1:          string;
+  quality_percentage: number;
+}
+
+export async function getRepeatCallDetail(
+  filters: InboundQualityFilters & { mobileNo: string; callDate?: string }
+): Promise<RepeatCallDetailRow[]> {
+  const { startDate, endDate, clientId, mobileNo, callDate } = filters;
+  const params: (string | number)[] = [startDate, endDate, mobileNo];
+  let extra = '';
+  if (clientId) { extra += ' AND q.ClientId = ?'; params.push(clientId); }
+  if (callDate) { extra += ' AND DATE(q.CallDate) = ?'; params.push(callDate); }
+
+  const rows = await querySource<{
+    CallDate: string; scenario: string; scenario1: string; quality_percentage: number;
+  }>(`
+    SELECT
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d')                         AS CallDate,
+      COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')          AS scenario,
+      COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')          AS scenario1,
+      COALESCE(q.quality_percentage, 0)                           AS quality_percentage
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.MobileNo = ?
+      AND q.quality_percentage IS NOT NULL
+      ${extra}
+    ORDER BY q.CallDate ASC
+  `, params);
+
+  return rows.map(r => ({
+    CallDate:           String(r.CallDate),
+    scenario:           String(r.scenario),
+    scenario1:          String(r.scenario1),
+    quality_percentage: Number(r.quality_percentage),
+  }));
 }
 
 // ─── Quality Parameters ────────────────────────────────────────────────────────
@@ -1703,6 +2609,60 @@ export interface AgentAuditBandRow {
   bq_count:    number;
 }
 
+// ─── Score Band Detail (agent × scenario breakdown for a given score band) ────
+
+export interface BandDetailRow {
+  agent:     string;
+  scenario:  string;
+  count:     number;
+  avg_score: number;
+}
+
+export async function getBandDetail(
+  filters: InboundQualityFilters & { band?: string; agentId?: string }
+): Promise<BandDetailRow[]> {
+  const { startDate, endDate, clientId, band, agentId } = filters;
+  const params: (string | number)[] = [startDate, endDate];
+
+  const bandCondition =
+    band === 'excellent'     ? 'q.quality_percentage >= 98'
+    : band === 'good'        ? 'q.quality_percentage >= 90 AND q.quality_percentage < 98'
+    : band === 'average'     ? 'q.quality_percentage >= 85 AND q.quality_percentage < 90'
+    : band === 'below_average' ? 'q.quality_percentage > 0 AND q.quality_percentage < 85'
+    : band === 'fatal'       ? 'q.quality_percentage = 0'
+    : band === 'no_fatal'    ? 'q.quality_percentage > 0'
+    : 'q.quality_percentage IS NOT NULL';
+
+  let extra = '';
+  if (clientId) { extra += ' AND q.ClientId = ?'; params.push(clientId); }
+  if (agentId)  { extra += ' AND TRIM(q.User) = ?'; params.push(agentId); }
+
+  const rows = await querySource<{
+    agent: string; scenario: string; count: number; avg_score: number | null;
+  }>(`
+    SELECT
+      COALESCE(NULLIF(TRIM(q.User),     ''), 'Unknown') AS agent,
+      COALESCE(NULLIF(TRIM(q.scenario), ''), 'Unknown') AS scenario,
+      COUNT(*)                                           AS count,
+      ROUND(AVG(q.quality_percentage),  1)              AS avg_score
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      AND (${bandCondition})
+      ${extra}
+    GROUP BY q.User, q.scenario
+    ORDER BY count DESC
+    LIMIT 300
+  `, params);
+
+  return rows.map(r => ({
+    agent:     String(r.agent),
+    scenario:  String(r.scenario),
+    count:     Number(r.count),
+    avg_score: parseFloat(String(r.avg_score ?? 0)) || 0,
+  }));
+}
+
 export async function getAgentAuditBandSummary(filters: InboundQualityFilters): Promise<AgentAuditBandRow[]> {
   const { startDate, endDate, clientId } = filters;
   const params: (string | number)[] = [startDate, endDate];
@@ -1740,4 +2700,274 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters): 
     mq_count:    Number(r.mq_count) || 0,
     bq_count:    Number(r.bq_count) || 0,
   }));
+}
+
+// ─── Raw Data Export ──────────────────────────────────────────────────────────
+
+export interface RawDataRow {
+  CallDate: string;
+  User: string;
+  ClientId: string;
+  MobileNo: string;
+  scenario: string;
+  scenario1: string;
+  quality_percentage: number;
+  top_negative_words: string;
+  call_answered_within_5_seconds: string;
+  customer_concern_acknowledged: string;
+  professionalism_maintained: string;
+  assurance_or_appreciation_provided: string;
+  pronunciation_and_clarity: string;
+  enthusiasm_and_no_fumbling: string;
+  active_listening: string;
+  politeness_and_no_sarcasm: string;
+  proper_grammar: string;
+  accurate_issue_probing: string;
+  proper_hold_procedure: string;
+  proper_transfer_and_language: string;
+  dead_air_under_10_seconds: string;
+  case_escalated_correctly: string;
+  address_recorded_completely: string;
+  correct_and_complete_information: string;
+  upselling_or_offers_suggested: string;
+  further_assistance_offered: string;
+  proper_call_closure: string;
+  express_empathy: string;
+}
+
+export async function getRawData(filters: InboundQualityFilters): Promise<RawDataRow[]> {
+  const { startDate, endDate, clientId } = filters;
+  const params: (string | number)[] = [startDate, endDate];
+  const extra = clientId ? ' AND q.ClientId = ?' : '';
+  if (clientId) params.push(clientId);
+
+  const rows = await querySource<RawDataRow>(`
+    SELECT
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d')                         AS CallDate,
+      COALESCE(NULLIF(TRIM(q.User),''), 'Unknown')                AS User,
+      COALESCE(q.ClientId, '')                                    AS ClientId,
+      COALESCE(q.MobileNo, '')                                    AS MobileNo,
+      COALESCE(NULLIF(TRIM(q.scenario),''), 'Unknown')            AS scenario,
+      COALESCE(NULLIF(TRIM(q.scenario1),''), 'Unknown')           AS scenario1,
+      COALESCE(q.quality_percentage, 0)                           AS quality_percentage,
+      COALESCE(q.top_negative_words, '')                          AS top_negative_words,
+      COALESCE(q.call_answered_within_5_seconds, '')              AS call_answered_within_5_seconds,
+      COALESCE(q.customer_concern_acknowledged, '')               AS customer_concern_acknowledged,
+      COALESCE(q.professionalism_maintained, '')                  AS professionalism_maintained,
+      COALESCE(q.assurance_or_appreciation_provided, '')          AS assurance_or_appreciation_provided,
+      COALESCE(q.pronunciation_and_clarity, '')                   AS pronunciation_and_clarity,
+      COALESCE(q.enthusiasm_and_no_fumbling, '')                  AS enthusiasm_and_no_fumbling,
+      COALESCE(q.active_listening, '')                            AS active_listening,
+      COALESCE(q.politeness_and_no_sarcasm, '')                   AS politeness_and_no_sarcasm,
+      COALESCE(q.proper_grammar, '')                              AS proper_grammar,
+      COALESCE(q.accurate_issue_probing, '')                      AS accurate_issue_probing,
+      COALESCE(q.proper_hold_procedure, '')                       AS proper_hold_procedure,
+      COALESCE(q.proper_transfer_and_language, '')                AS proper_transfer_and_language,
+      COALESCE(q.dead_air_under_10_seconds, '')                   AS dead_air_under_10_seconds,
+      COALESCE(q.case_escalated_correctly, '')                    AS case_escalated_correctly,
+      COALESCE(q.address_recorded_completely, '')                 AS address_recorded_completely,
+      COALESCE(q.correct_and_complete_information, '')            AS correct_and_complete_information,
+      COALESCE(q.upselling_or_offers_suggested, '')               AS upselling_or_offers_suggested,
+      COALESCE(q.further_assistance_offered, '')                  AS further_assistance_offered,
+      COALESCE(q.proper_call_closure, '')                         AS proper_call_closure,
+      COALESCE(q.express_empathy, '')                             AS express_empathy
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${extra}
+    ORDER BY q.CallDate DESC
+    LIMIT 10000
+  `, params);
+
+  return rows.map(r => ({
+    CallDate:                           String(r.CallDate),
+    User:                               String(r.User),
+    ClientId:                           String(r.ClientId),
+    MobileNo:                           String(r.MobileNo),
+    scenario:                           String(r.scenario),
+    scenario1:                          String(r.scenario1),
+    quality_percentage:                 Number(r.quality_percentage),
+    top_negative_words:                 String(r.top_negative_words),
+    call_answered_within_5_seconds:     String(r.call_answered_within_5_seconds),
+    customer_concern_acknowledged:      String(r.customer_concern_acknowledged),
+    professionalism_maintained:         String(r.professionalism_maintained),
+    assurance_or_appreciation_provided: String(r.assurance_or_appreciation_provided),
+    pronunciation_and_clarity:          String(r.pronunciation_and_clarity),
+    enthusiasm_and_no_fumbling:         String(r.enthusiasm_and_no_fumbling),
+    active_listening:                   String(r.active_listening),
+    politeness_and_no_sarcasm:          String(r.politeness_and_no_sarcasm),
+    proper_grammar:                     String(r.proper_grammar),
+    accurate_issue_probing:             String(r.accurate_issue_probing),
+    proper_hold_procedure:              String(r.proper_hold_procedure),
+    proper_transfer_and_language:       String(r.proper_transfer_and_language),
+    dead_air_under_10_seconds:          String(r.dead_air_under_10_seconds),
+    case_escalated_correctly:           String(r.case_escalated_correctly),
+    address_recorded_completely:        String(r.address_recorded_completely),
+    correct_and_complete_information:   String(r.correct_and_complete_information),
+    upselling_or_offers_suggested:      String(r.upselling_or_offers_suggested),
+    further_assistance_offered:         String(r.further_assistance_offered),
+    proper_call_closure:                String(r.proper_call_closure),
+    express_empathy:                    String(r.express_empathy),
+  }));
+}
+
+// ─── Agent Master ──────────────────────────────────────────────────────────────
+
+export interface AgentMasterRow {
+  masId:     string;
+  agentName: string;
+  lob:       string;
+}
+
+export async function getAgentMaster(): Promise<AgentMasterRow[]> {
+  const rows = await querySource<{ MasId: string; AgentName: string; Lob: string }>(`
+    SELECT MasId, AgentName, Lob
+    FROM shivamgiri.AgentsMaster
+    ORDER BY AgentName ASC
+  `);
+  return rows.map(r => ({
+    masId:     String(r.MasId),
+    agentName: String(r.AgentName),
+    lob:       String(r.Lob ?? ''),
+  }));
+}
+
+export interface MissingAgentRow {
+  masId:       string;
+  audit_count: number;
+}
+
+export async function getMissingAgents(filters: InboundQualityFilters): Promise<MissingAgentRow[]> {
+  const { startDate, endDate, clientId } = filters;
+  const params: (string | number)[] = [startDate, endDate];
+  const extra = clientId ? ' AND q.ClientId = ?' : '';
+  if (clientId) params.push(clientId);
+
+  const rows = await querySource<{ masId: string; audit_count: number }>(`
+    SELECT
+      q.User                AS masId,
+      COUNT(*)              AS audit_count
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN shivamgiri.AgentsMaster am ON am.MasId = q.User
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      AND q.User IS NOT NULL AND TRIM(q.User) != ''
+      AND am.MasId IS NULL
+      ${extra}
+    GROUP BY q.User
+    ORDER BY audit_count DESC
+  `, params);
+
+  return rows.map(r => ({
+    masId:       String(r.masId),
+    audit_count: Number(r.audit_count),
+  }));
+}
+
+export async function insertAgentMaster(data: {
+  masId: string; agentName: string; lob: string; process?: string;
+}): Promise<void> {
+  await querySource(`
+    INSERT INTO shivamgiri.AgentsMaster (MasId, AgentName, Lob, CreatedAt)
+    VALUES (?, ?, ?, NOW())
+    ON DUPLICATE KEY UPDATE AgentName = VALUES(AgentName), Lob = VALUES(Lob)
+  `, [data.masId, data.agentName, data.lob]);
+}
+
+// ─── Fatal Calls List ─────────────────────────────────────────────────────────
+export interface FatalCallItem {
+  lead_id:        string;
+  agent_id:       string;
+  call_date:      string;
+  scenario:       string;
+  scenario1:      string;
+  failed_params:  string[];
+  negative_words: string;
+}
+
+const FATAL_PARAM_LABELS: Record<string, string> = {
+  call_answered_within_5_seconds:     'Call Answered Within 5s',
+  customer_concern_acknowledged:      'Customer Concern Acknowledged',
+  professionalism_maintained:         'Professionalism Maintained',
+  assurance_or_appreciation_provided: 'Assurance / Appreciation',
+  pronunciation_and_clarity:          'Pronunciation & Clarity',
+  enthusiasm_and_no_fumbling:         'Enthusiasm & No Fumbling',
+  active_listening:                   'Active Listening',
+  politeness_and_no_sarcasm:          'Politeness & No Sarcasm',
+  proper_grammar:                     'Proper Grammar',
+  accurate_issue_probing:             'Accurate Issue Probing',
+  proper_hold_procedure:              'Proper Hold Procedure',
+  proper_transfer_and_language:       'Proper Transfer & Language',
+  dead_air_under_10_seconds:          'Dead Air Under 10s',
+  case_escalated_correctly:           'Case Escalated Correctly',
+  address_recorded_completely:        'Address Recorded Completely',
+  correct_and_complete_information:   'Correct & Complete Info',
+  upselling_or_offers_suggested:      'Upselling / Offers Suggested',
+  further_assistance_offered:         'Further Assistance Offered',
+  proper_call_closure:                'Proper Call Closure',
+};
+
+export async function getFatalCallsList(filters: InboundQualityFilters): Promise<FatalCallItem[]> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  type RawRow = {
+    lead_id: string; agent_id: string; call_date: string;
+    scenario: string; scenario1: string; negative_words: string;
+    [key: string]: unknown;
+  };
+
+  const rows = await querySource<RawRow>(`
+    SELECT
+      COALESCE(q.lead_id, '')                                     AS lead_id,
+      COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown')               AS agent_id,
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                   AS call_date,
+      COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')          AS scenario,
+      COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')          AS scenario1,
+      COALESCE(q.top_negative_words, '')                          AS negative_words,
+      COALESCE(q.call_answered_within_5_seconds,     0) AS call_answered_within_5_seconds,
+      COALESCE(q.customer_concern_acknowledged,      0) AS customer_concern_acknowledged,
+      COALESCE(q.professionalism_maintained,         0) AS professionalism_maintained,
+      COALESCE(q.assurance_or_appreciation_provided, 0) AS assurance_or_appreciation_provided,
+      COALESCE(q.pronunciation_and_clarity,          0) AS pronunciation_and_clarity,
+      COALESCE(q.enthusiasm_and_no_fumbling,         0) AS enthusiasm_and_no_fumbling,
+      COALESCE(q.active_listening,                   0) AS active_listening,
+      COALESCE(q.politeness_and_no_sarcasm,          0) AS politeness_and_no_sarcasm,
+      COALESCE(q.proper_grammar,                     0) AS proper_grammar,
+      COALESCE(q.accurate_issue_probing,             0) AS accurate_issue_probing,
+      COALESCE(q.proper_hold_procedure,              0) AS proper_hold_procedure,
+      COALESCE(q.proper_transfer_and_language,       0) AS proper_transfer_and_language,
+      COALESCE(q.dead_air_under_10_seconds,          0) AS dead_air_under_10_seconds,
+      COALESCE(q.case_escalated_correctly,           0) AS case_escalated_correctly,
+      COALESCE(q.address_recorded_completely,        0) AS address_recorded_completely,
+      COALESCE(q.correct_and_complete_information,   0) AS correct_and_complete_information,
+      COALESCE(q.upselling_or_offers_suggested,      0) AS upselling_or_offers_suggested,
+      COALESCE(q.further_assistance_offered,         0) AS further_assistance_offered,
+      COALESCE(q.proper_call_closure,                0) AS proper_call_closure
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage = 0
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+    ORDER BY q.CallDate DESC
+    LIMIT 300
+  `, params);
+
+  const paramKeys = Object.keys(FATAL_PARAM_LABELS);
+
+  return rows.map(r => {
+    const failed = paramKeys
+      .filter(k => Number(r[k]) === 0)
+      .map(k => FATAL_PARAM_LABELS[k]);
+    return {
+      lead_id:        String(r.lead_id),
+      agent_id:       String(r.agent_id),
+      call_date:      String(r.call_date),
+      scenario:       String(r.scenario),
+      scenario1:      String(r.scenario1),
+      failed_params:  failed,
+      negative_words: String(r.negative_words),
+    };
+  });
 }

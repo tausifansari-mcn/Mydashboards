@@ -78,3 +78,37 @@ export async function getAgentNPSCSAT(req: Request, res: Response) {
     res.status(500).json({ message: msg });
   }
 }
+
+export async function getAgentNPS(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getAgentNPS(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getMissingAgents(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getOutboundMissingAgents(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function insertAgentMaster(req: Request, res: Response) {
+  try {
+    const { agentId, agentName, lob } = req.body as { agentId: string; agentName: string; lob?: string };
+    if (!agentId || !agentName) { res.status(400).json({ message: 'agentId and agentName required' }); return; }
+    await svc.insertAgentMaster({ masId: agentId, agentName, lob: lob ?? 'Outbound' });
+    res.json({ success: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}

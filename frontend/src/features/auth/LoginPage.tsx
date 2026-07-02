@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, LayoutDashboard, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/axios';
 import WeatherBackground from './WeatherBackground';
@@ -47,12 +47,12 @@ export default function LoginPage() {
             <motion.div
               initial={{ scale: 0.8 }} animate={{ scale: 1 }}
               transition={{ delay: 0.1, type: 'spring', stiffness: 200 }}
-              className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary shadow-lg shadow-primary/30"
+              className="mx-auto mb-4 flex items-center justify-center"
             >
-              <LayoutDashboard className="h-7 w-7 text-white" />
+              <img src="/Logo.png" alt="MAS Logo" className="h-20 w-auto object-contain drop-shadow-md" />
             </motion.div>
             <h1 className="text-xl font-bold text-slate-900">My Dashboard</h1>
-            <p className="mt-1 text-sm text-slate-500">Mas CallNet Analytics</p>
+            <p className="mt-1 text-sm font-semibold" style={{ color: '#1565C0' }}>Mas CallNet Analytics</p>
           </div>
 
           {error && (

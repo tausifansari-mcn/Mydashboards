@@ -10,6 +10,7 @@ import {
   ChevronDown, X, Download, Maximize2, FileDown,
 } from 'lucide-react';
 import api from '@/lib/axios';
+import { useProcessStore } from '@/store/processStore';
 
 // ─── Chart height context (normal vs expanded) ───────────────────────────────
 const ChartHeightCtx = createContext(260);
@@ -68,7 +69,7 @@ function downloadChartPNG(containerRef: React.RefObject<HTMLDivElement | null>, 
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#1E293B';
+  ctx.fillStyle = '#F1F5F9';
   ctx.fillRect(0, 0, w, h);
   const img = new Image();
   const url = URL.createObjectURL(new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' }));
@@ -96,13 +97,13 @@ interface ProjectMeta {
 }
 
 const PROJECT_META: ProjectMeta[] = [
-  { key: 'gnc',         name: 'GNC',          icon: '🛒', color: '#2E86C1', mandate: 8,  required: 6,  hasFCR: false },
-  { key: 'bellavita',   name: 'Bellavita',     icon: '🌸', color: '#E67E22', mandate: 14, required: 12, hasFCR: false },
-  { key: 'clovia',      name: 'Clovia',        icon: '👗', color: '#27AE60', mandate: 7,  required: 6,  hasFCR: false },
-  { key: 'neemans',     name: "Neemans",       icon: '👟', color: '#8E44AD', mandate: 10, required: 10, hasFCR: true  },
-  { key: 'viega',       name: 'Viega',         icon: '🚰', color: '#E74C3C', mandate: 2,  required: 2,  hasFCR: false },
-  { key: 'exicom',      name: 'Exicom',        icon: '⚡', color: '#3498DB', mandate: 5,  required: 5,  hasFCR: false },
-  { key: 'dubangladesh',name: 'DU Bangladesh', icon: '🇧🇩', color: '#F39C12', mandate: 3,  required: 3,  hasFCR: false },
+  { key: 'gnc',         name: 'GNC',          icon: '🛒', color: '#CE112D', mandate: 8,  required: 6,  hasFCR: false },
+  { key: 'bellavita',   name: 'Bellavita',     icon: '🌸', color: '#D4AF37', mandate: 14, required: 12, hasFCR: false },
+  { key: 'clovia',      name: 'Clovia',        icon: '👗', color: '#E40B92', mandate: 7,  required: 6,  hasFCR: false },
+  { key: 'neemans',     name: "Neemans",       icon: '👟', color: '#6B8E4E', mandate: 10, required: 10, hasFCR: true  },
+  { key: 'viega',       name: 'Viega',         icon: '🚰', color: '#FFD100', mandate: 2,  required: 2,  hasFCR: false },
+  { key: 'exicom',      name: 'Exicom',        icon: '⚡', color: '#003366', mandate: 5,  required: 5,  hasFCR: false },
+  { key: 'dubangladesh',name: 'DU Bangladesh', icon: '🇧🇩', color: '#003D6B', mandate: 3,  required: 3,  hasFCR: false },
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -175,8 +176,8 @@ function deficitColor(d: number): string { return d <= 0 ? COLOR_GREEN : COLOR_R
 function Badge({ value, color, suffix = '' }: { value: string | number; color: string; suffix?: string }) {
   return (
     <span
-      className="inline-block px-1.5 py-0.5 rounded text-[11px] font-semibold tabular-nums"
-      style={{ color, background: `${color}18` }}
+      className="inline-block px-2 py-0.5 rounded-md text-[11px] font-bold tabular-nums border"
+      style={{ color, background: `${color}14`, borderColor: `${color}35` }}
     >
       {value}{suffix}
     </span>
@@ -197,23 +198,42 @@ function KPICard({
       initial={{ opacity: 0, y: 22 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.06, duration: 0.4, ease: 'easeOut' }}
+      whileHover={{ y: -4, boxShadow: `0 16px 40px ${color}28` }}
       onClick={onClick}
-      className={`relative bg-gradient-to-br from-[#1E293B] to-[#16213a] rounded-xl p-4 flex flex-col gap-1.5 border border-white/5 overflow-hidden hover:border-white/15 hover:shadow-lg transition-all duration-200 group ${onClick ? 'cursor-pointer hover:ring-1 hover:ring-white/10' : ''}`}
+      className={`relative bg-white rounded-2xl overflow-hidden group transition-colors duration-200 ${onClick ? 'cursor-pointer' : ''}`}
+      style={{ border: `2px solid ${color}30`, borderTopWidth: 4, borderTopColor: color }}
     >
-      <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
-      <div className="absolute bottom-0 left-0 right-0 h-px" style={{ background: `linear-gradient(90deg, ${color}50, transparent)` }} />
-      <div className="pl-2">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest leading-none">{label}</span>
-          <div className="p-1.5 rounded-lg group-hover:scale-110 transition-transform" style={{ backgroundColor: `${color}18` }}>
-            <div style={{ color }}>{icon}</div>
+      {/* Tinted background wash on hover */}
+      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+           style={{ background: `linear-gradient(145deg, ${color}0a, ${color}05 60%, transparent)` }} />
+
+      <div className="relative p-4">
+        {/* Top row: label + icon */}
+        <div className="flex items-start justify-between mb-3">
+          <span className="text-label leading-none pr-2">{label}</span>
+          <div className="p-2 rounded-xl shrink-0 group-hover:scale-110 transition-transform duration-200 shadow-sm"
+               style={{ backgroundColor: `${color}18`, color }}>
+            {icon}
           </div>
         </div>
-        <div className="text-2xl font-bold text-white tracking-tight leading-none">
+
+        {/* Big number */}
+        <div className="text-2xl font-bold text-slate-900 tracking-tight leading-none mb-2 tabular-nums">
           {dec > 0 ? value.toFixed(dec) : Math.round(value).toLocaleString()}{suffix}
         </div>
-        {sub && <div className="text-[11px] text-slate-500 mt-1.5">{sub}</div>}
+
+        {/* Sub text */}
+        {sub && (
+          <div className="flex items-center gap-1.5">
+            <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: color }} />
+            <span className="text-[11px] text-slate-600 font-semibold">{sub}</span>
+          </div>
+        )}
       </div>
+
+      {/* Bottom color bar */}
+      <div className="absolute bottom-0 left-0 right-0 h-[3px] opacity-60 group-hover:opacity-100 transition-opacity duration-200"
+           style={{ background: `linear-gradient(90deg, ${color}, ${color}40)` }} />
     </motion.div>
   );
 }
@@ -248,17 +268,22 @@ function SectionCard({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        className={`bg-[#1E293B] rounded-xl border border-white/5 overflow-hidden ${className}`}
+        whileHover={{ boxShadow: `0 8px 30px ${accent}18` }}
+        className={`bg-white rounded-2xl overflow-hidden transition-shadow duration-200 ${className}`}
+        style={{ border: `2px solid ${accent}22`, borderTopWidth: 4, borderTopColor: accent }}
       >
-        <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
-          <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-          <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
-          <div className="flex items-center gap-1">
+        <div className="flex items-center gap-3 px-5 py-3 border-b border-blue-600"
+             style={{ background: COLOR_BLUE }}>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="w-2 h-2 rounded-full shrink-0 bg-white" />
+            <h3 className="text-[11px] font-semibold text-white uppercase tracking-[0.06em] truncate">{title}</h3>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
             {onDownload && (
               <button
                 onClick={onDownload}
                 title="Download data as CSV"
-                className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors"
+                className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/20 transition-colors"
               >
                 <FileDown size={13} />
               </button>
@@ -266,7 +291,7 @@ function SectionCard({
             <button
               onClick={() => setExpanded(true)}
               title="Expand chart"
-              className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors"
+              className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/20 transition-colors"
             >
               <Maximize2 size={13} />
             </button>
@@ -280,35 +305,36 @@ function SectionCard({
       {/* Expanded portal — plain conditional, no AnimatePresence so portal always mounts */}
       {expanded && createPortal(
         <div
-          className="fixed inset-0 flex flex-col bg-black/85 backdrop-blur-sm p-4"
+          className="fixed inset-0 flex flex-col bg-slate-900/70 backdrop-blur-sm p-4"
           style={{ zIndex: 9999 }}
           onClick={(e) => { if (e.target === e.currentTarget) setExpanded(false); }}
         >
-          <div className="flex flex-col bg-[#1E293B] rounded-2xl border border-white/10 overflow-hidden flex-1 min-h-0">
-            <div className="flex items-center gap-2.5 px-6 py-4 border-b border-white/5 shrink-0">
-              <div className="w-1.5 h-5 rounded-full" style={{ backgroundColor: accent }} />
-              <h3 className="text-sm font-semibold text-slate-200 flex-1">{title}</h3>
+          <div className="flex flex-col bg-white rounded-2xl border border-slate-200 overflow-hidden flex-1 min-h-0">
+            <div className="flex items-center gap-2.5 px-6 py-4 border-b border-blue-600 shrink-0"
+                 style={{ background: COLOR_BLUE }}>
+              <div className="w-1.5 h-5 rounded-full bg-white" />
+              <h3 className="text-sm font-semibold text-white flex-1">{title}</h3>
               {onDownload && (
                 <button
                   onClick={onDownload}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors mr-1"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/80 hover:text-white hover:bg-white/20 transition-colors mr-1"
                 >
                   <FileDown size={13} /> Download Data
                 </button>
               )}
               <button
                 onClick={() => downloadChartPNG(expandBodyRef, title)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors mr-1"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/80 hover:text-white hover:bg-white/20 transition-colors mr-1"
               >
                 <Download size={13} /> PNG
               </button>
               <button
                 onClick={() => setExpanded(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/20 transition-colors"
                 >
-                  <X size={16} />
-                </button>
-              </div>
+                <X size={16} />
+              </button>
+            </div>
               <div className="flex-1 p-6 min-h-0 overflow-auto" ref={expandBodyRef}>
                 <ChartHeightCtx.Provider value={500}>{children}</ChartHeightCtx.Provider>
               </div>
@@ -342,19 +368,19 @@ function DrillModal({ title, accent = COLOR_BLUE, onClose, loading, onExport, ch
   }, [onClose]);
 
   return createPortal(
-    <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm" style={{ zIndex: 9998 }}
+    <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm" style={{ zIndex: 9998 }}
       onClick={onClose}>
-      <div className="bg-[#1E293B] rounded-2xl border border-white/10 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5 shrink-0">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-slate-50 shrink-0">
           <div className="w-1.5 h-5 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-          <h3 className="text-sm font-semibold text-slate-200 flex-1 truncate">{title}</h3>
+          <h3 className="text-sm font-semibold text-slate-700 flex-1 truncate">{title}</h3>
           {onExport && (
-            <button onClick={onExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors">
+            <button onClick={onExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
               <FileDown size={13} /> Export CSV
             </button>
           )}
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors ml-1">
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors ml-1">
             <X size={15} />
           </button>
         </div>
@@ -376,6 +402,7 @@ function DrillModal({ title, accent = COLOR_BLUE, onClose, loading, onExport, ch
 
 export default function InboundDashboard() {
   const now = new Date();
+  const { canAccessInboundSlug } = useProcessStore();
 
   // ── State ──
   const [projects,           setProjects]           = useState<ProjectRow[]>([]);
@@ -494,95 +521,97 @@ export default function InboundDashboard() {
     };
   }, [fetchAll]);
 
+  // ── Access-filtered views ──
+  const allowedProjects = projects.filter((p) => canAccessInboundSlug(p.key));
+  const allowedMeta     = PROJECT_META.filter((m) => canAccessInboundSlug(m.key));
+
   // ── Summary KPIs ──
-  const totalOffered  = projects.reduce((s, p) => s + p.offered,  0);
-  const totalAnswered = projects.reduce((s, p) => s + p.answered, 0);
+  const totalOffered  = allowedProjects.reduce((s, p) => s + p.offered,  0);
+  const totalAnswered = allowedProjects.reduce((s, p) => s + p.answered, 0);
   const avgAL = totalOffered > 0 ? Math.round(totalAnswered * 10000 / totalOffered) / 100 : 0;
-  const totalSlNum = projects.reduce((s, p) => s + Math.round(p.sl * p.offered / 100), 0);
+  const totalSlNum = allowedProjects.reduce((s, p) => s + Math.round(p.sl * p.offered / 100), 0);
   const avgSL = totalOffered > 0 ? Math.round(totalSlNum * 10000 / totalOffered) / 100 : 0;
 
   // ── Chart data ──
-  const alChartData     = projects.map((p) => ({ name: p.name, icon: p.icon, al: p.al,             color: p.color }));
-  const slChartData     = projects.map((p) => ({ name: p.name, icon: p.icon, sl: p.sl,             color: p.color }));
-  const volumeChartData = projects.map((p) => ({ name: p.name, color: p.color, offered: p.offered, answered: p.answered, abandoned: Math.max(0, p.offered - p.answered) }));
-  const achtChartData   = projects.map((p) => ({ name: `${p.icon} ${p.name}`, acht: p.acht,         color: p.color }));
-  const repeatChartData = projects.map((p) => ({ name: `${p.icon} ${p.name}`, repeat: parseFloat(p.repeat_pct.toFixed(1)), color: p.color }));
+  const alChartData     = allowedProjects.map((p) => ({ name: p.name, icon: p.icon, al: p.al,             color: p.color }));
+  const slChartData     = allowedProjects.map((p) => ({ name: p.name, icon: p.icon, sl: p.sl,             color: p.color }));
+  const volumeChartData = allowedProjects.map((p) => ({ name: p.name, color: p.color, offered: p.offered, answered: p.answered, abandoned: Math.max(0, p.offered - p.answered) }));
+  const achtChartData   = allowedProjects.map((p) => ({ name: `${p.icon} ${p.name}`, acht: p.acht,         color: p.color }));
+  const repeatChartData = allowedProjects.map((p) => ({ name: `${p.icon} ${p.name}`, repeat: parseFloat(p.repeat_pct.toFixed(1)), color: p.color }));
 
-  const hasAnyData = projects.some(p => p.offered > 0);
+  const hasAnyData = allowedProjects.some(p => p.offered > 0);
 
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-[#0B1120] text-white">
+    <div className="min-h-screen text-slate-900">
 
       {/* ── Sticky Header ── */}
-      <div className="sticky top-0 z-30 bg-[#0B1120]/90 backdrop-blur-md border-b border-white/5 px-6 py-3">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg" style={{ background: `${COLOR_BLUE}20` }}>
-              <Phone size={18} style={{ color: COLOR_BLUE }} />
+      <div className="page-header">
+        <div className="px-6 py-3">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 shrink-0">
+                <img src="/Logo.png" alt="MAS" className="h-8 w-8 object-contain p-0.5" />
+              </div>
+              <div>
+                <h1 className="text-sm font-bold text-slate-900 leading-none">Inbound Dashboard</h1>
+                <p className="text-[11px] font-medium text-mas-green mt-0.5">Real-time inbound call center KPIs</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-base font-bold text-white leading-none">Inbound Dashboard</h1>
-              <p className="text-[11px] text-slate-500 mt-0.5">Real-time inbound call center KPIs</p>
+
+            {/* Live indicator */}
+            <div className="flex items-center gap-2 text-[11px] text-slate-600 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: COLOR_GREEN }} />
+                <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: COLOR_GREEN }} />
+              </span>
+              <span className="text-emerald-600 font-semibold">Live</span>
+              <span className="text-slate-400">· Refresh in {countdown}s</span>
             </div>
           </div>
 
-          {/* Live indicator */}
-          <div className="flex items-center gap-2 text-[11px] text-slate-500">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: COLOR_GREEN }} />
-              <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: COLOR_GREEN }} />
-            </span>
-            Live · Auto-refresh in {countdown}s
-          </div>
-        </div>
-
-        {/* ── Filter Bar ── */}
-        <div className="flex flex-wrap items-end gap-3 mt-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] text-slate-500 uppercase tracking-wider">From</label>
+          {/* ── Filter Bar ── */}
+          <div className="filter-bar mt-3">
+            <label className="text-label">From</label>
             <input
               type="datetime-local"
               value={filters.startDate}
               onChange={(e) => setFilters((f) => ({ ...f, startDate: e.target.value }))}
-              className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 transition-colors"
+              className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-colors [color-scheme:dark]"
             />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] text-slate-500 uppercase tracking-wider">To</label>
+            <label className="text-label">To</label>
             <input
               type="datetime-local"
               value={filters.endDate}
               onChange={(e) => setFilters((f) => ({ ...f, endDate: e.target.value }))}
-              className="bg-[#1E293B] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 transition-colors"
+              className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-colors [color-scheme:dark]"
             />
-          </div>
 
-          <button
-            onClick={() => fetchAll()}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-all disabled:opacity-50"
-            style={{ background: `${COLOR_BLUE}30`, border: `1px solid ${COLOR_BLUE}50` }}
-          >
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-            Refresh
-          </button>
+            <button
+              onClick={() => fetchAll()}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-50"
+              style={{ background: COLOR_BLUE }}
+            >
+              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+              Refresh
+            </button>
 
-          <button
-            onClick={() => exportCSV(projects, filters.startDate, filters.endDate)}
-            disabled={projects.length === 0}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-all disabled:opacity-40"
-            style={{ background: `${COLOR_GREEN}25`, border: `1px solid ${COLOR_GREEN}40` }}
-            title="Export project summary as CSV"
-          >
-            <FileDown size={12} />
-            Export CSV
-          </button>
+            <button
+              onClick={() => exportCSV(projects, filters.startDate, filters.endDate)}
+              disabled={projects.length === 0}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-40"
+              style={{ background: COLOR_GREEN }}
+              title="Export project summary as CSV"
+            >
+              <FileDown size={12} />
+              Export CSV
+            </button>
 
-          <div className="ml-auto text-[11px] text-slate-600">
-            Last updated: {lastRefreshed.toLocaleTimeString()}
+            <div className="ml-auto text-[11px] text-slate-400 font-medium">
+              Last updated: {lastRefreshed.toLocaleTimeString()}
+            </div>
           </div>
         </div>
       </div>
@@ -668,7 +697,7 @@ export default function InboundDashboard() {
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-white/5">
+                <tr className="border-b border-slate-200">
                   <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap">Project</th>
                   <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">Offered</th>
                   <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">Answered</th>
@@ -688,24 +717,24 @@ export default function InboundDashboard() {
                     <td colSpan={11} className="py-8 text-center text-slate-600">No data for this period</td>
                   </tr>
                 )}
-                {projects.map((p, i) => (
+                {allowedProjects.map((p, i) => (
                   <tr
                     key={p.key}
                     onClick={() => fetchProjectDrill(p)}
-                    className={`border-b border-white/4 transition-colors hover:bg-white/[0.04] cursor-pointer ${i % 2 === 0 ? 'bg-white/[0.01]' : ''}`}
+                    className={`border-b border-slate-100 transition-colors hover:bg-slate-100 cursor-pointer ${i % 2 === 0 ? 'bg-transparent' : ''}`}
                     style={{ borderLeft: `3px solid ${p.color}` }}
                     title={`Click to deep-analyse ${p.name}`}
                   >
                     <td className="py-2.5 px-3">
                       <div className="flex items-center gap-2">
                         <span className="text-base leading-none">{p.icon}</span>
-                        <span className="font-semibold text-slate-200 whitespace-nowrap">{p.name}</span>
+                        <span className="font-bold text-slate-900 whitespace-nowrap">{p.name}</span>
                       </div>
                     </td>
-                    <td className="py-2.5 px-3 text-right text-slate-300 tabular-nums">
+                    <td className="py-2.5 px-3 text-right text-slate-800 font-semibold tabular-nums">
                       {p.offered.toLocaleString()}
                     </td>
-                    <td className="py-2.5 px-3 text-right text-slate-300 tabular-nums">
+                    <td className="py-2.5 px-3 text-right text-slate-800 font-semibold tabular-nums">
                       {p.answered.toLocaleString()}
                     </td>
                     <td className="py-2.5 px-3 text-right">
@@ -727,7 +756,7 @@ export default function InboundDashboard() {
                         <span className="text-slate-600 text-[11px]">N/A</span>
                       )}
                     </td>
-                    <td className="py-2.5 px-3 text-right text-slate-300 tabular-nums">{p.login_count}</td>
+                    <td className="py-2.5 px-3 text-right text-slate-800 font-semibold tabular-nums">{p.login_count}</td>
                     <td className="py-2.5 px-3 text-right text-slate-400 tabular-nums">{p.required}</td>
                     <td className="py-2.5 px-3 text-right">
                       {p.deficit <= 0 ? (
@@ -760,7 +789,7 @@ export default function InboundDashboard() {
         <SectionCard title="Call Volume · Offered vs Answered vs Abandoned" accent={COLOR_BLUE}
           onDownload={() => exportTableCSV(
             ['Project','Offered','Answered','Abandoned'],
-            projects.map(p => [p.name, p.offered, p.answered, Math.max(0, p.offered - p.answered)]),
+            allowedProjects.map(p => [p.name, p.offered, p.answered, Math.max(0, p.offered - p.answered)]),
             'call_volume'
           )}>
           {!hasAnyData ? (
@@ -768,14 +797,14 @@ export default function InboundDashboard() {
           ) : (
             <ChartContainer>
               <BarChart data={volumeChartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }} barCategoryGap="30%">
-                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
-                <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                <XAxis dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#94A3B8', fontSize: 10 }} />
                 <Tooltip
-                  contentStyle={{ background: '#1E293B', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                  contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                   formatter={(v: unknown, name: unknown) => [Number(v).toLocaleString(), String(name)]}
                 />
-                <Legend wrapperStyle={{ fontSize: 12, color: '#94a3b8' }} />
+                <Legend wrapperStyle={{ fontSize: 12, color: '#64748B' }} />
                 <Bar dataKey="offered"   name="Offered"   fill={COLOR_BLUE}  radius={[3,3,0,0]} />
                 <Bar dataKey="answered"  name="Answered"  fill={COLOR_GREEN} radius={[3,3,0,0]} />
                 <Bar dataKey="abandoned" name="Abandoned" fill={COLOR_RED}   radius={[3,3,0,0]} />
@@ -791,7 +820,7 @@ export default function InboundDashboard() {
           <SectionCard title="Answer Level % by Project" accent={COLOR_TEAL}
             onDownload={() => exportTableCSV(
               ['Project','AL%'],
-              projects.map(p => [p.name, p.al.toFixed(2)]),
+              allowedProjects.map(p => [p.name, p.al.toFixed(2)]),
               'answer_level_pct'
             )}>
             {!hasAnyData ? (
@@ -803,11 +832,11 @@ export default function InboundDashboard() {
                   layout="vertical"
                   margin={{ top: 4, right: 40, left: 0, bottom: 4 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" horizontal={false} />
-                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} width={90} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
+                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} width={90} />
                   <Tooltip
-                    contentStyle={{ background: '#1E293B', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                    contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                     formatter={(v: unknown) => [`${Number(v).toFixed(1)}%`, 'AL%']}
                   />
                   <ReferenceLine x={95} stroke={COLOR_GREEN} strokeDasharray="4 2" strokeWidth={1.5}
@@ -827,7 +856,7 @@ export default function InboundDashboard() {
           <SectionCard title="Service Level % by Project" accent={COLOR_AMBER}
             onDownload={() => exportTableCSV(
               ['Project','SL%'],
-              projects.map(p => [p.name, p.sl.toFixed(2)]),
+              allowedProjects.map(p => [p.name, p.sl.toFixed(2)]),
               'service_level_pct'
             )}>
             {!hasAnyData ? (
@@ -839,11 +868,11 @@ export default function InboundDashboard() {
                   layout="vertical"
                   margin={{ top: 4, right: 40, left: 0, bottom: 4 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" horizontal={false} />
-                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} width={90} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
+                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} width={90} />
                   <Tooltip
-                    contentStyle={{ background: '#1E293B', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                    contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                     formatter={(v: unknown) => [`${Number(v).toFixed(1)}%`, 'SL%']}
                   />
                   <ReferenceLine x={80} stroke={COLOR_AMBER} strokeDasharray="4 2" strokeWidth={1.5}
@@ -867,7 +896,7 @@ export default function InboundDashboard() {
           <SectionCard title="Average Call Handling Time (ACHT)" accent={COLOR_AMBER}
             onDownload={() => exportTableCSV(
               ['Project','ACHT(s)'],
-              projects.map(p => [p.name, p.acht]),
+              allowedProjects.map(p => [p.name, p.acht]),
               'acht'
             )}>
             {!hasAnyData ? (
@@ -875,11 +904,11 @@ export default function InboundDashboard() {
             ) : (
               <ChartContainer>
                 <BarChart data={achtChartData} layout="vertical" margin={{ top: 4, right: 60, left: 0, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" horizontal={false} />
-                  <XAxis type="number" domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 350)]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={(v) => `${v}s`} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} width={110} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
+                  <XAxis type="number" domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 350)]} tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v) => `${v}s`} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} width={110} />
                   <Tooltip
-                    contentStyle={{ background: '#1E293B', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                    contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                     formatter={(v: unknown) => [`${Number(v)}s`, 'ACHT']}
                   />
                   <ReferenceLine x={300} stroke={COLOR_AMBER} strokeDasharray="4 2" strokeWidth={1.5}
@@ -899,7 +928,7 @@ export default function InboundDashboard() {
           <SectionCard title="Repeat Call % by Project" accent={COLOR_RED}
             onDownload={() => exportTableCSV(
               ['Project','Repeat%'],
-              projects.map(p => [p.name, p.repeat_pct.toFixed(2)]),
+              allowedProjects.map(p => [p.name, p.repeat_pct.toFixed(2)]),
               'repeat_pct'
             )}>
             {!hasAnyData ? (
@@ -907,11 +936,11 @@ export default function InboundDashboard() {
             ) : (
               <ChartContainer>
                 <BarChart data={repeatChartData} layout="vertical" margin={{ top: 4, right: 60, left: 0, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" horizontal={false} />
-                  <XAxis type="number" domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 25)]} tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} width={110} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
+                  <XAxis type="number" domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 25)]} tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} width={110} />
                   <Tooltip
-                    contentStyle={{ background: '#1E293B', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                    contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                     formatter={(v: unknown) => [`${Number(v)}%`, 'Repeat%']}
                   />
                   <ReferenceLine x={20} stroke={COLOR_RED} strokeDasharray="4 2" strokeWidth={1.5}
@@ -932,23 +961,23 @@ export default function InboundDashboard() {
         <SectionCard title="Agent Login vs Mandate" accent={COLOR_BLUE}
           onDownload={() => exportTableCSV(
             ['Project','Login Count','Mandate','Required','Deficit'],
-            projects.map(p => [p.name, p.login_count, p.mandate, p.required, p.deficit]),
+            allowedProjects.map(p => [p.name, p.login_count, p.mandate, p.required, p.deficit]),
             'agent_login_mandate'
           )}>
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-            {projects.map((p) => {
+            {allowedProjects.map((p) => {
               const pctFilled = p.mandate > 0 ? Math.min(100, Math.round(p.login_count * 100 / p.mandate)) : 0;
               const dc = deficitColor(p.deficit);
               return (
                 <div
                   key={p.key}
-                  className="rounded-xl p-3 border border-white/5 flex flex-col gap-2"
+                  className="rounded-xl p-3 border border-slate-200 flex flex-col gap-2"
                   style={{ borderTop: `3px solid ${p.color}` }}
                 >
                   {/* Project header */}
                   <div className="flex items-center gap-1.5">
                     <span className="text-base leading-none">{p.icon}</span>
-                    <span className="text-[11px] font-semibold text-slate-300 leading-tight">{p.name}</span>
+                    <span className="text-[11px] font-semibold text-slate-600 leading-tight">{p.name}</span>
                   </div>
 
                   {/* Login count */}
@@ -958,7 +987,7 @@ export default function InboundDashboard() {
                   </div>
 
                   {/* Progress bar */}
-                  <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                  <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
                     <div
                       className="h-full rounded-full transition-all duration-700"
                       style={{ width: `${pctFilled}%`, backgroundColor: pctFilled >= 100 ? COLOR_GREEN : pctFilled >= 60 ? COLOR_AMBER : COLOR_RED }}
@@ -967,7 +996,7 @@ export default function InboundDashboard() {
 
                   {/* Deficit label */}
                   <div className="flex flex-col gap-0.5 text-[10px]">
-                    <span className="text-slate-500">Required: <span className="text-slate-300">{p.required}</span></span>
+                    <span className="text-slate-500">Required: <span className="text-slate-600">{p.required}</span></span>
                     <span style={{ color: dc }}>
                       {p.deficit <= 0
                         ? `+${Math.abs(p.deficit)} surplus`
@@ -985,7 +1014,7 @@ export default function InboundDashboard() {
           <SectionCard title="First Call Resolution — Neemans" accent={COLOR_GREEN}
             onDownload={() => exportTableCSV(
               ['Project','FCR%'],
-              projects.filter(p => p.fcr_pct !== null).map(p => [p.name, p.fcr_pct!.toFixed(2)]),
+              allowedProjects.filter(p => p.fcr_pct !== null).map(p => [p.name, p.fcr_pct!.toFixed(2)]),
               'fcr'
             )}>
             <div className="flex flex-wrap gap-6 items-center">
@@ -994,7 +1023,7 @@ export default function InboundDashboard() {
                 .map((p) => (
                   <div key={p.key} className="flex flex-col gap-1 items-center">
                     <span className="text-3xl leading-none">{p.icon}</span>
-                    <span className="text-[11px] text-slate-400">{p.name}</span>
+                    <span className="text-[11px] text-slate-600 font-semibold">{p.name}</span>
                     <div
                       className="text-3xl font-bold tabular-nums"
                       style={{ color: fcrColor(p.fcr_pct!) }}
@@ -1019,8 +1048,8 @@ export default function InboundDashboard() {
 
         {/* ── Date-wise Overall Performance Table ── */}
         {(() => {
-          const TOTAL_MANDATE  = PROJECT_META.reduce((s, m) => s + m.mandate,  0); // 49
-          const TOTAL_REQUIRED = PROJECT_META.reduce((s, m) => s + m.required, 0); // 44
+          const TOTAL_MANDATE  = allowedMeta.reduce((s, m) => s + m.mandate,  0);
+          const TOTAL_REQUIRED = allowedMeta.reduce((s, m) => s + m.required, 0);
           const exportConsolidatedPerf = () => exportTableCSV(
             ['Date','Offered','Answered','AL%','SL%','ACHT(s)'],
             consolidatedTrend.map(r => [fmtDate(r.date), r.offered, r.answered, r.al.toFixed(2), r.sl.toFixed(2), r.acht]),
@@ -1046,21 +1075,21 @@ export default function InboundDashboard() {
 
           return (
             <>
-              <div className="rounded-xl border border-white/10 bg-[#1E293B] overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
+              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200 bg-slate-50">
                   <div className="w-1.5 h-4 rounded-full shrink-0 bg-blue-500" />
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">
+                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">
                     Date-wise Performance · All Projects (Current Month)
                   </h3>
                   <button onClick={exportConsolidatedPerf}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors">
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
                     <FileDown size={13} /> Export CSV
                   </button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
-                      <tr className="border-b border-white/5 bg-white/[0.02]">
+                      <tr className="border-b border-slate-200 bg-slate-50">
                         {['Date','Offered','Answered','AL%','SL%','ACHT'].map(h => (
                           <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap">{h}</th>
                         ))}
@@ -1076,10 +1105,10 @@ export default function InboundDashboard() {
                       ) : sorted.length === 0 ? (
                         <tr><td colSpan={6} className="py-8 text-center text-slate-600">No data available</td></tr>
                       ) : sorted.map((r, i) => (
-                        <tr key={r.date} className={`border-b border-white/[0.04] hover:bg-white/[0.02] ${i%2===0?'':'bg-white/[0.01]'}`}>
-                          <td className="py-2 px-3 text-slate-300 font-medium">{fmtDate(r.date)}</td>
-                          <td className="py-2 px-3 text-slate-300 tabular-nums">{r.offered.toLocaleString()}</td>
-                          <td className="py-2 px-3 text-slate-300 tabular-nums">{r.answered.toLocaleString()}</td>
+                        <tr key={r.date} className={`border-b border-slate-100 hover:bg-slate-50 ${i%2===0?'':'bg-transparent'}`}>
+                          <td className="py-2 px-3 text-slate-600 font-medium">{fmtDate(r.date)}</td>
+                          <td className="py-2 px-3 text-slate-800 font-semibold tabular-nums">{r.offered.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-slate-800 font-semibold tabular-nums">{r.answered.toLocaleString()}</td>
                           <td className="py-2 px-3 tabular-nums"><Badge value={r.al.toFixed(1)} suffix="%" color={alColor(r.al)} /></td>
                           <td className="py-2 px-3 tabular-nums"><Badge value={r.sl.toFixed(1)} suffix="%" color={slColor(r.sl)} /></td>
                           <td className="py-2 px-3 tabular-nums"><Badge value={`${r.acht}s`} color={achtColor(r.acht)} /></td>
@@ -1090,8 +1119,8 @@ export default function InboundDashboard() {
                       <tfoot>
                         <tr className="border-t-2 border-blue-500/30 bg-blue-500/5 font-bold">
                           <td className="py-2 px-3 text-blue-300 text-[11px] uppercase tracking-wider">Total</td>
-                          <td className="py-2 px-3 text-white tabular-nums">{totOffered.toLocaleString()}</td>
-                          <td className="py-2 px-3 text-white tabular-nums">{totAnswered.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-slate-900 tabular-nums">{totOffered.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-slate-900 tabular-nums">{totAnswered.toLocaleString()}</td>
                           <td className="py-2 px-3 tabular-nums"><Badge value={totAL.toFixed(1)} suffix="%" color={alColor(totAL)} /></td>
                           <td className="py-2 px-3 tabular-nums"><Badge value={totSL.toFixed(1)} suffix="%" color={slColor(totSL)} /></td>
                           <td className="py-2 px-3 tabular-nums"><Badge value={`${totACHT}s`} color={achtColor(totACHT)} /></td>
@@ -1102,21 +1131,21 @@ export default function InboundDashboard() {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-white/10 bg-[#1E293B] overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
+              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200 bg-slate-50">
                   <div className="w-1.5 h-4 rounded-full shrink-0 bg-purple-500" />
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">
+                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">
                     👥 Manpower Details · All Projects (Current Month) · Mandate: {TOTAL_MANDATE} · Required: {TOTAL_REQUIRED}
                   </h3>
                   <button onClick={exportOverallManpower}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors">
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
                     <FileDown size={13} /> Export CSV
                   </button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
-                      <tr className="border-b border-white/5 bg-white/[0.02]">
+                      <tr className="border-b border-slate-200 bg-slate-50">
                         {['Date','Total Mandate','Total Required','Login Count','Deficit'].map(h => (
                           <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap">{h}</th>
                         ))}
@@ -1134,10 +1163,10 @@ export default function InboundDashboard() {
                       ) : sorted.map((r, i) => {
                         const deficit = TOTAL_REQUIRED - r.total_login;
                         return (
-                          <tr key={r.date} className={`border-b border-white/[0.04] hover:bg-white/[0.02] ${i%2===0?'':'bg-white/[0.01]'}`}>
-                            <td className="py-2 px-3 text-slate-300 font-medium">{fmtDate(r.date)}</td>
-                            <td className="py-2 px-3 text-slate-300 tabular-nums">{TOTAL_MANDATE}</td>
-                            <td className="py-2 px-3 text-slate-300 tabular-nums">{TOTAL_REQUIRED}</td>
+                          <tr key={r.date} className={`border-b border-slate-100 hover:bg-slate-50 ${i%2===0?'':'bg-transparent'}`}>
+                            <td className="py-2 px-3 text-slate-600 font-medium">{fmtDate(r.date)}</td>
+                            <td className="py-2 px-3 text-slate-800 font-semibold tabular-nums">{TOTAL_MANDATE}</td>
+                            <td className="py-2 px-3 text-slate-800 font-semibold tabular-nums">{TOTAL_REQUIRED}</td>
                             <td className="py-2 px-3 tabular-nums">
                               <span className="px-1.5 py-0.5 rounded text-[11px] font-semibold"
                                 style={{ color: r.total_login>=TOTAL_REQUIRED?COLOR_GREEN:COLOR_AMBER, background: (r.total_login>=TOTAL_REQUIRED?COLOR_GREEN:COLOR_AMBER)+'18' }}>
@@ -1211,7 +1240,7 @@ export default function InboundDashboard() {
                   { label: 'Overall AL%',    val: `${drillProject.al.toFixed(1)}%`, color: alColor(drillProject.al) },
                   { label: 'Overall SL%',    val: `${drillProject.sl.toFixed(1)}%`, color: slColor(drillProject.sl) },
                 ].map(({ label, val, color }) => (
-                  <div key={label} className="bg-[#0F172A] rounded-xl p-3 border border-white/5">
+                  <div key={label} className="bg-white rounded-xl p-3 border border-slate-200">
                     <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">{label}</p>
                     <p className="text-lg font-bold" style={{ color }}>{val}</p>
                   </div>
@@ -1222,11 +1251,11 @@ export default function InboundDashboard() {
               <h4 className="text-[11px] text-slate-500 uppercase tracking-widest mb-3">Daily Trend</h4>
               <ResponsiveContainer width="100%" height={220}>
                 <ComposedChart data={drillRows.map(r => ({ ...r, date: fmtDate(r.date) }))} margin={{ top: 4, right: 48, left: 0, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
-                  <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} tickLine={false} axisLine={false} />
-                  <YAxis yAxisId="left"  tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
-                  <YAxis yAxisId="right" orientation="right" domain={[0,100]} unit="%" tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={{ background: '#0F172A', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                  <XAxis dataKey="date" tick={{ fill: '#64748B', fontSize: 10 }} tickLine={false} axisLine={false} />
+                  <YAxis yAxisId="left"  tick={{ fill: '#94A3B8', fontSize: 10 }} tickLine={false} axisLine={false} />
+                  <YAxis yAxisId="right" orientation="right" domain={[0,100]} unit="%" tick={{ fill: '#94A3B8', fontSize: 10 }} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
                   <Bar yAxisId="left"  dataKey="offered"  fill={COLOR_BLUE}   name="Offered"  radius={[2,2,0,0]} />
                   <Bar yAxisId="left"  dataKey="answered" fill={COLOR_GREEN}  name="Answered" radius={[2,2,0,0]} />
@@ -1241,8 +1270,8 @@ export default function InboundDashboard() {
               <h4 className="text-[11px] text-slate-500 uppercase tracking-widest mt-5 mb-3">Day-by-Day Breakdown</h4>
               <div className="overflow-auto max-h-60">
                 <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-[#1E293B] z-10">
-                    <tr className="border-b border-white/5">
+                  <thead className="sticky top-0 bg-white z-10">
+                    <tr className="border-b border-slate-200">
                       {['Date','Offered','Answered','AL%','SL%','ACHT','Repeat%','Login'].map(h => (
                         <th key={h} className="py-2 px-3 text-right first:text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap text-[9px]">{h}</th>
                       ))}
@@ -1250,8 +1279,8 @@ export default function InboundDashboard() {
                   </thead>
                   <tbody>
                     {drillRows.map((r, i) => (
-                      <tr key={r.date} className={`border-b border-white/[0.04] ${i%2===0?'':'bg-white/[0.01]'}`}>
-                        <td className="py-2 px-3 text-slate-300 font-medium whitespace-nowrap">{fmtDate(r.date)}</td>
+                      <tr key={r.date} className={`border-b border-slate-100 ${i%2===0?'':'bg-transparent'}`}>
+                        <td className="py-2 px-3 text-slate-600 font-medium whitespace-nowrap">{fmtDate(r.date)}</td>
                         <td className="py-2 px-3 text-right text-slate-400 tabular-nums">{r.offered.toLocaleString()}</td>
                         <td className="py-2 px-3 text-right text-slate-400 tabular-nums">{r.answered.toLocaleString()}</td>
                         <td className="py-2 px-3 text-right"><Badge value={r.al.toFixed(1)} suffix="%" color={alColor(r.al)} /></td>
@@ -1278,7 +1307,7 @@ export default function InboundDashboard() {
           sl:       { label: 'Service Level %',  key: 'sl',       unit: '%', refY: 80, refColor: COLOR_AMBER, colorFn: slColor },
         };
         const meta = metaMap[metricDrill];
-        const chartData = projects.map(p => ({
+        const chartData = allowedProjects.map(p => ({
           name: `${p.icon} ${p.name}`,
           value: Number(p[meta.key]),
           color: meta.colorFn ? meta.colorFn(Number(p[meta.key])) : p.color,
@@ -1289,18 +1318,18 @@ export default function InboundDashboard() {
             onClose={() => setMetricDrill(null)}
             onExport={() => exportTableCSV(
               ['Project', meta.label],
-              projects.map(p => [p.name, Number(p[meta.key]).toFixed(meta.unit === '%' ? 1 : 0)]),
+              allowedProjects.map(p => [p.name, Number(p[meta.key]).toFixed(meta.unit === '%' ? 1 : 0)]),
               `${metricDrill}_breakdown`
             )}
           >
             <p className="text-xs text-slate-500 mb-4">Click a project row in the table below to see its day-by-day analysis.</p>
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }} barCategoryGap="35%">
-                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
-                <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} tickLine={false} axisLine={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                <XAxis dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} tickLine={false} axisLine={false} />
                 <YAxis domain={meta.unit === '%' ? [0,100] : undefined} unit={meta.unit}
-                  tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ background: '#0F172A', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                  tick={{ fill: '#94A3B8', fontSize: 10 }} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                   formatter={(v: unknown) => [`${Number(v).toFixed(meta.unit === '%' ? 1 : 0)}${meta.unit}`, meta.label]} />
                 {meta.refY && <ReferenceLine y={meta.refY} stroke={meta.refColor} strokeDasharray="4 4"
                   label={{ value: `Target: ${meta.refY}${meta.unit}`, position: 'insideTopRight', fill: meta.refColor, fontSize: 10 }} />}
@@ -1312,18 +1341,18 @@ export default function InboundDashboard() {
             {/* Project summary table */}
             <div className="mt-5 overflow-auto max-h-48">
               <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-[#1E293B]">
-                  <tr className="border-b border-white/5">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="border-b border-slate-200">
                     <th className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Project</th>
                     <th className="py-2 px-3 text-right text-slate-500 font-semibold uppercase tracking-wider text-[9px]">{meta.label}</th>
                     <th className="py-2 px-3 text-right text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Deficit</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {projects.filter(p => p.offered > 0).sort((a,b) => Number(a[meta.key]) - Number(b[meta.key])).map((p, i) => (
-                    <tr key={p.key} className={`border-b border-white/[0.04] hover:bg-white/[0.04] cursor-pointer ${i%2===0?'':'bg-white/[0.01]'}`}
+                  {allowedProjects.filter(p => p.offered > 0).sort((a,b) => Number(a[meta.key]) - Number(b[meta.key])).map((p, i) => (
+                    <tr key={p.key} className={`border-b border-slate-100 hover:bg-slate-100 cursor-pointer ${i%2===0?'':'bg-transparent'}`}
                       onClick={() => { setMetricDrill(null); fetchProjectDrill(p); }}>
-                      <td className="py-2 px-3 text-slate-200 font-medium">{p.icon} {p.name}</td>
+                      <td className="py-2 px-3 text-slate-700 font-medium">{p.icon} {p.name}</td>
                       <td className="py-2 px-3 text-right">
                         <Badge value={Number(p[meta.key]).toFixed(meta.unit==='%'?1:0)} suffix={meta.unit}
                           color={meta.colorFn ? meta.colorFn(Number(p[meta.key])) : p.color} />

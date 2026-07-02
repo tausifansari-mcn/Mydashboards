@@ -2,16 +2,31 @@ import nodemailer from 'nodemailer';
 
 const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
 
+// Gmail App Passwords are displayed with spaces (e.g. "xxxx xxxx xxxx xxxx")
+// but must be sent without spaces — strip them here.
+const smtpPass = (process.env.SMTP_PASS || '').replace(/\s+/g, '');
+
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: SMTP_PORT,
   secure: SMTP_PORT === 465,
   auth: {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    pass: smtpPass,
   },
   tls: { rejectUnauthorized: false },
 });
+
+// Verify SMTP connection on startup and log result
+if (process.env.SMTP_USER) {
+  transporter.verify((err) => {
+    if (err) {
+      console.error('[mailer] SMTP connection FAILED:', err.message);
+    } else {
+      console.log('[mailer] SMTP connection OK — ready to send emails');
+    }
+  });
+}
 
 const FROM = `"${process.env.SMTP_FROM_NAME || 'My Dashboard'}" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`;
 const APP_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -22,11 +37,11 @@ async function send(to: string, subject: string, html: string, text: string): Pr
     return;
   }
   try {
-    await transporter.sendMail({ from: FROM, to, subject, html, text });
-    console.log(`[email] Sent "${subject}" → ${to}`);
+    const info = await transporter.sendMail({ from: FROM, to, subject, html, text });
+    console.log(`[mailer] Sent "${subject}" → ${to} (messageId: ${info.messageId})`);
   } catch (err: any) {
-    console.error(`[email] SMTP failed for ${to}: ${err.message}`);
-    console.log(`[FALLBACK]\nTo: ${to}\nSubject: ${subject}\n${text}`);
+    console.error(`[mailer] SMTP error sending to ${to}: ${err.message}`);
+    throw err; // re-throw so callers know the email failed
   }
 }
 

@@ -77,3 +77,13 @@ export async function getUserProcesses(req: Request, res: Response): Promise<voi
   const userId = Number(req.params.userId);
   res.json(await svc.getUserProcesses(userId));
 }
+
+export async function myProcesses(req: Request, res: Response): Promise<void> {
+  const isSuperAdmin = req.user!.role === 'super_admin';
+  if (isSuperAdmin) {
+    res.json(await svc.getAllProcesses());
+    return;
+  }
+  const mapped = await svc.getUserProcesses(req.user!.id);
+  res.json(mapped.map((m) => m.process));
+}

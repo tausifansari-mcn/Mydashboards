@@ -66,9 +66,9 @@ const SENTIMENT_COLORS: Record<string, string> = {
   Unknown:  C.unk,
 };
 const CHART_COLORS = [C.blue, C.pos, C.purple, C.neu, C.neg, C.teal, C.pink, '#6366F1'];
-const TT  = { background: '#0F172A', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
+const TT  = { background: '#FFFFFF', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
 const AX  = { fill: '#64748B', fontSize: 11 };
-const GR  = { strokeDasharray: '3 3', stroke: '#1E293B' };
+const GR  = { strokeDasharray: '3 3', stroke: '#FFFFFF' };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -127,7 +127,7 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, trend, 
     <motion.div
       initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.4 }}
-      className="relative bg-gradient-to-br from-[#1E293B] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-white/5 overflow-hidden"
+      className="relative bg-gradient-to-br from-[#FFFFFF] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-slate-200 overflow-hidden"
     >
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
       <div className="pl-2">
@@ -137,7 +137,7 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, trend, 
             <div style={{ color }}>{icon}</div>
           </div>
         </div>
-        <div className="text-2xl font-bold text-white tracking-tight">
+        <div className="text-2xl font-bold text-slate-900 tracking-tight">
           <AnimNum value={value} suffix={suffix} dec={dec} />
         </div>
         <div className="flex items-center gap-1.5 mt-1">
@@ -167,21 +167,21 @@ function SCard({ title, children, className = '', accent = C.blue, dl }: {
   }, [exp]);
 
   const hdr = (close?: () => void) => (
-    <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
+    <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
       <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
+      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">{title}</h3>
       {dl && dl.rows.length > 0 && (
         <button onClick={e => { e.stopPropagation(); downloadCSV(dl.filename, dl.rows); }}
-          className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
+          className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded">
           <Download size={13} />
         </button>
       )}
       {!close ? (
-        <button onClick={e => { e.stopPropagation(); setExp(true); }} className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
+        <button onClick={e => { e.stopPropagation(); setExp(true); }} className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded">
           <Maximize2 size={13} />
         </button>
       ) : (
-        <button onClick={close} className="text-slate-500 hover:text-white transition-colors p-0.5 rounded ml-1"><X size={15} /></button>
+        <button onClick={close} className="text-slate-500 hover:text-slate-900 transition-colors p-0.5 rounded ml-1"><X size={15} /></button>
       )}
     </div>
   );
@@ -189,13 +189,13 @@ function SCard({ title, children, className = '', accent = C.blue, dl }: {
   return (
     <>
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
-        className={`bg-[#1E293B] rounded-xl border border-white/5 overflow-hidden ${className}`}>
+        className={`bg-white rounded-xl border border-slate-200 overflow-hidden ${className}`}>
         {hdr()} <div className="p-5">{children}</div>
       </motion.div>
       {exp && createPortal(
         <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-black/75 backdrop-blur-sm"
           style={{ zIndex: 9999 }} onClick={() => setExp(false)}>
-          <div className="bg-[#1E293B] rounded-2xl border border-white/10 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
             style={{ maxHeight: '90vh' }} onClick={e => e.stopPropagation()}>
             {hdr(() => setExp(false))}
             <div className="p-6 overflow-auto flex-1">{children}</div>
@@ -255,7 +255,7 @@ function PeriodSel({ value, onChange }: {
       {(['daily','weekly','monthly','quarterly','yearly'] as const).map(o => (
         <button key={o} onClick={() => onChange(o)}
           className={`px-2.5 py-1 rounded-md text-[10px] font-semibold capitalize transition-colors ${
-            value === o ? 'bg-blue-600 text-white' : 'bg-slate-700/60 text-slate-400 hover:text-slate-200'
+            value === o ? 'bg-blue-600 text-slate-900' : 'bg-slate-700/60 text-slate-400 hover:text-slate-700'
           }`}>{o}</button>
       ))}
     </div>
@@ -273,7 +273,7 @@ function DimSel({ value, onChange }: {
       {(['client','agent','campaign'] as const).map(o => (
         <button key={o} onClick={() => onChange(o)}
           className={`px-2.5 py-1 rounded-md text-[10px] font-semibold capitalize transition-colors ${
-            value === o ? 'bg-pink-600 text-white' : 'bg-slate-700/60 text-slate-400 hover:text-slate-200'
+            value === o ? 'bg-pink-600 text-slate-900' : 'bg-slate-700/60 text-slate-400 hover:text-slate-700'
           }`}>{o}</button>
       ))}
     </div>
@@ -297,7 +297,7 @@ function InsightCard({ insight, index }: { insight: AIInsight; index: number }) 
       <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-3 px-4 py-3 text-left">
         <span style={{ color: cfg.color }}>{cfg.icon}</span>
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-bold text-white truncate">{insight.title}</div>
+          <div className="text-xs font-bold text-slate-900 truncate">{insight.title}</div>
           <div className="flex items-center gap-2 mt-0.5">
             <span className="text-[10px]" style={{ color: cfg.color }}>{cfg.label}</span>
             <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold" style={{ backgroundColor: `${priColor}20`, color: priColor }}>
@@ -320,7 +320,7 @@ function InsightCard({ insight, index }: { insight: AIInsight; index: number }) 
               ].map(({ k, v }) => (
                 <div key={k} className="rounded-lg bg-black/20 px-3 py-2">
                   <div className="text-[9px] font-bold uppercase tracking-wider mb-1" style={{ color: cfg.color }}>{k}</div>
-                  <div className="text-[11px] text-slate-300 leading-relaxed">{v}</div>
+                  <div className="text-[11px] text-slate-600 leading-relaxed">{v}</div>
                 </div>
               ))}
             </div>
@@ -345,7 +345,7 @@ function JourneyFunnel({ stages }: { stages: JourneyStage[] }) {
           <div key={i}>
             <div className="flex items-center gap-2 mb-0.5">
               <span className="text-[12px] w-5 shrink-0">{s.icon}</span>
-              <span className="text-[11px] text-slate-300 flex-1">{s.stage}</span>
+              <span className="text-[11px] text-slate-600 flex-1">{s.stage}</span>
               <span className="text-[11px] font-bold" style={{ color: stageColor }}>{Number(s.count).toLocaleString()}</span>
               <span className="text-[10px] text-slate-500 w-10 text-right">{s.pct_of_total}%</span>
               {i > 0 && s.dropoff_pct > 0 && (
@@ -637,18 +637,18 @@ export default function CustomerIntelligenceDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0F172A] text-white">
+    <div className="min-h-screen text-slate-900">
       {/* Header */}
-      <div className="bg-[#0B1120] border-b border-white/5 sticky top-0 z-30">
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
           <button onClick={() => navigate('/call-master')}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors text-xs">
+            className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 transition-colors text-xs">
             <ChevronLeft size={16} /> Call Master
           </button>
           <div className="w-px h-4 bg-slate-700" />
           <Heart size={15} className="text-pink-400 shrink-0" />
           <div>
-            <h1 className="text-sm font-bold text-white leading-none">Customer Intelligence</h1>
+            <h1 className="text-sm font-bold text-slate-900 leading-none">Customer Intelligence</h1>
             <p className="text-[10px] text-slate-500 mt-0.5">Voice of Customer · Sentiment · Feedback · Buying Intent</p>
           </div>
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-pink-600/15 border border-pink-500/30 text-pink-400 text-[10px] font-semibold ml-auto">
@@ -657,19 +657,20 @@ export default function CustomerIntelligenceDashboard() {
         </div>
         {/* Filter bar */}
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 pb-3 flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-lg px-2.5 py-1.5 border border-white/5">
-            <span className="text-[10px] text-slate-500">From</span>
+          <div className="date-pill">
+            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.65)' }}>From</span>
             <input type="datetime-local" value={startDT} onChange={e => setStartDT(e.target.value)}
-              className="bg-transparent text-[11px] text-slate-300 outline-none w-36" />
+              className="bg-transparent text-[11px] outline-none w-36 text-white [color-scheme:dark]" />
           </div>
-          <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-lg px-2.5 py-1.5 border border-white/5">
-            <span className="text-[10px] text-slate-500">To</span>
+          <div className="date-pill">
+            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.65)' }}>To</span>
             <input type="datetime-local" value={endDT} onChange={e => setEndDT(e.target.value)}
-              className="bg-transparent text-[11px] text-slate-300 outline-none w-36" />
+              className="bg-transparent text-[11px] outline-none w-36 text-white [color-scheme:dark]" />
           </div>
           {!isSingle ? (
             <select value={clientId} onChange={e => setClientId(e.target.value)}
-              className="bg-slate-800/60 border border-white/5 rounded-lg text-[11px] text-slate-300 px-2.5 py-1.5 outline-none">
+              className="border rounded-lg text-[11px] px-2.5 py-1.5 outline-none text-white"
+              style={{ background: 'linear-gradient(135deg,#0D47A1,#1565C0)', borderColor: 'rgba(255,255,255,0.25)' }}>
               <option value="">All Process</option>
               {clients.map(c => <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>)}
             </select>
@@ -679,7 +680,7 @@ export default function CustomerIntelligenceDashboard() {
             </div>
           )}
           <button onClick={applyFilters} disabled={sumLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-700 text-white text-xs font-semibold transition-colors disabled:opacity-50">
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-700 text-slate-900 text-xs font-semibold transition-colors disabled:opacity-50">
             <RefreshCw size={12} className={sumLoading ? 'animate-spin' : ''} />
             {sumLoading ? 'Loading…' : 'Apply'}
           </button>
@@ -820,7 +821,7 @@ export default function CustomerIntelligenceDashboard() {
                       <span className="text-[11px] text-slate-400 truncate" title={r.subCategory}>{r.subCategory}</span>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <SentBadge sentiment={r.feedback} />
-                        <span className="text-[11px] font-semibold text-slate-300">{Number(r.count).toLocaleString()}</span>
+                        <span className="text-[11px] font-semibold text-slate-600">{Number(r.count).toLocaleString()}</span>
                       </div>
                     </div>
                   ))}
@@ -870,7 +871,7 @@ export default function CustomerIntelligenceDashboard() {
                     return (
                       <div key={i}>
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-[11px] text-slate-300">{s.stage}</span>
+                          <span className="text-[11px] text-slate-600">{s.stage}</span>
                           <div className="flex items-center gap-2">
                             <span className="text-[11px] font-bold" style={{ color: bc }}>{Number(s.count).toLocaleString()}</span>
                             <span className="text-[10px] text-slate-500">{s.pct}%</span>
@@ -950,7 +951,7 @@ export default function CustomerIntelligenceDashboard() {
               <div className="overflow-x-auto">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-white/5">
+                    <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200">
                       <th className="pb-2 text-left">Category</th>
                       <th className="pb-2 text-right">Calls</th>
                       <th className="pb-2 text-right">Positive</th>
@@ -960,15 +961,15 @@ export default function CustomerIntelligenceDashboard() {
                       <th className="pb-2 text-left pl-3">Risk Level</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-slate-200">
                     {fbCats.map((r, i) => {
                       const total  = r.positive + r.negative + r.neutral || 1;
                       const negPct = +(r.negative / total * 100).toFixed(0);
                       const risk   = negPct > 50 ? 'High' : negPct > 25 ? 'Medium' : 'Low';
                       const rc     = { High: C.neg, Medium: C.neu, Low: C.pos }[risk];
                       return (
-                        <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                          <td className="py-2 text-slate-300 truncate max-w-[160px]" title={r.category}>{r.category}</td>
+                        <tr key={i} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-2 text-slate-600 truncate max-w-[160px]" title={r.category}>{r.category}</td>
                           <td className="py-2 text-right text-slate-400">{Number(r.count).toLocaleString()}</td>
                           <td className="py-2 text-right font-semibold" style={{ color: C.pos }}>{Number(r.positive).toLocaleString()}</td>
                           <td className="py-2 text-right font-semibold" style={{ color: C.neg }}>{Number(r.negative).toLocaleString()}</td>
@@ -1006,7 +1007,7 @@ export default function CustomerIntelligenceDashboard() {
               <div className="overflow-x-auto">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-white/5">
+                    <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200">
                       <th className="pb-2 text-left">#</th>
                       <th className="pb-2 text-left">Client ID</th>
                       <th className="pb-2 text-right">Calls</th>
@@ -1018,11 +1019,11 @@ export default function CustomerIntelligenceDashboard() {
                       <th className="pb-2 text-right">Trust Score</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-slate-200">
                     {clientComp.map((r, i) => (
-                      <tr key={i} className="hover:bg-white/[0.02] transition-colors">
+                      <tr key={i} className="hover:bg-slate-50 transition-colors">
                         <td className="py-1.5 text-slate-600 font-bold">{i + 1}</td>
-                        <td className="py-1.5 text-slate-300 font-medium">{r.client_id}</td>
+                        <td className="py-1.5 text-slate-600 font-medium">{r.client_id}</td>
                         <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
                         <td className="py-1.5 text-right"><span className="font-bold" style={{ color: pctColor(r.satisfaction_pct) }}>{r.satisfaction_pct}%</span></td>
                         <td className="py-1.5 text-right font-semibold" style={{ color: C.pos }}>{r.positive_pct}%</td>
@@ -1051,7 +1052,7 @@ export default function CustomerIntelligenceDashboard() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-[11px]">
                     <thead>
-                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-white/5">
+                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200">
                         <th className="pb-2 text-left">#</th>
                         <th className="pb-2 text-left">Campaign</th>
                         <th className="pb-2 text-right">Calls</th>
@@ -1060,11 +1061,11 @@ export default function CustomerIntelligenceDashboard() {
                         <th className="pb-2 text-right">Conv %</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-slate-200">
                       {campaignComp.map((r, i) => (
-                        <tr key={i} className="hover:bg-white/[0.02] transition-colors">
+                        <tr key={i} className="hover:bg-slate-50 transition-colors">
                           <td className="py-1.5 text-slate-600 font-bold">{i + 1}</td>
-                          <td className="py-1.5 text-slate-300 truncate max-w-[120px]" title={r.campaign}>{r.campaign}</td>
+                          <td className="py-1.5 text-slate-600 truncate max-w-[120px]" title={r.campaign}>{r.campaign}</td>
                           <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
                           <td className="py-1.5 text-right font-bold" style={{ color: pctColor(r.satisfaction_pct) }}>{r.satisfaction_pct}%</td>
                           <td className="py-1.5 text-right font-bold" style={{ color: pctColor(r.offer_accept_pct) }}>{r.offer_accept_pct}%</td>
@@ -1102,7 +1103,7 @@ export default function CustomerIntelligenceDashboard() {
               {!agentRanking || sec8Loading ? <SK h={260} /> : (
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-white/5">
+                    <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200">
                       <th className="pb-2 text-left">#</th>
                       <th className="pb-2 text-left">Agent</th>
                       <th className="pb-2 text-right">Calls</th>
@@ -1113,11 +1114,11 @@ export default function CustomerIntelligenceDashboard() {
                       <th className="pb-2 text-right">Conv</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-slate-200">
                     {(agentRanking?.top10 ?? []).map((r, i) => (
-                      <tr key={i} className="hover:bg-white/[0.02] transition-colors">
+                      <tr key={i} className="hover:bg-slate-50 transition-colors">
                         <td className="py-1.5 font-bold" style={{ color: i < 3 ? C.neu : '#64748B' }}>{i + 1}</td>
-                        <td className="py-1.5 text-slate-300 truncate max-w-[100px]" title={r.agent}>{r.agent}</td>
+                        <td className="py-1.5 text-slate-600 truncate max-w-[100px]" title={r.agent}>{r.agent}</td>
                         <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
                         <td className="py-1.5 text-right font-bold" style={{ color: pctColor(r.satisfaction_pct) }}>{r.satisfaction_pct}%</td>
                         <td className="py-1.5 text-right font-semibold" style={{ color: C.pos }}>{r.positive_pct}%</td>
@@ -1138,7 +1139,7 @@ export default function CustomerIntelligenceDashboard() {
               {!agentRanking || sec8Loading ? <SK h={260} /> : (
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-white/5">
+                    <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200">
                       <th className="pb-2 text-left">#</th>
                       <th className="pb-2 text-left">Agent</th>
                       <th className="pb-2 text-right">Calls</th>
@@ -1149,11 +1150,11 @@ export default function CustomerIntelligenceDashboard() {
                       <th className="pb-2 text-right">Conv</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-slate-200">
                     {(agentRanking?.bottom10 ?? []).map((r, i) => (
                       <tr key={i} className="hover:bg-red-900/[0.06] transition-colors">
                         <td className="py-1.5 text-red-500 font-bold">{i + 1}</td>
-                        <td className="py-1.5 text-slate-300 truncate max-w-[100px]" title={r.agent}>{r.agent}</td>
+                        <td className="py-1.5 text-slate-600 truncate max-w-[100px]" title={r.agent}>{r.agent}</td>
                         <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
                         <td className="py-1.5 text-right font-bold" style={{ color: pctColor(r.satisfaction_pct) }}>{r.satisfaction_pct}%</td>
                         <td className="py-1.5 text-right font-semibold" style={{ color: C.pos }}>{r.positive_pct}%</td>
@@ -1208,7 +1209,7 @@ export default function CustomerIntelligenceDashboard() {
             </div>
           </div>
           {sec9Loaded.current && !sec9Loading && insights.length === 0 && (
-            <div className="flex items-center gap-3 p-4 rounded-xl bg-slate-800/40 border border-white/5">
+            <div className="flex items-center gap-3 p-4 rounded-xl bg-slate-800/40 border border-slate-200">
               <Info size={16} className="text-slate-500" />
               <span className="text-[12px] text-slate-400">AI insights will appear once data is loaded.</span>
             </div>

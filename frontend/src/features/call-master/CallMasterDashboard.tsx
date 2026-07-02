@@ -195,29 +195,36 @@ function KPICard({ label, value, suffix, dec, icon, color, sub, index, onClick }
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.4 }}
+      whileHover={{ y: -4, boxShadow: `0 16px 40px ${color}28` }}
       onClick={onClick}
-      className={`relative bg-gradient-to-br from-[#1E293B] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-white/5 transition-all overflow-hidden group
-        ${onClick ? 'cursor-pointer hover:border-white/20 hover:from-[#243047] hover:to-[#1a2840]' : ''}`}
+      className={`relative bg-white rounded-2xl overflow-hidden group transition-colors duration-200 ${onClick ? 'cursor-pointer' : ''}`}
+      style={{ border: `2px solid ${color}30`, borderTopWidth: 4, borderTopColor: color }}
     >
-      {/* Accent left bar */}
-      <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
-      <div className="pl-2">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider leading-none">{label}</span>
+      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+           style={{ background: `linear-gradient(145deg, ${color}0a, transparent)` }} />
+      <div className="relative p-4">
+        <div className="flex items-start justify-between mb-3">
+          <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.12em] leading-none pr-2">{label}</span>
           <div className="flex items-center gap-1.5">
-            {onClick && <Info size={11} className="text-slate-600 group-hover:text-slate-400 transition-colors" />}
-            <div className="p-1.5 rounded-lg" style={{ backgroundColor: `${color}18` }}>
-              <div style={{ color }}>{icon}</div>
+            {onClick && <Info size={11} className="text-slate-400 group-hover:text-slate-600 transition-colors" />}
+            <div className="p-2 rounded-xl shrink-0 group-hover:scale-110 transition-transform duration-200 shadow-sm"
+                 style={{ backgroundColor: `${color}18`, color }}>
+              {icon}
             </div>
           </div>
         </div>
-        <div className="text-2xl font-bold text-white tracking-tight">
+        <div className="text-[28px] font-black text-slate-900 tracking-tight leading-none mb-2">
           <AnimatedNumber value={value} suffix={suffix} dec={dec} />
         </div>
-        {sub && <div className="text-[11px] text-slate-500 mt-1">{sub}</div>}
+        {sub && (
+          <div className="flex items-center gap-1.5">
+            <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: color }} />
+            <span className="text-[11px] text-slate-600 font-semibold">{sub}</span>
+          </div>
+        )}
       </div>
-      {/* Bottom shimmer bar */}
-      <div className="absolute bottom-0 left-0 right-0 h-px" style={{ background: `linear-gradient(90deg, ${color}40, transparent)` }} />
+      <div className="absolute bottom-0 left-0 right-0 h-[3px] opacity-60 group-hover:opacity-100 transition-opacity duration-200"
+           style={{ background: `linear-gradient(90deg, ${color}, ${color}40)` }} />
     </motion.div>
   );
 }
@@ -250,20 +257,21 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, des
   };
 
   const cardHeader = (onClose?: () => void) => (
-    <div className="flex items-center gap-2.5 px-5 py-3 border-b border-white/5">
-      <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-      <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest flex-1">{title}</h3>
+    <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-100"
+         style={{ background: `linear-gradient(90deg, ${accent}08, transparent)` }}>
+      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: accent }} />
+      <h3 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.1em] flex-1">{title}</h3>
       {downloadData && downloadData.rows.length > 0 && (
         <button
           onClick={(e) => { e.stopPropagation(); downloadCSV(downloadData.filename, downloadData.rows); }}
           title="Download CSV"
-          className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded"
+          className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded"
         >
           <Download size={13} />
         </button>
       )}
       {(description || onInfoClick) && !onClose && (
-        <button onClick={handleInfo} className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded">
+        <button onClick={handleInfo} className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded">
           <Info size={13} />
         </button>
       )}
@@ -271,13 +279,13 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, des
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
           title="Expand chart"
-          className="text-slate-600 hover:text-slate-300 transition-colors p-0.5 rounded"
+          className="text-slate-600 hover:text-slate-600 transition-colors p-0.5 rounded"
         >
           <Maximize2 size={13} />
         </button>
       )}
       {onClose && (
-        <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-0.5 rounded ml-1">
+        <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition-colors p-0.5 rounded ml-1">
           <X size={15} />
         </button>
       )}
@@ -302,7 +310,7 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, des
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 16 }}
             transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-            className="bg-[#1E293B] rounded-2xl border border-white/10 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
+            className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
             style={{ maxHeight: '90vh' }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -328,7 +336,9 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, des
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        className={`bg-[#1E293B] rounded-xl border border-white/5 overflow-hidden ${className}`}
+        className={`bg-white rounded-2xl overflow-hidden transition-shadow duration-200 ${className}`}
+        style={{ border: `2px solid ${accent}22`, borderTopWidth: 4, borderTopColor: accent }}
+        whileHover={{ boxShadow: `0 8px 30px ${accent}18` }}
       >
         {cardHeader()}
         <AnimatePresence>
@@ -380,32 +390,32 @@ function FilterBar({
   return (
     <div className="flex flex-wrap gap-3 items-center">
       {/* Date + time range — two separate labeled inputs */}
-      <div className="flex items-center gap-1.5 bg-[#1E293B] border border-white/10 rounded-lg px-3 py-2">
-        <Calendar size={13} className="text-slate-500 shrink-0" />
+      <div className="date-pill">
+        <Calendar size={13} className="shrink-0" style={{ color: 'rgba(255,255,255,0.75)' }} />
         <div className="flex flex-col gap-0.5">
-          <span className="text-[9px] text-slate-500 uppercase tracking-wider leading-none">From</span>
+          <span className="text-[9px] uppercase tracking-wider leading-none" style={{ color: 'rgba(255,255,255,0.65)' }}>From</span>
           <input
             type="datetime-local"
             value={filters.startDate}
             onChange={(e) => onChange('startDate', e.target.value)}
-            className="bg-transparent text-xs text-slate-200 outline-none [color-scheme:dark]"
+            className="bg-transparent text-xs outline-none text-white [color-scheme:dark]"
           />
         </div>
-        <span className="text-slate-600 mx-1 self-center">—</span>
+        <span className="mx-1 self-center" style={{ color: 'rgba(255,255,255,0.40)' }}>—</span>
         <div className="flex flex-col gap-0.5">
-          <span className="text-[9px] text-slate-500 uppercase tracking-wider leading-none">To</span>
+          <span className="text-[9px] uppercase tracking-wider leading-none" style={{ color: 'rgba(255,255,255,0.65)' }}>To</span>
           <input
             type="datetime-local"
             value={filters.endDate}
             onChange={(e) => onChange('endDate', e.target.value)}
-            className="bg-transparent text-xs text-slate-200 outline-none [color-scheme:dark]"
+            className="bg-transparent text-xs outline-none text-white [color-scheme:dark]"
           />
         </div>
       </div>
 
       {/* Client filter — locked badge for tenant users, dropdown for super admin */}
       {isTenantLocked ? (
-        <div className="flex items-center gap-2 bg-[#1E293B] border border-blue-500/40 rounded-lg px-3 py-2">
+        <div className="flex items-center gap-2 bg-white border border-blue-500/40 rounded-lg px-3 py-2">
           <Lock size={12} className="text-blue-400 shrink-0" />
           <span className="text-sm text-blue-300 font-medium">{lockedClient!.name}</span>
         </div>
@@ -414,7 +424,7 @@ function FilterBar({
           <select
             value={filters.clientId}
             onChange={(e) => onChange('clientId', e.target.value)}
-            className="appearance-none bg-[#1E293B] border border-white/10 text-sm text-slate-200 rounded-lg px-3 py-2 pr-8 outline-none"
+            className="appearance-none bg-white border border-slate-200 text-sm text-slate-700 rounded-lg px-3 py-2 pr-8 outline-none"
           >
             <option value="">All Process</option>
             {clients.map((c) => (
@@ -430,7 +440,7 @@ function FilterBar({
         <select
           value={filters.lob}
           onChange={(e) => onChange('lob', e.target.value)}
-          className="appearance-none bg-[#1E293B] border border-white/10 text-sm text-slate-200 rounded-lg px-3 py-2 pr-8 outline-none"
+          className="appearance-none bg-white border border-slate-200 text-sm text-slate-700 rounded-lg px-3 py-2 pr-8 outline-none"
         >
           <option value="All">All LOBs</option>
           <option value="Inbound">Inbound</option>
@@ -444,7 +454,7 @@ function FilterBar({
         <select
           value={filters.period}
           onChange={(e) => onChange('period', e.target.value)}
-          className="appearance-none bg-[#1E293B] border border-white/10 text-sm text-slate-200 rounded-lg px-3 py-2 pr-8 outline-none"
+          className="appearance-none bg-white border border-slate-200 text-sm text-slate-700 rounded-lg px-3 py-2 pr-8 outline-none"
         >
           <option value="daily">Daily</option>
           <option value="weekly">Weekly</option>
@@ -457,7 +467,7 @@ function FilterBar({
         whileTap={{ scale: 0.95 }}
         onClick={onRefresh}
         disabled={loading}
-        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-slate-900 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
       >
         <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
         {loading ? 'Loading...' : 'Refresh'}
@@ -473,7 +483,7 @@ function FunnelBar({ row, max }: { row: FunnelRow; max: number }) {
   return (
     <div className="flex items-center gap-3">
       <div className="w-36 text-xs text-slate-400 text-right shrink-0">{row.stage}</div>
-      <div className="flex-1 bg-white/5 rounded-full h-6 overflow-hidden">
+      <div className="flex-1 bg-slate-100 rounded-full h-6 overflow-hidden">
         <motion.div
           className="h-6 rounded-full flex items-center justify-end pr-2"
           style={{ backgroundColor: COLOR_BLUE }}
@@ -481,7 +491,7 @@ function FunnelBar({ row, max }: { row: FunnelRow; max: number }) {
           animate={{ width: `${width}%` }}
           transition={{ duration: 0.8 }}
         >
-          <span className="text-xs text-white font-bold">{fmt(row.value)}</span>
+          <span className="text-xs text-slate-900 font-bold">{fmt(row.value)}</span>
         </motion.div>
       </div>
       <div className="w-12 text-xs text-slate-400 shrink-0">{row.pct}%</div>
@@ -506,19 +516,19 @@ function DetailDrawer({ open, onClose, title, description, children }: {
           <motion.div
             initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-            className="fixed right-0 top-0 bottom-0 w-full max-w-lg bg-[#0B1120] border-l border-white/10 z-50 flex flex-col shadow-2xl"
+            className="fixed right-0 top-0 bottom-0 w-full max-w-lg bg-white border-l border-slate-200 z-50 flex flex-col shadow-2xl"
           >
             {/* Header */}
-            <div className="flex items-start justify-between px-6 py-4 border-b border-white/8">
+            <div className="flex items-start justify-between px-6 py-4 border-b border-slate-200">
               <div>
-                <h2 className="text-base font-semibold text-white">{title}</h2>
+                <h2 className="text-base font-semibold text-slate-900">{title}</h2>
               </div>
-              <button onClick={onClose} className="mt-0.5 text-slate-500 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/5">
+              <button onClick={onClose} className="mt-0.5 text-slate-500 hover:text-slate-900 transition-colors p-1 rounded-lg hover:bg-slate-100">
                 <X size={16} />
               </button>
             </div>
             {/* Description */}
-            <div className="px-6 py-3 bg-blue-500/5 border-b border-white/5">
+            <div className="px-6 py-3 bg-blue-500/5 border-b border-slate-200">
               <p className="text-xs text-slate-400 leading-relaxed">{description}</p>
             </div>
             {/* Content */}
@@ -551,7 +561,7 @@ function ParetoChart({ data }: { data: CXParamRow[] }) {
         <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 8 }} angle={-45} textAnchor="end" interval={0} />
         <YAxis yAxisId="left" domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 10 }} unit="%" />
         <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 10 }} unit="%" />
-        <Tooltip contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }} />
+        <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #334155', borderRadius: 8 }} />
         <Bar yAxisId="left" dataKey="score" name="Adherence %" radius={[2, 2, 0, 0]}>
           {chartData.map((entry, i) => <Cell key={i} fill={pctColor(entry.score)} />)}
         </Bar>
@@ -573,7 +583,7 @@ function ParamBars({ rows, barH = 'h-5' }: { rows: CXParamRow[]; barH?: string }
       {sorted.map(p => (
         <div key={p.key} className="flex items-center gap-2">
           <span className="text-xs text-slate-400 w-40 shrink-0 truncate" title={p.parameter}>{p.parameter}</span>
-          <div className={`flex-1 bg-white/5 rounded-full ${barH} overflow-hidden`}>
+          <div className={`flex-1 bg-slate-100 rounded-full ${barH} overflow-hidden`}>
             <motion.div
               className={`${barH} rounded-full flex items-center justify-end pr-2`}
               style={{ backgroundColor: pctColor(p.score), minWidth: 4 }}
@@ -581,7 +591,7 @@ function ParamBars({ rows, barH = 'h-5' }: { rows: CXParamRow[]; barH?: string }
               animate={{ width: `${p.score}%` }}
               transition={{ duration: 0.7 }}
             >
-              {p.score > 12 && <span className="text-[10px] text-white font-bold">{p.score.toFixed(0)}%</span>}
+              {p.score > 12 && <span className="text-[10px] text-slate-900 font-bold">{p.score.toFixed(0)}%</span>}
             </motion.div>
           </div>
           {p.score <= 12 && (
@@ -614,13 +624,13 @@ function CXParametersCard({ cxData, lob }: { cxData: CXData; lob: string }) {
   return (
     <SectionCard title="CX Quality Parameters" accent="#EC4899" downloadData={cxDownload}>
       {(showInbound && showOutbound) && (
-        <div className="flex gap-1 mb-4 bg-white/5 rounded-lg p-1 w-fit">
+        <div className="flex gap-1 mb-4 bg-slate-100 rounded-lg p-1 w-fit">
           <button onClick={() => setTab('inbound')}
-            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'inbound' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'inbound' ? 'bg-blue-600 text-slate-900' : 'text-slate-400 hover:text-slate-900'}`}>
             Inbound (19)
           </button>
           <button onClick={() => setTab('outbound')}
-            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'outbound' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'outbound' ? 'bg-purple-600 text-slate-900' : 'text-slate-400 hover:text-slate-900'}`}>
             Outbound (6)
           </button>
         </div>
@@ -697,7 +707,7 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
                 cy="50%"
                 outerRadius={85}
                 strokeWidth={2}
-                stroke="#0F172A"
+                stroke="#E2E8F0"
                 onClick={(entry) => { if (entry?.name !== 'Other') handleClick(entry); }}
                 style={{ cursor: 'pointer' }}
               >
@@ -711,7 +721,7 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
                 ))}
               </Pie>
               <Tooltip
-                contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }}
+                contentStyle={{ background: '#FFFFFF', border: '1px solid #334155', borderRadius: 8 }}
                 formatter={(v) => [Number(v).toLocaleString(), 'Calls']}
               />
             </PieChart>
@@ -722,9 +732,9 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
               <div key={r.name} className="flex items-center gap-2">
                 <div className="w-2.5 h-2.5 rounded-full shrink-0"
                   style={{ backgroundColor: r.name === 'Other' ? '#475569' : SCENARIO_COLORS[i % SCENARIO_COLORS.length] }} />
-                <span className={`text-xs flex-1 ${r.name === 'Other' ? 'text-slate-500 italic' : 'text-slate-300'}`}>{r.name}</span>
+                <span className={`text-xs flex-1 ${r.name === 'Other' ? 'text-slate-500 italic' : 'text-slate-600'}`}>{r.name}</span>
                 <span className="text-xs text-slate-400">{r.value.toLocaleString()}</span>
-                <span className="text-xs font-semibold text-slate-300 w-12 text-right">
+                <span className="text-xs font-semibold text-slate-600 w-12 text-right">
                   {((r.value / total) * 100).toFixed(1)}%
                 </span>
               </div>
@@ -751,18 +761,18 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
             return (
               <>
                 <p className="text-xs text-slate-400 mb-3">
-                  Sub-scenarios — <span className="text-white font-medium">{selected}</span>
+                  Sub-scenarios — <span className="text-slate-900 font-medium">{selected}</span>
                 </p>
                 <ResponsiveContainer width="100%" height={160}>
                   <PieChart>
                     <Pie data={subData} dataKey="value" nameKey="name" cx="50%" cy="50%"
-                      outerRadius={65} strokeWidth={2} stroke="#0F172A">
+                      outerRadius={65} strokeWidth={2} stroke="#E2E8F0">
                       {subData.map((_, i) => (
                         <Cell key={i} fill={COLORS[i % COLORS.length]} />
                       ))}
                     </Pie>
                     <Tooltip
-                      contentStyle={{ background: '#1E293B', border: '1px solid #334155', borderRadius: 8 }}
+                      contentStyle={{ background: '#FFFFFF', border: '1px solid #334155', borderRadius: 8 }}
                       formatter={(v) => [Number(v).toLocaleString(), 'Calls']}
                     />
                   </PieChart>
@@ -771,9 +781,9 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
                   {subData.map((r, i) => (
                     <div key={r.name} className="flex items-center gap-2">
                       <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                      <span className="text-xs text-slate-300 flex-1">{r.name}</span>
+                      <span className="text-xs text-slate-600 flex-1">{r.name}</span>
                       <span className="text-xs text-slate-400">{r.value.toLocaleString()}</span>
-                      <span className="text-xs font-semibold text-slate-300 w-12 text-right">
+                      <span className="text-xs font-semibold text-slate-600 w-12 text-right">
                         {((r.value / subTotal) * 100).toFixed(1)}%
                       </span>
                     </div>
@@ -804,16 +814,16 @@ function AgentParamsPanel({
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 12 }}
-      className="mt-4 bg-[#0F172A] border border-white/10 rounded-xl p-4"
+      className="mt-4 bg-white border border-slate-200 rounded-xl p-4"
     >
       <div className="flex items-center justify-between mb-3">
         <div>
-          <span className="text-sm font-semibold text-white">{agent.agent}</span>
+          <span className="text-sm font-semibold text-slate-900">{agent.agent}</span>
           <span className="ml-2 text-xs text-slate-400">
             {type === 'top' ? '— Why Top Performer' : '— Coaching Areas'}
           </span>
         </div>
-        <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+        <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition-colors">
           <X size={14} />
         </button>
       </div>
@@ -825,7 +835,7 @@ function AgentParamsPanel({
             {weak.map(p => (
               <div key={p.key} className="flex items-center gap-2">
                 <span className="text-xs text-slate-400 w-44 shrink-0">{p.parameter}</span>
-                <div className="flex-1 bg-white/5 rounded-full h-4 overflow-hidden">
+                <div className="flex-1 bg-slate-100 rounded-full h-4 overflow-hidden">
                   <motion.div
                     className="h-4 rounded-full flex items-center justify-end pr-1.5"
                     style={{ backgroundColor: COLOR_RED }}
@@ -833,7 +843,7 @@ function AgentParamsPanel({
                     animate={{ width: `${p.score}%` }}
                     transition={{ duration: 0.6 }}
                   >
-                    <span className="text-[10px] text-white font-bold">{p.score.toFixed(0)}%</span>
+                    <span className="text-[10px] text-slate-900 font-bold">{p.score.toFixed(0)}%</span>
                   </motion.div>
                 </div>
               </div>
@@ -849,7 +859,7 @@ function AgentParamsPanel({
             {strong.map(p => (
               <div key={p.key} className="flex items-center gap-2">
                 <span className="text-xs text-slate-400 w-44 shrink-0">{p.parameter}</span>
-                <div className="flex-1 bg-white/5 rounded-full h-4 overflow-hidden">
+                <div className="flex-1 bg-slate-100 rounded-full h-4 overflow-hidden">
                   <motion.div
                     className="h-4 rounded-full flex items-center justify-end pr-1.5"
                     style={{ backgroundColor: COLOR_GREEN }}
@@ -857,7 +867,7 @@ function AgentParamsPanel({
                     animate={{ width: `${p.score}%` }}
                     transition={{ duration: 0.6 }}
                   >
-                    <span className="text-[10px] text-white font-bold">{p.score.toFixed(0)}%</span>
+                    <span className="text-[10px] text-slate-900 font-bold">{p.score.toFixed(0)}%</span>
                   </motion.div>
                 </div>
               </div>
@@ -868,14 +878,14 @@ function AgentParamsPanel({
 
       {/* All params compact */}
       <details className="group">
-        <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300 transition-colors">
+        <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-600 transition-colors">
           All parameters ({params.length})
         </summary>
         <div className="mt-2 space-y-1">
           {sorted.map(p => (
             <div key={p.key} className="flex items-center gap-2">
               <span className="text-xs text-slate-400 w-44 shrink-0">{p.parameter}</span>
-              <div className="flex-1 bg-white/5 rounded-full h-3 overflow-hidden">
+              <div className="flex-1 bg-slate-100 rounded-full h-3 overflow-hidden">
                 <div
                   className="h-3 rounded-full"
                   style={{ width: `${p.score}%`, backgroundColor: pctColor(p.score) }}
@@ -937,7 +947,7 @@ function AgentTable({
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-white/5">
+            <tr className="border-b border-slate-200">
               <th className="text-left text-slate-500 py-2 pr-3">#</th>
               <th className="text-left text-slate-500 py-2 pr-3">Agent</th>
               <th className="text-right text-slate-500 py-2 pr-3">Calls</th>
@@ -954,8 +964,8 @@ function AgentTable({
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.04 }}
                 onClick={() => handleClick(a.agent)}
-                className={`border-b border-white/5 cursor-pointer transition-colors ${
-                  selected === a.agent ? 'bg-blue-500/10' : 'hover:bg-white/5'
+                className={`border-b border-slate-200 cursor-pointer transition-colors ${
+                  selected === a.agent ? 'bg-blue-500/10' : 'hover:bg-slate-100'
                 }`}
               >
                 <td className="py-2 pr-3 text-slate-600">{i + 1}</td>
@@ -1154,7 +1164,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
         <>
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/70 z-50 backdrop-blur-sm"
+            className="fixed inset-0 bg-slate-900/60 z-50 backdrop-blur-sm"
             onClick={onClose}
           />
           <motion.div
@@ -1162,14 +1172,14 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed inset-x-4 top-8 bottom-8 md:inset-x-auto md:left-1/2 md:-translate-x-1/2 md:w-full md:max-w-3xl bg-[#0B1120] border border-white/10 rounded-2xl z-50 flex flex-col shadow-2xl overflow-hidden"
+            className="fixed inset-x-4 top-8 bottom-8 md:inset-x-auto md:left-1/2 md:-translate-x-1/2 md:w-full md:max-w-3xl bg-white border border-slate-200 rounded-2xl z-50 flex flex-col shadow-2xl overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10 shrink-0">
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 shrink-0">
               <Download size={16} className="text-blue-400" />
-              <h2 className="text-base font-semibold text-white flex-1">Export Report</h2>
-              <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/5">
+              <h2 className="text-base font-semibold text-slate-900 flex-1">Export Report</h2>
+              <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition-colors p-1 rounded-lg hover:bg-slate-100">
                 <X size={16} />
               </button>
             </div>
@@ -1178,7 +1188,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
             <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-[220px_1fr]">
 
               {/* ── Left panel ── */}
-              <div className="border-b md:border-b-0 md:border-r border-white/8 p-5 flex flex-col gap-5 overflow-y-auto">
+              <div className="border-b md:border-b-0 md:border-r border-slate-200 p-5 flex flex-col gap-5 overflow-y-auto">
 
                 {/* Source */}
                 <div>
@@ -1188,8 +1198,8 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                       <button key={s} onClick={() => switchSource(s)}
                         className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                           source === s
-                            ? s === 'inbound' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
-                            : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
+                            ? s === 'inbound' ? 'bg-blue-600 text-slate-900' : 'bg-purple-600 text-slate-900'
+                            : 'bg-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100'
                         }`}
                       >
                         {s === 'inbound' ? 'Inbound' : 'Outbound'}
@@ -1206,14 +1216,14 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                       <span className="text-[10px] text-slate-600 block mb-1">From</span>
                       <input type="datetime-local" value={exportStart}
                         onChange={e => setExportStart(e.target.value)}
-                        className="w-full bg-[#1E293B] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-200 outline-none [color-scheme:dark]"
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none [color-scheme:dark]"
                       />
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-600 block mb-1">To</span>
                       <input type="datetime-local" value={exportEnd}
                         onChange={e => setExportEnd(e.target.value)}
-                        className="w-full bg-[#1E293B] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-200 outline-none [color-scheme:dark]"
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 outline-none [color-scheme:dark]"
                       />
                     </div>
                   </div>
@@ -1223,7 +1233,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                 <div>
                   <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold mb-2">Client</p>
                   <select value={exportClientId} onChange={e => setExportClientId(e.target.value)}
-                    className="w-full appearance-none bg-[#1E293B] border border-white/10 text-xs text-slate-200 rounded-lg px-2 py-1.5 outline-none"
+                    className="w-full appearance-none bg-white border border-slate-200 text-xs text-slate-700 rounded-lg px-2 py-1.5 outline-none"
                   >
                     <option value="">All Process</option>
                     {clients.map(c => (
@@ -1236,7 +1246,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                 <div>
                   <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold mb-2">Row Limit</p>
                   <select value={rowLimit} onChange={e => setRowLimit(Number(e.target.value))}
-                    className="w-full appearance-none bg-[#1E293B] border border-white/10 text-xs text-slate-200 rounded-lg px-2 py-1.5 outline-none"
+                    className="w-full appearance-none bg-white border border-slate-200 text-xs text-slate-700 rounded-lg px-2 py-1.5 outline-none"
                   >
                     <option value={1000}>1,000 rows</option>
                     <option value={5000}>5,000 rows</option>
@@ -1254,7 +1264,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                       { id: 'quality' as const, label: 'Quality Only' },
                     ] as const).map(p => (
                       <button key={p.id} onClick={() => applyPreset(p.id)}
-                        className="w-full text-left text-xs text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                        className="w-full text-left text-xs text-slate-400 hover:text-slate-900 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-100 transition-colors"
                       >
                         {p.label}
                       </button>
@@ -1267,7 +1277,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                   <button
                     onClick={handleDownload}
                     disabled={isDownloading || selectedCols.size === 0}
-                    className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold py-2.5 rounded-lg transition-colors"
+                    className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-slate-900 text-sm font-semibold py-2.5 rounded-lg transition-colors"
                   >
                     {isDownloading
                       ? <><RefreshCw size={14} className="animate-spin" /> Fetching…</>
@@ -1280,10 +1290,10 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                 </div>
 
                 {/* Fatal Agent Report */}
-                <div className="border-t border-white/8 pt-4 space-y-2">
+                <div className="border-t border-slate-200 pt-4 space-y-2">
                   <div className="flex items-center gap-2 mb-1">
                     <div className="w-1.5 h-3 rounded-full bg-red-500 shrink-0" />
-                    <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Fatal Agent Report</p>
+                    <p className="text-[11px] text-slate-600 font-semibold font-semibold uppercase tracking-wider">Fatal Agent Report</p>
                   </div>
                   <p className="text-[10px] text-slate-600 leading-relaxed">
                     Agent × date fatal call summary — total calls, fatal calls, fatal rate, avg quality. Uses the date range and client filter above.
@@ -1313,11 +1323,11 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                       <div key={group}>
                         <div className="flex items-center gap-2 mb-2.5 cursor-pointer" onClick={() => toggleGroup(group)}>
                           <div className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] font-bold shrink-0 transition-colors ${
-                            allOn  ? 'bg-blue-600 border-blue-600 text-white' :
-                            someOn ? 'bg-blue-600/40 border-blue-500 text-white' :
-                            'border-white/20 bg-transparent text-transparent'
+                            allOn  ? 'bg-blue-600 border-blue-600 text-slate-900' :
+                            someOn ? 'bg-blue-600/40 border-blue-500 text-slate-900' :
+                            'border-slate-300 bg-transparent text-transparent'
                           }`}>✓</div>
-                          <span className="text-xs font-semibold text-slate-300">{group}</span>
+                          <span className="text-xs font-semibold text-slate-600">{group}</span>
                           <span className="text-[10px] text-slate-600 ml-auto">
                             {groupCols.filter(c => selectedCols.has(c.key)).length}/{groupCols.length}
                           </span>
@@ -1331,7 +1341,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                                 onChange={() => toggleCol(col.key)}
                                 className="w-3.5 h-3.5 rounded accent-blue-500"
                               />
-                              <span className="text-xs text-slate-400 group-hover/col:text-slate-200 transition-colors truncate" title={col.label}>
+                              <span className="text-xs text-slate-400 group-hover/col:text-slate-700 transition-colors truncate" title={col.label}>
                                 {col.label}
                               </span>
                             </label>
@@ -1569,18 +1579,18 @@ export default function CallMasterDashboard() {
     ...agents.bottom.map(a => ({ Tier: 'Needs Coaching', Agent: a.agent, Calls: a.calls, 'Quality (%)': a.quality, 'Fatal (%)': a.fatal_rate, 'Compliance (%)': a.compliance })),
   ];
 
-  const TOOLTIP_STYLE = { background: '#0F172A', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
+  const TOOLTIP_STYLE = { background: '#FFFFFF', border: '1px solid #334155', borderRadius: 8, fontSize: 12 };
   const AXIS_TICK = { fill: '#64748B', fontSize: 11 };
-  const GRID = { strokeDasharray: '3 3', stroke: '#1E293B' };
+  const GRID = { strokeDasharray: '3 3', stroke: '#FFFFFF' };
 
   return (
-    <div className="min-h-screen bg-[#0F172A] text-white">
+    <div className="min-h-screen text-slate-900">
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="px-6 pt-6 pb-4 bg-[#0B1120] border-b border-white/5">
+      <div className="px-6 pt-6 pb-4 bg-white border-b border-slate-200">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-3">
             <div>
-              <h1 className="text-xl font-bold text-white tracking-tight">Call Master</h1>
+              <h1 className="text-xl font-bold text-slate-900 tracking-tight">Call Master</h1>
               <p className="text-xs text-slate-500 mt-0.5">Real-time analytics · {filters.lob === 'All' ? 'All LOBs' : filters.lob}</p>
             </div>
           </div>
@@ -1830,12 +1840,12 @@ export default function CallMasterDashboard() {
               ) : (
                 <ResponsiveContainer width="100%" height={240}>
                   <ComposedChart data={last7Days} margin={{ top: 8, right: 12, bottom: 24, left: -8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#FFFFFF" />
                     <XAxis dataKey="period" tick={{ fill: '#64748B', fontSize: 10 }} tickLine={false} axisLine={false}
                       tickFormatter={(v: string) => v.slice(5)} angle={-30} textAnchor="end" />
                     <YAxis domain={[0, 100]} tick={{ fill: '#64748B', fontSize: 11 }} tickLine={false} axisLine={false} unit="%" />
                     <Tooltip
-                      contentStyle={{ background: '#0F172A', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: '#FFFFFF', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
                       formatter={(v: unknown) => `${Number(v).toFixed(1)}%`}
                     />
                     <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
@@ -1865,7 +1875,7 @@ export default function CallMasterDashboard() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-white/8">
+                  <tr className="border-b border-slate-200">
                     <th className="text-left text-slate-500 py-2.5 pr-3 font-semibold">#</th>
                     <th className="text-left text-slate-500 py-2.5 pr-4 font-semibold">Agent</th>
                     <th className="text-right text-slate-500 py-2.5 pr-4 font-semibold">Audit Count</th>
@@ -1890,10 +1900,10 @@ export default function CallMasterDashboard() {
                       initial={{ opacity: 0, x: -6 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: Math.min(i * 0.02, 0.4) }}
-                      className="border-b border-white/5 hover:bg-white/5 transition-colors"
+                      className="border-b border-slate-200 hover:bg-slate-100 transition-colors"
                     >
                       <td className="py-2.5 pr-3 text-slate-600">{i + 1}</td>
-                      <td className="py-2.5 pr-4 font-medium text-slate-200">{r.agent}</td>
+                      <td className="py-2.5 pr-4 font-medium text-slate-700">{r.agent}</td>
                       <td className="py-2.5 pr-4 text-right text-slate-400">{r.audit_count.toLocaleString()}</td>
                       <td className="py-2.5 pr-4 text-right font-semibold" style={{ color: pctColor(r.cq_score) }}>
                         {r.cq_score.toFixed(1)}%
@@ -1917,7 +1927,7 @@ export default function CallMasterDashboard() {
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr className="border-t border-white/10">
+                  <tr className="border-t border-slate-200">
                     <td colSpan={2} className="pt-3 text-[11px] text-slate-600">{agentAudit.length} agents</td>
                     <td className="pt-3 text-right text-[11px] text-slate-500 font-semibold pr-4">
                       {agentAudit.reduce((s, r) => s + r.audit_count, 0).toLocaleString()}
@@ -1980,8 +1990,8 @@ export default function CallMasterDashboard() {
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-[#0B1120]">
-                    <tr className="border-b border-white/10">
+                  <thead className="sticky top-0 bg-white">
+                    <tr className="border-b border-slate-200">
                       <th className="text-left text-slate-500 py-2 pr-3 font-semibold">Process</th>
                       <th className="text-left text-slate-500 py-2 pr-3 font-semibold">Client</th>
                       <th className="text-left text-slate-500 py-2 pr-3 font-semibold">LOB</th>
@@ -1992,8 +2002,8 @@ export default function CallMasterDashboard() {
                   </thead>
                   <tbody>
                     {processList.map((p, i) => (
-                      <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                        <td className="py-2.5 pr-3 font-medium text-slate-200 max-w-[120px] truncate" title={p.process_name}>{p.process_name}</td>
+                      <tr key={i} className="border-b border-slate-200 hover:bg-slate-100 transition-colors">
+                        <td className="py-2.5 pr-3 font-medium text-slate-700 max-w-[120px] truncate" title={p.process_name}>{p.process_name}</td>
                         <td className="py-2.5 pr-3 text-slate-400 max-w-[100px] truncate" title={p.client_name}>{p.client_name}</td>
                         <td className="py-2.5 pr-3">
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
@@ -2028,8 +2038,8 @@ export default function CallMasterDashboard() {
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-[#0B1120]">
-                    <tr className="border-b border-white/10">
+                  <thead className="sticky top-0 bg-white">
+                    <tr className="border-b border-slate-200">
                       <th className="text-left text-slate-500 py-2 pr-3 font-semibold">#</th>
                       <th className="text-left text-slate-500 py-2 pr-3 font-semibold">Agent</th>
                       <th className="text-right text-slate-500 py-2 pr-3 font-semibold">Calls</th>
@@ -2039,9 +2049,9 @@ export default function CallMasterDashboard() {
                   </thead>
                   <tbody>
                     {agentsList.map((a, i) => (
-                      <tr key={a.agent} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                      <tr key={a.agent} className="border-b border-slate-200 hover:bg-slate-100 transition-colors">
                         <td className="py-2.5 pr-3 text-slate-600">{i + 1}</td>
-                        <td className="py-2.5 pr-3 font-medium text-slate-200">{a.agent}</td>
+                        <td className="py-2.5 pr-3 font-medium text-slate-700">{a.agent}</td>
                         <td className="py-2.5 pr-3 text-right text-slate-400">{fmt(a.calls)}</td>
                         <td className="py-2.5 pr-3 text-right font-semibold" style={{ color: pctColor(a.quality) }}>
                           {a.quality.toFixed(1)}%
@@ -2070,9 +2080,9 @@ export default function CallMasterDashboard() {
           {/* For simple KPI drawers — show current value + date range */}
           {drawer !== 'active_agents' && drawer !== 'active_clients' && (
             <div className="space-y-4 pt-2">
-              <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+              <div className="bg-slate-100 rounded-xl p-4 border border-slate-200">
                 <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Current Value</p>
-                <p className="text-3xl font-bold text-white">
+                <p className="text-3xl font-bold text-slate-900">
                   {drawer === 'total_calls'  && <AnimatedNumber value={kpis?.totalCalls ?? 0} />}
                   {drawer === 'audited_calls'&& <AnimatedNumber value={kpis?.totalAudited ?? 0} />}
                   {drawer === 'quality_score'&& <><AnimatedNumber value={kpis?.qualityScore ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
@@ -2083,9 +2093,9 @@ export default function CallMasterDashboard() {
                   {drawer === 'ob_quality'   && <><AnimatedNumber value={kpis?.outboundQuality ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
                 </p>
               </div>
-              <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+              <div className="bg-slate-100 rounded-xl p-4 border border-slate-200">
                 <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Date Range</p>
-                <p className="text-sm text-slate-300">{filters.startDate} — {filters.endDate}</p>
+                <p className="text-sm text-slate-600">{filters.startDate} — {filters.endDate}</p>
                 <p className="text-xs text-slate-500 mt-1">LOB: {filters.lob}</p>
               </div>
             </div>
