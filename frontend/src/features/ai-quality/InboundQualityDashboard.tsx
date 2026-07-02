@@ -3387,9 +3387,9 @@ export default function InboundQualityDashboard() {
                       <tbody>
                         {fd.top_contributors.map((r, i) => (
                           <tr key={i} className="border-b border-slate-100">
-                            <td className="py-2.5 px-4 text-slate-700">{agentTag(r.agent_name)}</td>
-                            <td className="py-2.5 px-4 text-slate-600 tabular-nums">{r.audit_count}</td>
-                            <td className="py-2.5 px-4 text-red-400 font-bold tabular-nums">{r.fatal_count}</td>
+                            <td className="py-2.5 px-4 text-slate-900 font-semibold">{agentTag(r.agent_name)}</td>
+                            <td className="py-2.5 px-4 text-slate-900 font-medium tabular-nums">{r.audit_count}</td>
+                            <td className="py-2.5 px-4 font-bold tabular-nums" style={{ color: r.fatal_count > 0 ? '#DC2626' : '#0F172A' }}>{r.fatal_count}</td>
                             <td className="py-2.5 px-4">
                               <div className="flex items-center gap-2">
                                 <div className="flex-1 h-4 rounded bg-slate-100 overflow-hidden max-w-[80px]">
@@ -3451,8 +3451,8 @@ export default function InboundQualityDashboard() {
                         { label: 'Sale Done Fatal',  value: fd.sale_done_fatal },
                       ].map(c => (
                         <div key={c.label} className="px-3 py-4 text-center">
-                          <p className="text-[9px] text-slate-600 uppercase tracking-wider mb-1">{c.label}</p>
-                          <p className={`text-2xl font-bold ${c.value > 0 ? 'text-red-400' : 'text-slate-400'}`}>{c.value}</p>
+                          <p className="text-[9px] text-slate-800 font-semibold uppercase tracking-wider mb-1">{c.label}</p>
+                          <p className={`text-2xl font-bold ${c.value > 0 ? 'text-red-500' : 'text-slate-700'}`}>{c.value}</p>
                         </div>
                       ))}
                     </div>
@@ -3478,12 +3478,12 @@ export default function InboundQualityDashboard() {
                           <tbody>
                             {fd.day_wise.map((r, i) => (
                               <tr key={i} className="border-b border-slate-100">
-                                <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
+                                <td className="py-2 px-3 text-slate-900 font-medium whitespace-nowrap">
                                   {r.call_date.slice(5).replace('-','/')}
                                 </td>
                                 {[r.query_fatal, r.complaint_fatal, r.request_fatal].map((v, ci) => (
                                   <td key={ci} className="py-2 px-3 tabular-nums text-center font-semibold"
-                                    style={{ background: heatBg(v, dayMaxFatal), color: v > 0 ? '#fff' : '#475569' }}>
+                                    style={{ background: heatBg(v, dayMaxFatal), color: v > 0 ? '#fff' : '#0F172A' }}>
                                     {v > 0 ? v : '—'}
                                   </td>
                                 ))}
@@ -3525,7 +3525,7 @@ export default function InboundQualityDashboard() {
                         <tbody>
                           {[...fd.week_scenario].reverse().map((r, i) => (
                             <tr key={i} className="border-b border-slate-100">
-                              <td className="py-2.5 px-3 text-slate-600 font-medium">{r.week_label}</td>
+                              <td className="py-2.5 px-3 text-slate-900 font-semibold">{r.week_label}</td>
                               {[r.query_fatal_pct, r.complaint_fatal_pct, r.request_fatal_pct, r.sale_done_fatal_pct].map((v, ci) => (
                                 <td key={ci} className="py-2.5 px-3">{pctCell(v)}</td>
                               ))}
@@ -3576,8 +3576,8 @@ export default function InboundQualityDashboard() {
                             className={`border-b border-slate-100 ${i % 2 === 0 ? '' : 'bg-transparent'} cursor-pointer hover:bg-slate-100 transition-colors`}
                             title={`Click to drill into ${resolveAgent(r.agent_name)}'s calls`}
                             onClick={() => openBandDetail('no_fatal', `${resolveAgent(r.agent_name)} — Call Breakdown`, r.cq_score >= 90 ? '#22C55E' : '#F59E0B', r.agent_name)}>
-                            <td className="py-2.5 px-4 text-slate-700 whitespace-nowrap">{agentTag(r.agent_name)}</td>
-                            <td className="py-2.5 px-4 tabular-nums text-slate-600">{r.audit_count}</td>
+                            <td className="py-2.5 px-4 text-slate-900 font-semibold whitespace-nowrap">{agentTag(r.agent_name)}</td>
+                            <td className="py-2.5 px-4 tabular-nums text-slate-900 font-medium">{r.audit_count}</td>
                             <td className="py-2.5 px-4">
                               <div className="flex items-center gap-2 min-w-[80px]">
                                 <div className="flex-1 h-4 rounded bg-slate-100 overflow-hidden">
@@ -3591,15 +3591,15 @@ export default function InboundQualityDashboard() {
                                 </div>
                               </div>
                             </td>
-                            <td className="py-2.5 px-4 text-red-400 font-bold tabular-nums">{r.fatal_count}</td>
+                            <td className="py-2.5 px-4 font-bold tabular-nums" style={{ color: r.fatal_count > 0 ? '#DC2626' : '#0F172A' }}>{r.fatal_count}</td>
                             <td className="py-2.5 px-4">
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold"
-                                style={{ background: r.fatal_pct > 0 ? 'rgba(239,68,68,0.15)' : 'transparent', color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>
+                                style={{ background: r.fatal_pct > 0 ? 'rgba(239,68,68,0.15)' : 'transparent', color: r.fatal_pct > 0 ? '#DC2626' : '#0F172A' }}>
                                 {r.fatal_pct}%
                               </span>
                             </td>
                             {[r.below_avg_pct, r.avg_pct, r.good_pct, r.excellent_pct].map((v, ci) => (
-                              <td key={ci} className="py-2.5 px-4 tabular-nums text-slate-400">{v > 0 ? `${v}%` : '0%'}</td>
+                              <td key={ci} className="py-2.5 px-4 tabular-nums text-slate-900 font-medium">{v > 0 ? `${v}%` : '0%'}</td>
                             ))}
                           </tr>
                         ))}
@@ -3908,7 +3908,7 @@ export default function InboundQualityDashboard() {
                         <tbody>
                           {dd.week_scenario_audit.map((r, i) => (
                             <tr key={i} className="border-b border-slate-100">
-                              <td className="py-2.5 px-3 text-slate-600 font-medium">{r.week_label}</td>
+                              <td className="py-2.5 px-3 text-slate-900 font-semibold">{r.week_label}</td>
                               <td className="py-2.5 px-3">{pctCellDetail(r.query_pct,     '#22C55E')}</td>
                               <td className="py-2.5 px-3">{pctCellDetail(r.complaint_pct, '#EF4444')}</td>
                               <td className="py-2.5 px-3">{pctCellDetail(r.request_pct,   '#22C55E')}</td>
@@ -4115,7 +4115,7 @@ export default function InboundQualityDashboard() {
                         <tbody>
                           {weekWiseData.map((r, i) => (
                             <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
-                              <td className="py-2.5 px-3 text-slate-600 font-medium">{r.week_label}</td>
+                              <td className="py-2.5 px-3 text-slate-900 font-semibold">{r.week_label}</td>
                               <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.audit_count}</td>
                               <td className="py-2.5 px-3">{scoreCell(r.cq_score)}</td>
                               <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.fatal_count}</td>
