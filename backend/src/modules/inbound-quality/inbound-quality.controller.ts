@@ -319,7 +319,11 @@ export async function getAgentAuditBandSummary(req: Request, res: Response) {
 
 export async function getBandDetail(req: Request, res: Response) {
   try {
-    const filters = { ...parseFilters(req), band: (req.query.band as string) || 'excellent' };
+    const filters = {
+      ...parseFilters(req),
+      band:    (req.query.band    as string) || 'excellent',
+      agentId: (req.query.agentId as string) || undefined,
+    };
     const data = await svc.getBandDetail(filters);
     res.json({ data });
   } catch (err: unknown) {
@@ -379,6 +383,24 @@ export async function getRepeatCallDetail(req: Request, res: Response) {
 export async function getRawData(req: Request, res: Response) {
   try {
     const data = await svc.getRawData(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getScoreComponentDetail(req: Request, res: Response) {
+  try {
+    const data = await svc.getScoreComponentDetail(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getFatalCallsList(req: Request, res: Response) {
+  try {
+    const data = await svc.getFatalCallsList(parseFilters(req));
     res.json({ data });
   } catch (err: unknown) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });

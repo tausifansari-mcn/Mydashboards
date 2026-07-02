@@ -482,7 +482,7 @@ export default function SalesDashboard() {
   }));
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen text-slate-900">
       {/* ── Header ── */}
       <div className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200 px-6 py-3">
         <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -507,28 +507,21 @@ export default function SalesDashboard() {
         </div>
 
         {/* ── Filter Bar ── */}
-        <div className="flex flex-wrap items-end gap-3 mt-3">
-          {/* Start date */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] text-slate-500 uppercase tracking-wider">From</label>
-            <input
-              type="datetime-local"
-              value={filters.startDate}
-              onChange={e => setFilter('startDate', e.target.value)}
-              className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-violet-500 transition-colors"
-            />
-          </div>
-
-          {/* End date */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] text-slate-500 uppercase tracking-wider">To</label>
-            <input
-              type="datetime-local"
-              value={filters.endDate}
-              onChange={e => setFilter('endDate', e.target.value)}
-              className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-violet-500 transition-colors"
-            />
-          </div>
+        <div className="filter-bar mt-3 items-center">
+          <label className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'rgba(255,255,255,0.80)' }}>From</label>
+          <input
+            type="datetime-local"
+            value={filters.startDate}
+            onChange={e => setFilter('startDate', e.target.value)}
+            className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-colors [color-scheme:dark]"
+          />
+          <label className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'rgba(255,255,255,0.80)' }}>To</label>
+          <input
+            type="datetime-local"
+            value={filters.endDate}
+            onChange={e => setFilter('endDate', e.target.value)}
+            className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-colors [color-scheme:dark]"
+          />
 
           {/* Client / Process dropdown — super admin only */}
           {isSuperAdmin && (

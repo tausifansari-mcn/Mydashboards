@@ -14,5 +14,7 @@ router.get('/kpis',               ctrl.getKPIs);
 router.get('/detail-analysis',    ctrl.getDetailAnalysis);
 router.get('/objection-analysis', ctrl.getObjectionAnalysis);
 router.get('/agent-nps',          ctrl.getAgentNPS);
+router.get('/missing-agents',     ctrl.getMissingAgents);
+router.post('/agent-master',      ctrl.insertAgentMaster);
 
 export default router;

@@ -621,7 +621,7 @@ export default function CustomerIntelligenceDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-white text-slate-900">
+    <div className="min-h-screen text-slate-900">
       {/* Header */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
@@ -641,19 +641,20 @@ export default function CustomerIntelligenceDashboard() {
         </div>
         {/* Filter bar */}
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 pb-3 flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-lg px-2.5 py-1.5 border border-slate-200">
-            <span className="text-[10px] text-slate-500">From</span>
+          <div className="date-pill">
+            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.65)' }}>From</span>
             <input type="datetime-local" value={startDT} onChange={e => setStartDT(e.target.value)}
-              className="bg-transparent text-[11px] text-slate-600 outline-none w-36" />
+              className="bg-transparent text-[11px] outline-none w-36 text-white [color-scheme:dark]" />
           </div>
-          <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-lg px-2.5 py-1.5 border border-slate-200">
-            <span className="text-[10px] text-slate-500">To</span>
+          <div className="date-pill">
+            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.65)' }}>To</span>
             <input type="datetime-local" value={endDT} onChange={e => setEndDT(e.target.value)}
-              className="bg-transparent text-[11px] text-slate-600 outline-none w-36" />
+              className="bg-transparent text-[11px] outline-none w-36 text-white [color-scheme:dark]" />
           </div>
           {!isSingle ? (
             <select value={clientId} onChange={e => setClientId(e.target.value)}
-              className="bg-slate-800/60 border border-slate-200 rounded-lg text-[11px] text-slate-600 px-2.5 py-1.5 outline-none">
+              className="border rounded-lg text-[11px] px-2.5 py-1.5 outline-none text-white"
+              style={{ background: 'linear-gradient(135deg,#0D47A1,#1565C0)', borderColor: 'rgba(255,255,255,0.25)' }}>
               <option value="">All Process</option>
               {clients.map(c => <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>)}
             </select>

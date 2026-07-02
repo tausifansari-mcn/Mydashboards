@@ -51,7 +51,7 @@ export default function LoginPage() {
             >
               <img src="/Logo.png" alt="MAS Logo" className="h-20 w-auto object-contain drop-shadow-md" />
             </motion.div>
-            <h1 className="text-xl font-black text-slate-900">My Dashboard</h1>
+            <h1 className="text-xl font-bold text-slate-900">My Dashboard</h1>
             <p className="mt-1 text-sm font-semibold" style={{ color: '#1565C0' }}>Mas CallNet Analytics</p>
           </div>
 

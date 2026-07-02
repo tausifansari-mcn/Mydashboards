@@ -52,19 +52,12 @@ function ibCqColor(score: number): string {
   if (score >= 90) return '#16A34A';
   if (score >= 85) return '#D97706';
   if (score > 0)   return '#DC2626';
-  return '#64748B';
-}
-
-function ibCqBg(score: number): string {
-  if (score >= 90) return '#DCFCE7';
-  if (score >= 85) return '#FEF3C7';
-  if (score > 0)   return '#FEE2E2';
-  return '#F1F5F9';
+  return '#94A3B8';
 }
 
 const SLIDES = [
-  { label: 'Inbound',  accent: 'sky',    icon: PhoneCall,  gradient: 'from-sky-500 to-cyan-400'   },
-  { label: 'Outbound', accent: 'purple',  icon: TrendingUp, gradient: 'from-purple-500 to-violet-400' },
+  { label: 'Inbound',  icon: PhoneCall  },
+  { label: 'Outbound', icon: TrendingUp },
 ] as const;
 
 function npsColor(score: number): string {
@@ -73,78 +66,34 @@ function npsColor(score: number): string {
   if (score >= 0)  return '#EA580C';
   return '#DC2626';
 }
-function npsBg(score: number): string {
-  if (score >= 50) return '#DCFCE7';
-  if (score >= 20) return '#FEF3C7';
-  if (score >= 0)  return '#FFEDD5';
-  return '#FEE2E2';
-}
-
 function convColor(pct: number): string {
   if (pct >= 15) return '#16A34A';
   if (pct >= 7)  return '#D97706';
   return '#DC2626';
 }
-function convBg(pct: number): string {
-  if (pct >= 15) return '#DCFCE7';
-  if (pct >= 7)  return '#FEF3C7';
-  return '#FEE2E2';
-}
-
 function posColor(pct: number): string {
   if (pct >= 60) return '#16A34A';
   if (pct >= 40) return '#D97706';
   return '#DC2626';
 }
-function posBg(pct: number): string {
-  if (pct >= 60) return '#DCFCE7';
-  if (pct >= 40) return '#FEF3C7';
-  return '#FEE2E2';
-}
-
 function opsRate(c: ClientKPISummary): number {
   if (!c.valid_calls) return 0;
   return Math.round((c.ops / c.valid_calls) * 100);
 }
 
+/* ── Compact KPI stat chip — no color inversion hover ── */
 interface KPIChipProps {
   icon: React.ElementType;
   label: string;
   value: string;
   color: string;
-  bg: string;
 }
-
-function KPIChip({ icon: Icon, label, value, color, bg }: KPIChipProps) {
+function KPIChip({ icon: Icon, label, value, color }: KPIChipProps) {
   return (
-    <div
-      className="flex flex-col items-center justify-center px-2 py-3 rounded-xl border-2 gap-1 transition-all duration-200 cursor-default hover:scale-[1.06] hover:shadow-lg hover:z-10 relative"
-      style={{
-        backgroundColor: bg,
-        borderColor: `${color}40`,
-      }}
-      onMouseEnter={e => {
-        (e.currentTarget as HTMLDivElement).style.backgroundColor = color;
-        (e.currentTarget as HTMLDivElement).style.borderColor = color;
-        const texts = (e.currentTarget as HTMLDivElement).querySelectorAll('[data-val],[data-lbl]');
-        texts.forEach(t => ((t as HTMLElement).style.color = '#ffffff'));
-        const icon = (e.currentTarget as HTMLDivElement).querySelector('[data-ico]');
-        if (icon) (icon as HTMLElement).style.color = '#ffffff';
-      }}
-      onMouseLeave={e => {
-        (e.currentTarget as HTMLDivElement).style.backgroundColor = bg;
-        (e.currentTarget as HTMLDivElement).style.borderColor = `${color}40`;
-        const val = (e.currentTarget as HTMLDivElement).querySelector('[data-val]');
-        const lbl = (e.currentTarget as HTMLDivElement).querySelector('[data-lbl]');
-        const ico = (e.currentTarget as HTMLDivElement).querySelector('[data-ico]');
-        if (val) (val as HTMLElement).style.color = color;
-        if (lbl) (lbl as HTMLElement).style.color = '#475569';
-        if (ico) (ico as HTMLElement).style.color = color;
-      }}
-    >
-      <Icon data-ico size={14} style={{ color }} className="shrink-0 transition-colors duration-200" />
-      <span data-val className="text-[15px] font-black leading-tight transition-colors duration-200" style={{ color }}>{value}</span>
-      <span data-lbl className="text-[9px] font-bold uppercase tracking-wider text-center transition-colors duration-200 text-slate-500">{label}</span>
+    <div className="flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-white hover:shadow-sm transition-all duration-150 cursor-default min-w-0">
+      <Icon size={13} style={{ color }} className="shrink-0" />
+      <span className="text-sm font-bold leading-tight tabular-nums" style={{ color }}>{value}</span>
+      <span className="text-[10px] font-medium text-slate-400 text-center leading-tight">{label}</span>
     </div>
   );
 }
@@ -197,83 +146,89 @@ export default function AIQualityDashboard() {
     : '0.0';
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col">
+    <div className="min-h-screen text-slate-900 flex flex-col">
 
-      {/* ── Hero Header ── */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 shadow-xl">
-        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-4 flex-wrap">
+      {/* ── Page Header ── */}
+      <div className="sticky top-0 z-30 shadow-md" style={{ background: 'linear-gradient(135deg, #0D47A1 0%, #1565C0 100%)' }}>
+        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-4 flex-wrap">
           <button onClick={() => navigate('/dashboard')}
-            className="flex items-center gap-1.5 text-slate-300 hover:text-white transition-colors text-xs font-semibold bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg border border-white/10">
+            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors"
+            style={{ color: 'rgba(255,255,255,0.85)' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.15)'; (e.currentTarget as HTMLButtonElement).style.color = '#fff'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = 'rgba(255,255,255,0.85)'; }}
+          >
             <ChevronLeft size={14} /> Back
           </button>
-          <div className="w-px h-6 bg-white/20" />
+          <div className="w-px h-5" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }} />
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-md border border-white/20">
-              <img src="/Logo.png" alt="MAS" className="h-9 w-9 object-contain p-0.5" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white shadow-md">
+              <img src="/Logo.png" alt="MAS" className="h-7 w-7 object-contain" />
             </div>
             <div>
-              <h1 className="text-base font-black text-white leading-none tracking-tight">AI Quality Dashboard</h1>
-              <p className="text-[11px] mt-0.5 font-semibold" style={{ color: '#43A832' }}>Mas CallNet Analytics Platform</p>
+              <h1 className="text-sm font-bold leading-none text-white">AI Quality Dashboard</h1>
+              <p className="text-[11px] mt-0.5 font-medium" style={{ color: 'rgba(255,255,255,0.65)' }}>MAS CallNet Analytics</p>
             </div>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <Activity size={12} className="text-emerald-400 animate-pulse" />
-            <span className="text-[11px] text-emerald-400 font-semibold">Live Data</span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <Activity size={11} className="animate-pulse" style={{ color: '#86EFAC' }} />
+            <span className="text-[11px] font-semibold" style={{ color: '#86EFAC' }}>Live</span>
           </div>
         </div>
 
-        {/* ── Slide Tabs inside header ── */}
-        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 pb-0 flex gap-2">
-          {SLIDES.map((s, i) => {
-            const isActive = activeSlide === i;
-            const SlideIcon = s.icon;
-            return (
-              <button
-                key={s.label}
-                onClick={() => setActiveSlide(i)}
-                className={`relative flex items-center gap-2 px-5 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-200 rounded-t-xl border-b-2 ${
-                  isActive
-                    ? 'bg-white text-slate-900 border-transparent -mb-px shadow-lg'
-                    : 'bg-white/10 text-slate-300 hover:text-white hover:bg-white/20 border-transparent'
-                }`}
-              >
-                <SlideIcon size={13} className={isActive ? (i === 0 ? 'text-sky-500' : 'text-purple-500') : ''} />
-                {s.label}
-                {isActive && (
-                  <span className={`absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full w-8 h-0.5 bg-gradient-to-r ${s.gradient} rounded-full`} />
-                )}
-              </button>
-            );
-          })}
+        {/* ── Pill tabs ── */}
+        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 pb-3 pt-1">
+          <div className="flex gap-1 p-1 rounded-xl w-fit" style={{ backgroundColor: 'rgba(0,0,0,0.2)' }}>
+            {SLIDES.map((s, i) => {
+              const isActive = activeSlide === i;
+              const SlideIcon = s.icon;
+              return (
+                <button
+                  key={s.label}
+                  onClick={() => setActiveSlide(i)}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 cursor-pointer"
+                  style={{
+                    backgroundColor: isActive ? '#fff' : 'transparent',
+                    color: isActive ? '#1565C0' : 'rgba(255,255,255,0.75)',
+                  }}
+                >
+                  <SlideIcon size={13} />
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-6 w-full">
+      <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-5 w-full">
 
         {/* ── Slide 0: Inbound ── */}
         {activeSlide === 0 && (
           <>
             {/* Date filter */}
-            <div className="flex items-center gap-3 flex-wrap mb-6 bg-white border border-slate-200 rounded-2xl px-5 py-3 shadow-sm">
+            <div className="mb-5 rounded-xl px-4 py-2.5 flex items-center gap-3 flex-wrap"
+              style={{ background: 'linear-gradient(135deg, #0D47A1 0%, #1565C0 100%)', boxShadow: '0 2px 8px rgba(21,101,192,0.25)' }}>
               <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-sky-500" />
-                <span className="text-xs font-black text-slate-800 uppercase tracking-widest">Inbound Period</span>
+                <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                <span className="text-xs font-semibold text-white">Inbound Period</span>
               </div>
-              <div className="w-px h-5 bg-slate-200 mx-1" />
-              <label className="text-[11px] text-slate-600 font-bold uppercase tracking-wider">From</label>
+              <div className="w-px h-4 mx-0.5" style={{ backgroundColor: 'rgba(255,255,255,0.25)' }} />
+              <label className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.75)' }}>From</label>
               <input type="datetime-local" value={ibStart} onChange={e => setIbStart(e.target.value)}
-                className="bg-sky-50 border-2 border-sky-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 font-semibold focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100 transition-all" />
-              <label className="text-[11px] text-slate-600 font-bold uppercase tracking-wider">To</label>
+                className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-all"
+                style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} />
+              <label className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.75)' }}>To</label>
               <input type="datetime-local" value={ibEnd} onChange={e => setIbEnd(e.target.value)}
-                className="bg-sky-50 border-2 border-sky-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 font-semibold focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100 transition-all" />
+                className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-all"
+                style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} />
             </div>
 
             {/* Section header */}
-            <div className="flex items-center gap-2 mb-4">
-              <Building2 size={14} className="text-sky-500" />
-              <h2 className="text-xs font-black uppercase tracking-widest text-slate-800">All Inbound Processes</h2>
+            <div className="section-header">
+              <Building2 size={13} className="text-slate-400" />
+              <h2 className="section-title">All Inbound Processes</h2>
               {!ibLoading && (
-                <span className="ml-auto text-[11px] font-bold text-slate-500 bg-white border border-slate-200 px-3 py-1 rounded-full shadow-sm">
+                <span className="ml-auto text-[11px] text-slate-500">
                   {ibClients.length} processes
                 </span>
               )}
@@ -282,7 +237,7 @@ export default function AIQualityDashboard() {
             {ibLoading ? (
               <div className="flex flex-col gap-3">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i} className="rounded-2xl bg-white border border-slate-200 px-5 py-4 animate-pulse shadow-sm">
+                  <div key={i} className="rounded-xl bg-white border border-slate-200 px-5 py-4 animate-pulse">
                     <div className="h-4 bg-slate-100 rounded-lg w-1/3 mb-4" />
                     <div className="grid grid-cols-6 gap-2">
                       {[...Array(6)].map((__, j) => <div key={j} className="h-16 bg-slate-100 rounded-xl" />)}
@@ -292,51 +247,48 @@ export default function AIQualityDashboard() {
               </div>
             ) : ibClients.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 gap-3">
-                <div className="p-4 rounded-2xl bg-slate-100">
-                  <Building2 size={32} className="text-slate-300" />
+                <div className="p-4 rounded-xl bg-slate-100">
+                  <Building2 size={28} className="text-slate-300" />
                 </div>
-                <p className="text-slate-500 font-semibold text-sm">No inbound audit data for this period</p>
+                <p className="text-slate-400 font-medium text-sm">No inbound audit data for this period</p>
               </div>
             ) : (
-              <div className="flex flex-col gap-3 w-full">
+              <div className="flex flex-col gap-2.5 w-full">
                 {ibClients.filter((c) => canAccessInboundClient(c.client_id)).map((c, i) => {
                   const accentColor = CARD_COLORS[i % CARD_COLORS.length];
                   const total = c.audit_count;
                   const pct = (n: number) => total > 0 ? `${((n / total) * 100).toFixed(0)}%` : '—';
+                  const cqColor = ibCqColor(c.cq_score);
                   return (
                     <div key={c.client_id}
                       onClick={() => navigate(`/quality/inbound/${c.client_id}`)}
-                      className="group relative bg-white rounded-2xl border-2 border-slate-100 hover:border-sky-300 transition-all duration-200 cursor-pointer hover:-translate-y-0.5 hover:shadow-xl w-full overflow-hidden shadow-sm"
+                      className="group bg-white rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-md transition-all duration-150 cursor-pointer hover:-translate-y-0.5 w-full overflow-hidden"
                     >
-                      {/* Top color band */}
-                      <div className="h-1.5 w-full" style={{ backgroundColor: accentColor }} />
+                      <div className="h-0.5 w-full" style={{ backgroundColor: accentColor }} />
                       <div className="px-5 pt-3 pb-4">
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-black shadow-sm"
-                            style={{ background: `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)`, color: '#fff' }}>
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white shrink-0"
+                            style={{ backgroundColor: accentColor }}>
                             {(c.client_name || '?').charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[15px] font-black text-slate-900 truncate" title={c.client_name}>
-                              {c.client_name}
-                            </p>
-                            <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Click to view full report →</p>
+                            <p className="text-sm font-semibold text-slate-900 truncate">{c.client_name}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[10px] text-slate-400">{total.toLocaleString()} audits</span>
+                              <span className="text-[10px] font-bold" style={{ color: cqColor }}>
+                                CQ {c.cq_score ? `${c.cq_score}%` : '—'}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold px-2.5 py-1 rounded-full border"
-                              style={{ color: accentColor, backgroundColor: `${accentColor}15`, borderColor: `${accentColor}40` }}>
-                              Inbound
-                            </span>
-                            <ChevronRight size={15} className="text-slate-300 group-hover:text-sky-500 transition-colors" />
-                          </div>
+                          <ChevronRight size={14} className="text-slate-300 group-hover:text-slate-600 transition-colors" />
                         </div>
                         <div className="grid grid-cols-6 gap-2">
-                          <KPIChip icon={ClipboardCheck} label="Audit Count"    value={total.toLocaleString()}                       color="#3B82F6"              bg="#EFF6FF" />
-                          <KPIChip icon={Star}           label="CQ Score %"     value={c.cq_score ? `${c.cq_score}%` : '—'}          color={ibCqColor(c.cq_score)}              bg={ibCqBg(c.cq_score)} />
-                          <KPIChip icon={TrendingUp}     label="W/O Fatal CQ%"  value={c.cq_score_no_fatal ? `${c.cq_score_no_fatal}%` : '—'} color={ibCqColor(c.cq_score_no_fatal)} bg={ibCqBg(c.cq_score_no_fatal)} />
-                          <KPIChip icon={ThumbsUp}       label="Excellent"      value={c.excellent ? `${c.excellent} (${pct(c.excellent)})` : '0'} color="#16A34A" bg="#DCFCE7" />
-                          <KPIChip icon={PhoneCall}      label="Good"           value={c.good ? `${c.good} (${pct(c.good)})` : '0'}  color="#2563EB"              bg="#DBEAFE" />
-                          <KPIChip icon={Target}         label="Below Avg"      value={c.below_average ? `${c.below_average} (${pct(c.below_average)})` : '0'} color={c.below_average > 0 ? '#DC2626' : '#64748B'} bg={c.below_average > 0 ? '#FEE2E2' : '#F1F5F9'} />
+                          <KPIChip icon={ClipboardCheck} label="Audits"       value={total.toLocaleString()}                              color="#3B82F6" />
+                          <KPIChip icon={Star}           label="CQ Score"      value={c.cq_score ? `${c.cq_score}%` : '—'}               color={cqColor} />
+                          <KPIChip icon={TrendingUp}     label="W/O Fatal"     value={c.cq_score_no_fatal ? `${c.cq_score_no_fatal}%` : '—'} color={ibCqColor(c.cq_score_no_fatal)} />
+                          <KPIChip icon={ThumbsUp}       label="Excellent"     value={c.excellent ? `${c.excellent} (${pct(c.excellent)})` : '0'} color="#16A34A" />
+                          <KPIChip icon={PhoneCall}      label="Good"          value={c.good ? `${c.good} (${pct(c.good)})` : '0'}       color="#2563EB" />
+                          <KPIChip icon={Target}         label="Below Avg"     value={c.below_average ? `${c.below_average} (${pct(c.below_average)})` : '0'} color={c.below_average > 0 ? '#DC2626' : '#94A3B8'} />
                         </div>
                       </div>
                     </div>
@@ -351,26 +303,29 @@ export default function AIQualityDashboard() {
         {activeSlide === 1 && (
           <>
             {/* Date filter */}
-            <div className="flex items-center gap-3 flex-wrap mb-6 bg-white border border-slate-200 rounded-2xl px-5 py-3 shadow-sm">
+            <div className="mb-5 rounded-xl px-4 py-2.5 flex items-center gap-3 flex-wrap"
+              style={{ background: 'linear-gradient(135deg, #0D47A1 0%, #1565C0 100%)', boxShadow: '0 2px 8px rgba(21,101,192,0.25)' }}>
               <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-purple-500" />
-                <span className="text-xs font-black text-slate-800 uppercase tracking-widest">Outbound Period</span>
+                <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                <span className="text-xs font-semibold text-white">Outbound Period</span>
               </div>
-              <div className="w-px h-5 bg-slate-200 mx-1" />
-              <label className="text-[11px] text-slate-600 font-bold uppercase tracking-wider">From</label>
+              <div className="w-px h-4 mx-0.5" style={{ backgroundColor: 'rgba(255,255,255,0.25)' }} />
+              <label className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.75)' }}>From</label>
               <input type="datetime-local" value={startDate} onChange={e => setStartDate(e.target.value)}
-                className="bg-purple-50 border-2 border-purple-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 font-semibold focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-100 transition-all" />
-              <label className="text-[11px] text-slate-600 font-bold uppercase tracking-wider">To</label>
+                className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-all"
+                style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} />
+              <label className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.75)' }}>To</label>
               <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
-                className="bg-purple-50 border-2 border-purple-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 font-semibold focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-100 transition-all" />
+                className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-all"
+                style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} />
             </div>
 
             {/* Section header */}
-            <div className="flex items-center gap-2 mb-4">
-              <Building2 size={14} className="text-purple-500" />
-              <h2 className="text-xs font-black uppercase tracking-widest text-slate-800">All Outbound Processes</h2>
+            <div className="section-header">
+              <Building2 size={13} className="text-slate-400" />
+              <h2 className="section-title">All Outbound Processes</h2>
               {!loading && (
-                <span className="ml-auto text-[11px] font-bold text-slate-500 bg-white border border-slate-200 px-3 py-1 rounded-full shadow-sm">
+                <span className="ml-auto text-[11px] text-slate-500">
                   {clients.length} processes · Avg Conv {avgConv}%
                 </span>
               )}
@@ -379,7 +334,7 @@ export default function AIQualityDashboard() {
             {loading ? (
               <div className="flex flex-col gap-3">
                 {[...Array(5)].map((_, i) => (
-                  <div key={i} className="rounded-2xl bg-white border border-slate-200 px-5 py-4 animate-pulse shadow-sm">
+                  <div key={i} className="rounded-xl bg-white border border-slate-200 px-5 py-4 animate-pulse">
                     <div className="h-4 bg-slate-100 rounded-lg w-1/3 mb-4" />
                     <div className="grid grid-cols-6 gap-2">
                       {[...Array(6)].map((__, j) => <div key={j} className="h-16 bg-slate-100 rounded-xl" />)}
@@ -388,45 +343,35 @@ export default function AIQualityDashboard() {
                 ))}
               </div>
             ) : (
-              <div className="flex flex-col gap-3 w-full">
+              <div className="flex flex-col gap-2.5 w-full">
                 {clients.filter((c) => canAccessOutboundClient(c.client_id)).map((c, i) => {
                   const accentColor = CARD_COLORS[i % CARD_COLORS.length];
                   const rate = opsRate(c);
                   return (
-                    <div
-                      key={c.client_id}
+                    <div key={c.client_id}
                       onClick={() => navigate(`/quality/${c.client_id}`)}
-                      className="group relative bg-white rounded-2xl border-2 border-slate-100 hover:border-purple-300 transition-all duration-200 cursor-pointer hover:-translate-y-0.5 hover:shadow-xl w-full overflow-hidden shadow-sm"
+                      className="group bg-white rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-md transition-all duration-150 cursor-pointer hover:-translate-y-0.5 w-full overflow-hidden"
                     >
-                      {/* Top color band */}
-                      <div className="h-1.5 w-full" style={{ backgroundColor: accentColor }} />
+                      <div className="h-0.5 w-full" style={{ backgroundColor: accentColor }} />
                       <div className="px-5 pt-3 pb-4">
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-black shadow-sm"
-                            style={{ background: `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)`, color: '#fff' }}>
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white shrink-0"
+                            style={{ backgroundColor: accentColor }}>
                             {(c.client_name || '?').charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[15px] font-black text-slate-900 truncate" title={c.client_name}>
-                              {c.client_name || `Client ${c.client_id}`}
-                            </p>
-                            <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Click to view full report →</p>
+                            <p className="text-sm font-semibold text-slate-900 truncate">{c.client_name || `Client ${c.client_id}`}</p>
+                            <span className="text-[10px] text-slate-400">{c.total_calls.toLocaleString()} calls</span>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold px-2.5 py-1 rounded-full border"
-                              style={{ color: accentColor, backgroundColor: `${accentColor}15`, borderColor: `${accentColor}40` }}>
-                              Outbound
-                            </span>
-                            <ChevronRight size={15} className="text-slate-300 group-hover:text-purple-500 transition-colors" />
-                          </div>
+                          <ChevronRight size={14} className="text-slate-300 group-hover:text-slate-600 transition-colors" />
                         </div>
                         <div className="grid grid-cols-6 gap-2">
-                          <KPIChip icon={PhoneCall}    label="Total Calls"  value={c.total_calls.toLocaleString()}                                                  color="#0EA5E9"              bg="#E0F2FE" />
-                          <KPIChip icon={ShoppingCart} label="Sales"        value={c.sales.toLocaleString()}                                                         color="#16A34A"              bg="#DCFCE7" />
-                          <KPIChip icon={TrendingUp}   label="Conv. Rate"   value={`${c.conversion_pct}%`}                                                           color={convColor(c.conversion_pct)} bg={convBg(c.conversion_pct)} />
-                          <KPIChip icon={Star}         label="NPS Score"    value={c.nps_score > 0 ? `+${c.nps_score}` : String(c.nps_score)}                       color={npsColor(c.nps_score)}      bg={npsBg(c.nps_score)} />
-                          <KPIChip icon={ThumbsUp}     label="Positive"     value={c.total_feedback ? `${c.positive_pct}%` : '—'}                                   color={c.total_feedback ? posColor(c.positive_pct) : '#64748B'} bg={c.total_feedback ? posBg(c.positive_pct) : '#F1F5F9'} />
-                          <KPIChip icon={Target}       label="Opening Rate" value={c.valid_calls ? `${rate}%` : '—'}                                                 color={c.valid_calls ? (rate >= 70 ? '#16A34A' : rate >= 50 ? '#D97706' : '#DC2626') : '#64748B'} bg={c.valid_calls ? (rate >= 70 ? '#DCFCE7' : rate >= 50 ? '#FEF3C7' : '#FEE2E2') : '#F1F5F9'} />
+                          <KPIChip icon={PhoneCall}    label="Total Calls"  value={c.total_calls.toLocaleString()}                            color="#0EA5E9" />
+                          <KPIChip icon={ShoppingCart} label="Sales"        value={c.sales.toLocaleString()}                                   color="#16A34A" />
+                          <KPIChip icon={TrendingUp}   label="Conv. Rate"   value={`${c.conversion_pct}%`}                                     color={convColor(c.conversion_pct)} />
+                          <KPIChip icon={Star}         label="NPS Score"    value={c.nps_score > 0 ? `+${c.nps_score}` : String(c.nps_score)}  color={npsColor(c.nps_score)} />
+                          <KPIChip icon={ThumbsUp}     label="Positive"     value={c.total_feedback ? `${c.positive_pct}%` : '—'}              color={c.total_feedback ? posColor(c.positive_pct) : '#94A3B8'} />
+                          <KPIChip icon={Target}       label="Opening Rate" value={c.valid_calls ? `${rate}%` : '—'}                           color={c.valid_calls ? (rate >= 70 ? '#16A34A' : rate >= 50 ? '#D97706' : '#DC2626') : '#94A3B8'} />
                         </div>
                       </div>
                     </div>

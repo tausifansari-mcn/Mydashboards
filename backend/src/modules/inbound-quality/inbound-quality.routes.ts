@@ -43,5 +43,7 @@ router.get('/missing-agents',           ctrl.getMissingAgents);
 router.post('/agent-master',            ctrl.insertAgentMaster);
 router.get('/repeat-call-detail',       ctrl.getRepeatCallDetail);
 router.get('/raw-data',                 ctrl.getRawData);
+router.get('/score-component-detail',  ctrl.getScoreComponentDetail);
+router.get('/fatal-calls-list',        ctrl.getFatalCallsList);
 
 export default router;

@@ -432,39 +432,47 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
       SUM(CASE WHEN q.quality_percentage = 0                                    THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-        ELSE COALESCE(q.customer_concern_acknowledged, 0) END
+        ELSE (
+          IF(q.call_answered_within_5_seconds  = 1, 0.5, 0) +
+          IF(q.customer_concern_acknowledged   = 1, 0.5, 0)
+        ) END
       ) * 100, 1) AS opening_skill,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
         ELSE (
-          IF(q.professionalism_maintained        = 1, 0.111111111111111, 0) +
-          IF(q.assurance_or_appreciation_provided= 1, 0.111111111111111, 0) +
-          IF(q.express_empathy                   = 1, 0.111111111111111, 0) +
-          IF(q.pronunciation_and_clarity         = 1, 0.111111111111111, 0) +
-          IF(q.enthusiasm_and_no_fumbling        = 1, 0.111111111111111, 0) +
-          IF(q.active_listening                  = 1, 0.111111111111111, 0) +
-          IF(q.politeness_and_no_sarcasm         = 1, 0.111111111111111, 0) +
-          IF(q.proper_grammar                    = 1, 0.111111111111111, 0) +
-          IF(q.accurate_issue_probing            = 1, 0.111111111111111, 0)
+          IF(q.professionalism_maintained         = 1, 0.125, 0) +
+          IF(q.assurance_or_appreciation_provided = 1, 0.125, 0) +
+          IF(q.pronunciation_and_clarity          = 1, 0.125, 0) +
+          IF(q.enthusiasm_and_no_fumbling         = 1, 0.125, 0) +
+          IF(q.active_listening                   = 1, 0.125, 0) +
+          IF(q.politeness_and_no_sarcasm          = 1, 0.125, 0) +
+          IF(q.proper_grammar                     = 1, 0.125, 0) +
+          IF(q.accurate_issue_probing             = 1, 0.125, 0)
         ) END
       ) * 100, 1) AS soft_skill,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
         ELSE (
-          IF(q.proper_hold_procedure         = 1, 0.5, 0) +
-          IF(q.proper_transfer_and_language  = 1, 0.5, 0)
+          IF(q.proper_hold_procedure       = 1, 0.333, 0) +
+          IF(q.proper_transfer_and_language= 1, 0.333, 0) +
+          IF(q.dead_air_under_10_seconds   = 1, 0.334, 0)
         ) END
       ) * 100, 1) AS hold_procedure,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
         ELSE (
-          IF(q.address_recorded_completely       = 1, 0.5, 0) +
-          IF(q.correct_and_complete_information  = 1, 0.5, 0)
+          IF(q.case_escalated_correctly         = 1, 0.25, 0) +
+          IF(q.address_recorded_completely      = 1, 0.25, 0) +
+          IF(q.correct_and_complete_information = 1, 0.25, 0) +
+          IF(q.upselling_or_offers_suggested    = 1, 0.25, 0)
         ) END
       ) * 100, 1) AS resolution,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-        ELSE COALESCE(q.professionalism_maintained, 0) END
+        ELSE (
+          IF(q.further_assistance_offered = 1, 0.5, 0) +
+          IF(q.proper_call_closure        = 1, 0.5, 0)
+        ) END
       ) * 100, 1) AS closing,
       SUM(CASE WHEN
         NOT (
@@ -528,9 +536,9 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
   }>(`
     SELECT
       CASE
-        WHEN length_in_sec < 60  THEN 'Short(<60sec)'
-        WHEN length_in_sec < 301 THEN 'Average(1min-5min)'
-        WHEN length_in_sec < 600 THEN 'Long(5min-10min)'
+        WHEN CAST(q.length_in_sec AS UNSIGNED) < 60  THEN 'Short(<1min)'
+        WHEN CAST(q.length_in_sec AS UNSIGNED) < 301 THEN 'Average(1min-5min)'
+        WHEN CAST(q.length_in_sec AS UNSIGNED) < 600 THEN 'Long(5min-10min)'
         ELSE 'Extremely Long(>10min)'
       END                                                                         AS category,
       COUNT(*)                                                                    AS audit_count,
@@ -544,31 +552,38 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
       AND q.length_in_sec IS NOT NULL
+      AND TRIM(q.length_in_sec) != ''
       ${clientFilter}
     GROUP BY category
     ORDER BY
       CASE category
-        WHEN 'Short(<60sec)'          THEN 1
+        WHEN 'Short(<1min)'           THEN 1
         WHEN 'Average(1min-5min)'     THEN 2
         WHEN 'Long(5min-10min)'       THEN 3
         WHEN 'Extremely Long(>10min)' THEN 4
       END
   `, params);
 
-  const acht_data: AchtRow[] = achtRaw.map(a => ({
-    category:    String(a.category),
-    audit_count: Number(a.audit_count),
-    score_pct:   Number(a.score_pct   ?? 0),
-    fatal_count: Number(a.fatal_count),
-    fatal_pct:   Number(a.fatal_pct   ?? 0),
-  }));
+  // Always include all 4 categories (fill missing with zeros so UI always shows them)
+  const ACHT_CATEGORIES = ['Short(<1min)', 'Average(1min-5min)', 'Long(5min-10min)', 'Extremely Long(>10min)'];
+  const achtMap = new Map(achtRaw.map(a => [String(a.category), a]));
+  const acht_data: AchtRow[] = ACHT_CATEGORIES.map(cat => {
+    const a = achtMap.get(cat);
+    return {
+      category:    cat,
+      audit_count: a ? Number(a.audit_count) : 0,
+      score_pct:   a ? Number(a.score_pct ?? 0) : 0,
+      fatal_count: a ? Number(a.fatal_count) : 0,
+      fatal_pct:   a ? Number(a.fatal_pct ?? 0) : 0,
+    };
+  });
 
   const opening_skill  = Number(r.opening_skill  ?? 0);
   const soft_skill     = Number(r.soft_skill     ?? 0);
   const hold_procedure = Number(r.hold_procedure ?? 0);
   const resolution     = Number(r.resolution     ?? 0);
   const closing        = Number(r.closing        ?? 0);
-  const avg_score      = Number(((opening_skill + soft_skill + hold_procedure + resolution + closing) / 5).toFixed(1));
+  const avg_score      = Number(r.cq_score ?? 0);
 
   // ── Negative signal categorisation ──────────────────────────────────────────
   const negRows = await querySource<{ neg_cat: string; cnt: number }>(`
@@ -1031,6 +1046,118 @@ export async function getTranscript(leadId: string): Promise<{ lead_id: string; 
     agent_id:   String(r.agent_id),
     date:       String(r.date),
     transcript: String(r.transcript),
+  };
+}
+
+// ─── Score Component Detail ───────────────────────────────────────────────────
+export interface ScoreParamDetail {
+  column: string;
+  label:  string;
+  pct:    number;
+}
+export interface ScoreComponentData {
+  total:         number;
+  opening_skill: ScoreParamDetail[];
+  soft_skill:    ScoreParamDetail[];
+  hold_procedure:ScoreParamDetail[];
+  resolution:    ScoreParamDetail[];
+  closing:       ScoreParamDetail[];
+}
+
+const SCORE_LABEL: Record<string, string> = {
+  call_answered_within_5_seconds:     'Call Answered Within 5s',
+  customer_concern_acknowledged:      'Customer Concern Acknowledged',
+  professionalism_maintained:         'Professionalism Maintained',
+  assurance_or_appreciation_provided: 'Assurance / Appreciation',
+  pronunciation_and_clarity:          'Pronunciation & Clarity',
+  enthusiasm_and_no_fumbling:         'Enthusiasm & No Fumbling',
+  active_listening:                   'Active Listening',
+  politeness_and_no_sarcasm:          'Politeness & No Sarcasm',
+  proper_grammar:                     'Proper Grammar',
+  accurate_issue_probing:             'Accurate Issue Probing',
+  proper_hold_procedure:              'Proper Hold Procedure',
+  proper_transfer_and_language:       'Proper Transfer & Language',
+  dead_air_under_10_seconds:          'Dead Air Under 10s',
+  case_escalated_correctly:           'Case Escalated Correctly',
+  address_recorded_completely:        'Address Recorded Completely',
+  correct_and_complete_information:   'Correct & Complete Info',
+  upselling_or_offers_suggested:      'Upselling / Offers Suggested',
+  further_assistance_offered:         'Further Assistance Offered',
+  proper_call_closure:                'Proper Call Closure',
+};
+
+export async function getScoreComponentDetail(filters: InboundQualityFilters): Promise<ScoreComponentData> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? 'AND q.ClientId = ?' : '';
+  const params: (string | number)[] = clientId
+    ? [startDate, endDate, clientId]
+    : [startDate, endDate];
+
+  const rows = await querySource<Record<string, unknown>>(`
+    SELECT
+      COUNT(*) AS total,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.call_answered_within_5_seconds,0)     = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS call_answered_within_5_seconds,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.customer_concern_acknowledged,0)      = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS customer_concern_acknowledged,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.professionalism_maintained,0)         = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS professionalism_maintained,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.assurance_or_appreciation_provided,0) = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS assurance_or_appreciation_provided,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.pronunciation_and_clarity,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pronunciation_and_clarity,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.enthusiasm_and_no_fumbling,0)         = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS enthusiasm_and_no_fumbling,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.active_listening,0)                   = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS active_listening,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.politeness_and_no_sarcasm,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS politeness_and_no_sarcasm,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_grammar,0)                     = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_grammar,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.accurate_issue_probing,0)             = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS accurate_issue_probing,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_hold_procedure,0)              = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_hold_procedure,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_transfer_and_language,0)       = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_transfer_and_language,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.dead_air_under_10_seconds,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS dead_air_under_10_seconds,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.case_escalated_correctly,0)           = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS case_escalated_correctly,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.address_recorded_completely,0)        = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS address_recorded_completely,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.correct_and_complete_information,0)   = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS correct_and_complete_information,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.upselling_or_offers_suggested,0)      = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS upselling_or_offers_suggested,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.further_assistance_offered,0)         = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS further_assistance_offered,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_call_closure,0)                = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_call_closure
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+  `, params);
+
+  const empty: ScoreComponentData = { total: 0, opening_skill: [], soft_skill: [], hold_procedure: [], resolution: [], closing: [] };
+  if (!rows.length) return empty;
+
+  const r = rows[0];
+  const p = (col: string): ScoreParamDetail => ({ column: col, label: SCORE_LABEL[col] ?? col, pct: Number(r[col] ?? 0) });
+
+  return {
+    total:          Number(r.total ?? 0),
+    opening_skill:  [
+      p('call_answered_within_5_seconds'),
+      p('customer_concern_acknowledged'),
+    ],
+    soft_skill:     [
+      p('professionalism_maintained'),
+      p('assurance_or_appreciation_provided'),
+      p('pronunciation_and_clarity'),
+      p('enthusiasm_and_no_fumbling'),
+      p('active_listening'),
+      p('politeness_and_no_sarcasm'),
+      p('proper_grammar'),
+      p('accurate_issue_probing'),
+    ],
+    hold_procedure: [
+      p('proper_hold_procedure'),
+      p('proper_transfer_and_language'),
+      p('dead_air_under_10_seconds'),
+    ],
+    resolution:     [
+      p('case_escalated_correctly'),
+      p('address_recorded_completely'),
+      p('correct_and_complete_information'),
+      p('upselling_or_offers_suggested'),
+    ],
+    closing:        [
+      p('further_assistance_offered'),
+      p('proper_call_closure'),
+    ],
   };
 }
 
@@ -2488,9 +2615,9 @@ export interface BandDetailRow {
 }
 
 export async function getBandDetail(
-  filters: InboundQualityFilters & { band?: string }
+  filters: InboundQualityFilters & { band?: string; agentId?: string }
 ): Promise<BandDetailRow[]> {
-  const { startDate, endDate, clientId, band } = filters;
+  const { startDate, endDate, clientId, band, agentId } = filters;
   const params: (string | number)[] = [startDate, endDate];
 
   const bandCondition =
@@ -2502,8 +2629,9 @@ export async function getBandDetail(
     : band === 'no_fatal'    ? 'q.quality_percentage > 0'
     : 'q.quality_percentage IS NOT NULL';
 
-  const extra = clientId ? ' AND q.ClientId = ?' : '';
-  if (clientId) params.push(clientId);
+  let extra = '';
+  if (clientId) { extra += ' AND q.ClientId = ?'; params.push(clientId); }
+  if (agentId)  { extra += ' AND TRIM(q.User) = ?'; params.push(agentId); }
 
   const rows = await querySource<{
     agent: string; scenario: string; count: number; avg_score: number | null;
@@ -2739,4 +2867,102 @@ export async function insertAgentMaster(data: {
     VALUES (?, ?, ?, NOW())
     ON DUPLICATE KEY UPDATE AgentName = VALUES(AgentName), Lob = VALUES(Lob)
   `, [data.masId, data.agentName, data.lob]);
+}
+
+// ─── Fatal Calls List ─────────────────────────────────────────────────────────
+export interface FatalCallItem {
+  lead_id:        string;
+  agent_id:       string;
+  call_date:      string;
+  scenario:       string;
+  scenario1:      string;
+  failed_params:  string[];
+  negative_words: string;
+}
+
+const FATAL_PARAM_LABELS: Record<string, string> = {
+  call_answered_within_5_seconds:     'Call Answered Within 5s',
+  customer_concern_acknowledged:      'Customer Concern Acknowledged',
+  professionalism_maintained:         'Professionalism Maintained',
+  assurance_or_appreciation_provided: 'Assurance / Appreciation',
+  pronunciation_and_clarity:          'Pronunciation & Clarity',
+  enthusiasm_and_no_fumbling:         'Enthusiasm & No Fumbling',
+  active_listening:                   'Active Listening',
+  politeness_and_no_sarcasm:          'Politeness & No Sarcasm',
+  proper_grammar:                     'Proper Grammar',
+  accurate_issue_probing:             'Accurate Issue Probing',
+  proper_hold_procedure:              'Proper Hold Procedure',
+  proper_transfer_and_language:       'Proper Transfer & Language',
+  dead_air_under_10_seconds:          'Dead Air Under 10s',
+  case_escalated_correctly:           'Case Escalated Correctly',
+  address_recorded_completely:        'Address Recorded Completely',
+  correct_and_complete_information:   'Correct & Complete Info',
+  upselling_or_offers_suggested:      'Upselling / Offers Suggested',
+  further_assistance_offered:         'Further Assistance Offered',
+  proper_call_closure:                'Proper Call Closure',
+};
+
+export async function getFatalCallsList(filters: InboundQualityFilters): Promise<FatalCallItem[]> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  type RawRow = {
+    lead_id: string; agent_id: string; call_date: string;
+    scenario: string; scenario1: string; negative_words: string;
+    [key: string]: unknown;
+  };
+
+  const rows = await querySource<RawRow>(`
+    SELECT
+      COALESCE(q.lead_id, '')                                     AS lead_id,
+      COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown')               AS agent_id,
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                   AS call_date,
+      COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')          AS scenario,
+      COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')          AS scenario1,
+      COALESCE(q.top_negative_words, '')                          AS negative_words,
+      COALESCE(q.call_answered_within_5_seconds,     0) AS call_answered_within_5_seconds,
+      COALESCE(q.customer_concern_acknowledged,      0) AS customer_concern_acknowledged,
+      COALESCE(q.professionalism_maintained,         0) AS professionalism_maintained,
+      COALESCE(q.assurance_or_appreciation_provided, 0) AS assurance_or_appreciation_provided,
+      COALESCE(q.pronunciation_and_clarity,          0) AS pronunciation_and_clarity,
+      COALESCE(q.enthusiasm_and_no_fumbling,         0) AS enthusiasm_and_no_fumbling,
+      COALESCE(q.active_listening,                   0) AS active_listening,
+      COALESCE(q.politeness_and_no_sarcasm,          0) AS politeness_and_no_sarcasm,
+      COALESCE(q.proper_grammar,                     0) AS proper_grammar,
+      COALESCE(q.accurate_issue_probing,             0) AS accurate_issue_probing,
+      COALESCE(q.proper_hold_procedure,              0) AS proper_hold_procedure,
+      COALESCE(q.proper_transfer_and_language,       0) AS proper_transfer_and_language,
+      COALESCE(q.dead_air_under_10_seconds,          0) AS dead_air_under_10_seconds,
+      COALESCE(q.case_escalated_correctly,           0) AS case_escalated_correctly,
+      COALESCE(q.address_recorded_completely,        0) AS address_recorded_completely,
+      COALESCE(q.correct_and_complete_information,   0) AS correct_and_complete_information,
+      COALESCE(q.upselling_or_offers_suggested,      0) AS upselling_or_offers_suggested,
+      COALESCE(q.further_assistance_offered,         0) AS further_assistance_offered,
+      COALESCE(q.proper_call_closure,                0) AS proper_call_closure
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage = 0
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+    ORDER BY q.CallDate DESC
+    LIMIT 300
+  `, params);
+
+  const paramKeys = Object.keys(FATAL_PARAM_LABELS);
+
+  return rows.map(r => {
+    const failed = paramKeys
+      .filter(k => Number(r[k]) === 0)
+      .map(k => FATAL_PARAM_LABELS[k]);
+    return {
+      lead_id:        String(r.lead_id),
+      agent_id:       String(r.agent_id),
+      call_date:      String(r.call_date),
+      scenario:       String(r.scenario),
+      scenario1:      String(r.scenario1),
+      failed_params:  failed,
+      negative_words: String(r.negative_words),
+    };
+  });
 }

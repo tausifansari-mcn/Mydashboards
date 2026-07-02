@@ -1062,6 +1062,7 @@ export async function getClientsSummary(filters: QualityFilters): Promise<Client
 // ─── Agent-wise NPS ────────────────────────────────────────────────────────────
 
 export interface AgentNPSRow {
+  agentId:   string;
   agentName: string;
   detractor: number;
   passive:   number;
@@ -1076,6 +1077,7 @@ export async function getAgentNPS(filters: QualityFilters): Promise<AgentNPSRow[
   const params = [startDate, endDate, ...cfParams];
 
   const rows = await querySource<{
+    agent_id:   string;
     agent_name: string;
     detractor: number;
     passive: number;
@@ -1084,7 +1086,8 @@ export async function getAgentNPS(filters: QualityFilters): Promise<AgentNPSRow[
     nps_score: number | null;
   }>(`
     SELECT
-      cd.AgentName                                                                     AS agent_name,
+      cd.AgentName                                                                     AS agent_id,
+      COALESCE(am.AgentName, cd.AgentName)                                            AS agent_name,
       SUM(CASE WHEN cd.Feedback = 'Negative' THEN 1 ELSE 0 END)                      AS detractor,
       SUM(CASE WHEN cd.Feedback = 'Neutral'  THEN 1 ELSE 0 END)                      AS passive,
       SUM(CASE WHEN cd.Feedback = 'Positive' THEN 1 ELSE 0 END)                      AS promoter,
@@ -1098,19 +1101,52 @@ export async function getAgentNPS(filters: QualityFilters): Promise<AgentNPSRow[
         2
       )                                                                                AS nps_score
     FROM db_external.CallDetails cd
+    LEFT JOIN shivamgiri.AgentsMaster am ON am.MasId = cd.AgentName
     WHERE cd.Feedback IN ('Positive','Negative','Neutral')
       AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
       AND cd.CallDate BETWEEN ? AND ? ${cf}
-    GROUP BY cd.AgentName
+    GROUP BY cd.AgentName, am.AgentName
     ORDER BY nps_score DESC
   `, params);
 
   return rows.map(r => ({
+    agentId:   String(r.agent_id),
     agentName: String(r.agent_name),
     detractor: Number(r.detractor),
     passive:   Number(r.passive),
     promoter:  Number(r.promoter),
     total:     Number(r.total),
     npsScore:  Number(r.nps_score ?? 0),
+  }));
+}
+
+export interface OutboundMissingAgentRow {
+  agentId:     string;
+  total_count: number;
+}
+
+export async function getOutboundMissingAgents(filters: QualityFilters): Promise<OutboundMissingAgentRow[]> {
+  const { startDate, endDate } = filters;
+  const { sql: cf, params: cfParams } = clientClause(filters);
+  const params: (string | number)[] = [startDate, endDate, ...cfParams];
+
+  const rows = await querySource<{ agentId: string; total_count: number }>(`
+    SELECT
+      cd.AgentName       AS agentId,
+      COUNT(*)           AS total_count
+    FROM db_external.CallDetails cd
+    LEFT JOIN shivamgiri.AgentsMaster am ON am.MasId = cd.AgentName
+    WHERE cd.Feedback IN ('Positive','Negative','Neutral')
+      AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
+      AND cd.CallDate BETWEEN ? AND ?
+      AND am.MasId IS NULL
+      ${cf}
+    GROUP BY cd.AgentName
+    ORDER BY total_count DESC
+  `, params);
+
+  return rows.map(r => ({
+    agentId:     String(r.agentId),
+    total_count: Number(r.total_count),
   }));
 }

@@ -176,7 +176,7 @@ function deficitColor(d: number): string { return d <= 0 ? COLOR_GREEN : COLOR_R
 function Badge({ value, color, suffix = '' }: { value: string | number; color: string; suffix?: string }) {
   return (
     <span
-      className="inline-block px-2 py-0.5 rounded-md text-[11px] font-black tabular-nums border"
+      className="inline-block px-2 py-0.5 rounded-md text-[11px] font-bold tabular-nums border"
       style={{ color, background: `${color}14`, borderColor: `${color}35` }}
     >
       {value}{suffix}
@@ -210,7 +210,7 @@ function KPICard({
       <div className="relative p-4">
         {/* Top row: label + icon */}
         <div className="flex items-start justify-between mb-3">
-          <span className="text-[10px] font-black text-slate-600 uppercase tracking-[0.12em] leading-none pr-2">{label}</span>
+          <span className="text-label leading-none pr-2">{label}</span>
           <div className="p-2 rounded-xl shrink-0 group-hover:scale-110 transition-transform duration-200 shadow-sm"
                style={{ backgroundColor: `${color}18`, color }}>
             {icon}
@@ -218,8 +218,7 @@ function KPICard({
         </div>
 
         {/* Big number */}
-        <div className="text-[28px] font-black text-slate-900 tracking-tight leading-none mb-2"
-             style={{ fontVariantNumeric: 'tabular-nums' }}>
+        <div className="text-2xl font-bold text-slate-900 tracking-tight leading-none mb-2 tabular-nums">
           {dec > 0 ? value.toFixed(dec) : Math.round(value).toLocaleString()}{suffix}
         </div>
 
@@ -277,7 +276,7 @@ function SectionCard({
              style={{ background: `linear-gradient(90deg, ${accent}08, transparent)` }}>
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-            <h3 className="text-[11px] font-black text-slate-800 uppercase tracking-[0.1em] truncate">{title}</h3>
+            <h3 className="text-[11px] font-semibold text-slate-700 uppercase tracking-[0.06em] truncate">{title}</h3>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             {onDownload && (
@@ -311,7 +310,7 @@ function SectionCard({
           onClick={(e) => { if (e.target === e.currentTarget) setExpanded(false); }}
         >
           <div className="flex flex-col bg-white rounded-2xl border border-slate-200 overflow-hidden flex-1 min-h-0">
-            <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-200 shrink-0">
+            <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-200 bg-slate-50 shrink-0">
               <div className="w-1.5 h-5 rounded-full" style={{ backgroundColor: accent }} />
               <h3 className="text-sm font-semibold text-slate-700 flex-1">{title}</h3>
               {onDownload && (
@@ -372,7 +371,7 @@ function DrillModal({ title, accent = COLOR_BLUE, onClose, loading, onExport, ch
       onClick={onClose}>
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 shrink-0">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-slate-50 shrink-0">
           <div className="w-1.5 h-5 rounded-full shrink-0" style={{ backgroundColor: accent }} />
           <h3 className="text-sm font-semibold text-slate-700 flex-1 truncate">{title}</h3>
           {onExport && (
@@ -544,60 +543,55 @@ export default function InboundDashboard() {
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
+    <div className="min-h-screen text-slate-900">
 
       {/* ── Sticky Header ── */}
-      <div className="sticky top-0 z-30 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 shadow-xl">
+      <div className="page-header">
         <div className="px-6 py-3">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-md border border-white/20 shrink-0">
-                <img src="/Logo.png" alt="MAS" className="h-9 w-9 object-contain p-0.5" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 shrink-0">
+                <img src="/Logo.png" alt="MAS" className="h-8 w-8 object-contain p-0.5" />
               </div>
               <div>
-                <h1 className="text-base font-black text-white leading-none tracking-tight">Inbound Dashboard</h1>
-                <p className="text-[11px] font-semibold mt-0.5" style={{ color: '#43A832' }}>Real-time inbound call center KPIs</p>
+                <h1 className="text-sm font-bold text-slate-900 leading-none">Inbound Dashboard</h1>
+                <p className="text-[11px] font-medium text-mas-green mt-0.5">Real-time inbound call center KPIs</p>
               </div>
             </div>
 
             {/* Live indicator */}
-            <div className="flex items-center gap-2 text-[11px] text-slate-300 bg-white/10 px-3 py-1.5 rounded-lg border border-white/10">
+            <div className="flex items-center gap-2 text-[11px] text-slate-600 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: COLOR_GREEN }} />
                 <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: COLOR_GREEN }} />
               </span>
-              <span className="text-emerald-400 font-semibold">Live</span>
+              <span className="text-emerald-600 font-semibold">Live</span>
               <span className="text-slate-400">· Refresh in {countdown}s</span>
             </div>
           </div>
 
           {/* ── Filter Bar ── */}
-          <div className="flex flex-wrap items-end gap-3 mt-3 pt-3 border-t border-white/10">
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">From</label>
-              <input
-                type="datetime-local"
-                value={filters.startDate}
-                onChange={(e) => setFilters((f) => ({ ...f, startDate: e.target.value }))}
-                className="bg-slate-800 border border-slate-600 rounded-xl px-3 py-1.5 text-xs text-slate-100 font-semibold focus:outline-none focus:border-blue-400 transition-colors"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">To</label>
-              <input
-                type="datetime-local"
-                value={filters.endDate}
-                onChange={(e) => setFilters((f) => ({ ...f, endDate: e.target.value }))}
-                className="bg-slate-800 border border-slate-600 rounded-xl px-3 py-1.5 text-xs text-slate-100 font-semibold focus:outline-none focus:border-blue-400 transition-colors"
-              />
-            </div>
+          <div className="filter-bar mt-3">
+            <label className="text-label">From</label>
+            <input
+              type="datetime-local"
+              value={filters.startDate}
+              onChange={(e) => setFilters((f) => ({ ...f, startDate: e.target.value }))}
+              className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-colors [color-scheme:dark]"
+            />
+            <label className="text-label">To</label>
+            <input
+              type="datetime-local"
+              value={filters.endDate}
+              onChange={(e) => setFilters((f) => ({ ...f, endDate: e.target.value }))}
+              className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-colors [color-scheme:dark]"
+            />
 
             <button
               onClick={() => fetchAll()}
               disabled={loading}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all disabled:opacity-50 hover:scale-105"
-              style={{ background: COLOR_BLUE, boxShadow: `0 2px 8px ${COLOR_BLUE}60` }}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-50"
+              style={{ background: COLOR_BLUE }}
             >
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
               Refresh
@@ -606,8 +600,8 @@ export default function InboundDashboard() {
             <button
               onClick={() => exportCSV(projects, filters.startDate, filters.endDate)}
               disabled={projects.length === 0}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all disabled:opacity-40 hover:scale-105"
-              style={{ background: COLOR_GREEN, boxShadow: `0 2px 8px ${COLOR_GREEN}60` }}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-40"
+              style={{ background: COLOR_GREEN }}
               title="Export project summary as CSV"
             >
               <FileDown size={12} />
@@ -703,17 +697,17 @@ export default function InboundDashboard() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200">
-                  <th className="text-left py-2 px-3 text-slate-800 font-black uppercase tracking-wider whitespace-nowrap">Project</th>
-                  <th className="text-right py-2 px-3 text-slate-800 font-black uppercase tracking-wider">Offered</th>
-                  <th className="text-right py-2 px-3 text-slate-800 font-black uppercase tracking-wider">Answered</th>
-                  <th className="text-right py-2 px-3 text-slate-800 font-black uppercase tracking-wider">AL%</th>
-                  <th className="text-right py-2 px-3 text-slate-800 font-black uppercase tracking-wider">SL%</th>
-                  <th className="text-right py-2 px-3 text-slate-800 font-black uppercase tracking-wider">ACHT</th>
-                  <th className="text-right py-2 px-3 text-slate-800 font-black uppercase tracking-wider">Repeat%</th>
-                  <th className="text-right py-2 px-3 text-slate-800 font-black uppercase tracking-wider">FCR%</th>
-                  <th className="text-right py-2 px-3 text-slate-800 font-black uppercase tracking-wider">Login</th>
-                  <th className="text-right py-2 px-3 text-slate-800 font-black uppercase tracking-wider">Reqd</th>
-                  <th className="text-right py-2 px-3 text-slate-800 font-black uppercase tracking-wider">Deficit</th>
+                  <th className="text-left py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap">Project</th>
+                  <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">Offered</th>
+                  <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">Answered</th>
+                  <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">AL%</th>
+                  <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">SL%</th>
+                  <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">ACHT</th>
+                  <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">Repeat%</th>
+                  <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">FCR%</th>
+                  <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">Login</th>
+                  <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">Reqd</th>
+                  <th className="text-right py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider">Deficit</th>
                 </tr>
               </thead>
               <tbody>
@@ -806,7 +800,7 @@ export default function InboundDashboard() {
                 <XAxis dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} />
                 <YAxis tick={{ fill: '#94A3B8', fontSize: 10 }} />
                 <Tooltip
-                  contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                  contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                   formatter={(v: unknown, name: unknown) => [Number(v).toLocaleString(), String(name)]}
                 />
                 <Legend wrapperStyle={{ fontSize: 12, color: '#64748B' }} />
@@ -841,7 +835,7 @@ export default function InboundDashboard() {
                   <XAxis type="number" domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
                   <YAxis type="category" dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} width={90} />
                   <Tooltip
-                    contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                    contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                     formatter={(v: unknown) => [`${Number(v).toFixed(1)}%`, 'AL%']}
                   />
                   <ReferenceLine x={95} stroke={COLOR_GREEN} strokeDasharray="4 2" strokeWidth={1.5}
@@ -877,7 +871,7 @@ export default function InboundDashboard() {
                   <XAxis type="number" domain={[0, 100]} tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
                   <YAxis type="category" dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} width={90} />
                   <Tooltip
-                    contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                    contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                     formatter={(v: unknown) => [`${Number(v).toFixed(1)}%`, 'SL%']}
                   />
                   <ReferenceLine x={80} stroke={COLOR_AMBER} strokeDasharray="4 2" strokeWidth={1.5}
@@ -913,7 +907,7 @@ export default function InboundDashboard() {
                   <XAxis type="number" domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 350)]} tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v) => `${v}s`} />
                   <YAxis type="category" dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} width={110} />
                   <Tooltip
-                    contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                    contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                     formatter={(v: unknown) => [`${Number(v)}s`, 'ACHT']}
                   />
                   <ReferenceLine x={300} stroke={COLOR_AMBER} strokeDasharray="4 2" strokeWidth={1.5}
@@ -945,7 +939,7 @@ export default function InboundDashboard() {
                   <XAxis type="number" domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 25)]} tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
                   <YAxis type="category" dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} width={110} />
                   <Tooltip
-                    contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                    contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                     formatter={(v: unknown) => [`${Number(v)}%`, 'Repeat%']}
                   />
                   <ReferenceLine x={20} stroke={COLOR_RED} strokeDasharray="4 2" strokeWidth={1.5}
@@ -1081,7 +1075,7 @@ export default function InboundDashboard() {
           return (
             <>
               <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
+                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200 bg-slate-50">
                   <div className="w-1.5 h-4 rounded-full shrink-0 bg-blue-500" />
                   <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">
                     Date-wise Performance · All Projects (Current Month)
@@ -1096,7 +1090,7 @@ export default function InboundDashboard() {
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50">
                         {['Date','Offered','Answered','AL%','SL%','ACHT'].map(h => (
-                          <th key={h} className="py-2 px-3 text-left text-slate-800 font-black uppercase tracking-wider whitespace-nowrap">{h}</th>
+                          <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -1137,7 +1131,7 @@ export default function InboundDashboard() {
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
+                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200 bg-slate-50">
                   <div className="w-1.5 h-4 rounded-full shrink-0 bg-purple-500" />
                   <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">
                     👥 Manpower Details · All Projects (Current Month) · Mandate: {TOTAL_MANDATE} · Required: {TOTAL_REQUIRED}
@@ -1152,7 +1146,7 @@ export default function InboundDashboard() {
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50">
                         {['Date','Total Mandate','Total Required','Login Count','Deficit'].map(h => (
-                          <th key={h} className="py-2 px-3 text-left text-slate-800 font-black uppercase tracking-wider whitespace-nowrap">{h}</th>
+                          <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -1260,7 +1254,7 @@ export default function InboundDashboard() {
                   <XAxis dataKey="date" tick={{ fill: '#64748B', fontSize: 10 }} tickLine={false} axisLine={false} />
                   <YAxis yAxisId="left"  tick={{ fill: '#94A3B8', fontSize: 10 }} tickLine={false} axisLine={false} />
                   <YAxis yAxisId="right" orientation="right" domain={[0,100]} unit="%" tick={{ fill: '#94A3B8', fontSize: 10 }} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }} />
+                  <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
                   <Bar yAxisId="left"  dataKey="offered"  fill={COLOR_BLUE}   name="Offered"  radius={[2,2,0,0]} />
                   <Bar yAxisId="left"  dataKey="answered" fill={COLOR_GREEN}  name="Answered" radius={[2,2,0,0]} />
@@ -1278,7 +1272,7 @@ export default function InboundDashboard() {
                   <thead className="sticky top-0 bg-white z-10">
                     <tr className="border-b border-slate-200">
                       {['Date','Offered','Answered','AL%','SL%','ACHT','Repeat%','Login'].map(h => (
-                        <th key={h} className="py-2 px-3 text-right first:text-left text-slate-800 font-black uppercase tracking-wider whitespace-nowrap text-[9px]">{h}</th>
+                        <th key={h} className="py-2 px-3 text-right first:text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap text-[9px]">{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -1334,7 +1328,7 @@ export default function InboundDashboard() {
                 <XAxis dataKey="name" tick={{ fill: '#64748B', fontSize: 11 }} tickLine={false} axisLine={false} />
                 <YAxis domain={meta.unit === '%' ? [0,100] : undefined} unit={meta.unit}
                   tick={{ fill: '#94A3B8', fontSize: 10 }} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 12 }}
+                <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                   formatter={(v: unknown) => [`${Number(v).toFixed(meta.unit === '%' ? 1 : 0)}${meta.unit}`, meta.label]} />
                 {meta.refY && <ReferenceLine y={meta.refY} stroke={meta.refColor} strokeDasharray="4 4"
                   label={{ value: `Target: ${meta.refY}${meta.unit}`, position: 'insideTopRight', fill: meta.refColor, fontSize: 10 }} />}
@@ -1348,9 +1342,9 @@ export default function InboundDashboard() {
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-white">
                   <tr className="border-b border-slate-200">
-                    <th className="py-2 px-3 text-left text-slate-800 font-black uppercase tracking-wider text-[9px]">Project</th>
-                    <th className="py-2 px-3 text-right text-slate-800 font-black uppercase tracking-wider text-[9px]">{meta.label}</th>
-                    <th className="py-2 px-3 text-right text-slate-800 font-black uppercase tracking-wider text-[9px]">Deficit</th>
+                    <th className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Project</th>
+                    <th className="py-2 px-3 text-right text-slate-500 font-semibold uppercase tracking-wider text-[9px]">{meta.label}</th>
+                    <th className="py-2 px-3 text-right text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Deficit</th>
                   </tr>
                 </thead>
                 <tbody>

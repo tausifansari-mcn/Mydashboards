@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Users, Building2, LogOut,
   ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck,
-  PhoneCall, TrendingUp, Phone, ChevronDown, BarChart3,
+  PhoneCall, Phone, ChevronDown, BarChart3,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -12,9 +12,12 @@ import { useProcessStore } from '@/store/processStore';
 import { cn } from '@/lib/utils';
 import api from '@/lib/axios';
 
+const BLUE      = '#1565C0';
+const BLUE_DARK = '#0D47A1';
+
 const mainLinks = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Launcher' },
-  { to: '/quality', icon: BarChart3, label: 'AI Quality' },
+  { to: '/quality',   icon: BarChart3,       label: 'AI Quality' },
 ];
 
 const ALL_INBOUND_PROJECTS = [
@@ -28,15 +31,15 @@ const ALL_INBOUND_PROJECTS = [
 ];
 
 const adminLinks = [
-  { to: '/admin/clients', icon: Building2, label: 'Clients' },
-  { to: '/admin/users', icon: Users, label: 'Users' },
-  { to: '/admin/processes', icon: GitBranch, label: 'Processes' },
-  { to: '/admin/access', icon: ShieldCheck, label: 'Access' },
+  { to: '/admin/clients',   icon: Building2,  label: 'Clients' },
+  { to: '/admin/users',     icon: Users,       label: 'Users' },
+  { to: '/admin/processes', icon: GitBranch,   label: 'Processes' },
+  { to: '/admin/access',    icon: ShieldCheck, label: 'Access' },
 ];
 
 const accountLinks = [
-  { to: '/profile', icon: User, label: 'Profile' },
-  { to: '/audit', icon: ClipboardList, label: 'Audit Logs' },
+  { to: '/profile', icon: User,          label: 'Profile' },
+  { to: '/audit',   icon: ClipboardList, label: 'Audit Logs' },
 ];
 
 export default function Sidebar() {
@@ -58,13 +61,16 @@ export default function Sidebar() {
     <motion.aside
       animate={{ width: sidebarExpanded ? 240 : 64 }}
       transition={{ duration: 0.25, ease: 'easeInOut' }}
-      className="relative flex h-screen flex-col bg-white border-r border-slate-200 overflow-hidden flex-shrink-0 shadow-sm"
+      className="relative flex h-screen flex-col overflow-hidden flex-shrink-0"
+      style={{ background: `linear-gradient(180deg, ${BLUE_DARK} 0%, ${BLUE} 100%)` }}
     >
       {/* Logo */}
-      <div className="flex h-16 items-center px-3 border-b border-slate-200 bg-white">
-        {/* Collapsed: show small icon version */}
+      <div
+        className="flex h-16 items-center px-3 flex-shrink-0"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', backgroundColor: BLUE_DARK }}
+      >
         {!sidebarExpanded && (
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden bg-white border border-slate-200 shadow-sm">
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden bg-white shadow-md">
             <img src="/Logo.png" alt="MAS" className="h-8 w-8 object-contain p-0.5" />
           </div>
         )}
@@ -75,14 +81,16 @@ export default function Sidebar() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -8 }}
               transition={{ duration: 0.15 }}
-              className="flex items-center gap-2 whitespace-nowrap w-full"
+              className="flex items-center gap-3 whitespace-nowrap w-full"
             >
-              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden bg-white border border-slate-200 shadow-sm">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden bg-white shadow-md">
                 <img src="/Logo.png" alt="MAS" className="h-9 w-9 object-contain p-0.5" />
               </div>
               <div>
-                <p className="font-black text-slate-900 text-sm leading-none">My Dashboard</p>
-                <p className="text-[10px] font-semibold mt-0.5" style={{ color: '#1565C0' }}>Analytics Platform</p>
+                <p className="font-bold text-white text-sm leading-none">My Dashboard</p>
+                <p className="text-[10px] font-medium mt-0.5" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                  Analytics Platform
+                </p>
               </div>
             </motion.div>
           )}
@@ -90,7 +98,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
+      <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1 scrollbar-thin">
         <SidebarSection label="MAIN" expanded={sidebarExpanded}>
           {mainLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={sidebarExpanded} />)}
           <SidebarExpandableItem
@@ -115,28 +123,32 @@ export default function Sidebar() {
         </SidebarSection>
       </nav>
 
-      {/* User info + Logout */}
+      {/* User info */}
       {sidebarExpanded && user && (
-        <div className="px-3 py-3 border-t border-slate-200 bg-slate-50">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-7 h-7 rounded-full bg-[#E3F2FD] flex items-center justify-center shrink-0">
-              <span className="text-[11px] font-bold text-[#1565C0]">{user.name?.charAt(0).toUpperCase()}</span>
+        <div className="px-3 py-3 flex-shrink-0" style={{ borderTop: '1px solid rgba(255,255,255,0.1)', backgroundColor: 'rgba(0,0,0,0.2)' }}>
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
+              <span className="text-[11px] font-bold text-white">{user.name?.charAt(0).toUpperCase()}</span>
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-semibold text-slate-700 truncate">{user.name}</p>
-              <p className="text-[10px] text-slate-400 truncate">{user.email}</p>
+              <p className="text-xs font-semibold text-white truncate">{user.name}</p>
+              <p className="text-[10px] truncate" style={{ color: 'rgba(255,255,255,0.5)' }}>{user.email}</p>
             </div>
           </div>
         </div>
       )}
 
-      <div className="px-2 pb-4">
+      {/* Logout */}
+      <div className="px-2 pb-4 flex-shrink-0">
         <button
           onClick={handleLogout}
           className={cn(
-            'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-red-500 hover:bg-red-50 hover:text-red-600 transition-colors',
+            'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
             !sidebarExpanded && 'justify-center'
           )}
+          style={{ color: '#ffffff' }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.1)'; (e.currentTarget as HTMLButtonElement).style.color = '#fff'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = '#ffffff'; }}
         >
           <LogOut className="h-4 w-4 flex-shrink-0" />
           <AnimatePresence>
@@ -152,7 +164,8 @@ export default function Sidebar() {
       {/* Toggle button */}
       <button
         onClick={toggleSidebar}
-        className="absolute -right-3 top-20 flex h-6 w-6 items-center justify-center rounded-full bg-white border border-slate-200 text-slate-600 shadow-md z-10 hover:bg-[#E3F2FD] hover:text-[#1565C0] hover:border-[#1565C0]/30 transition-colors"
+        className="absolute -right-3 top-20 flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-md z-10 transition-colors hover:bg-blue-50"
+        style={{ color: BLUE, border: `1px solid rgba(21,101,192,0.3)` }}
       >
         {sidebarExpanded ? <ChevronLeft className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
       </button>
@@ -167,7 +180,8 @@ function SidebarSection({ label, expanded, children }: { label: string; expanded
         {expanded && (
           <motion.p
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="mb-1 px-3 text-[9px] font-bold tracking-widest text-slate-400 uppercase"
+            className="mb-1 px-3 text-[9px] font-bold tracking-widest uppercase"
+            style={{ color: 'rgba(255,255,255,0.4)' }}
           >
             {label}
           </motion.p>
@@ -185,11 +199,27 @@ function SidebarLink({ to, icon: Icon, label, expanded }: { to: string; icon: Re
       end
       className={({ isActive }) => cn(
         'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150',
-        isActive
-          ? 'bg-[#E3F2FD] text-[#1565C0] font-semibold border border-[#1565C0]/30'
-          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+        isActive ? 'bg-white font-semibold' : '',
         !expanded && 'justify-center'
       )}
+      style={({ isActive }) => isActive
+        ? { color: BLUE }
+        : { color: '#ffffff' }
+      }
+      onMouseEnter={(e) => {
+        const el = e.currentTarget as HTMLAnchorElement;
+        if (!el.classList.contains('bg-white')) {
+          el.style.backgroundColor = 'rgba(255,255,255,0.12)';
+          el.style.color = '#fff';
+        }
+      }}
+      onMouseLeave={(e) => {
+        const el = e.currentTarget as HTMLAnchorElement;
+        if (!el.classList.contains('bg-white')) {
+          el.style.backgroundColor = 'transparent';
+          el.style.color = '#ffffff';
+        }
+      }}
     >
       <Icon className="h-4 w-4 flex-shrink-0" />
       <AnimatePresence>
@@ -229,10 +259,11 @@ function SidebarExpandableItem({
     return (
       <button
         onClick={() => navigate(parentTo)}
-        className={cn(
-          'flex w-full justify-center rounded-lg px-3 py-2 transition-colors',
-          isParentActive ? 'bg-[#E3F2FD] text-[#1565C0] border border-[#1565C0]/30' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-        )}
+        className="flex w-full justify-center rounded-lg px-3 py-2 transition-colors"
+        style={{
+          backgroundColor: isParentActive ? 'rgba(255,255,255,0.18)' : 'transparent',
+          color: '#ffffff',
+        }}
       >
         <Icon className="h-4 w-4 flex-shrink-0" />
       </button>
@@ -241,23 +272,22 @@ function SidebarExpandableItem({
 
   return (
     <div>
-      <div className={cn(
-        'flex items-center rounded-lg transition-all duration-150',
-        isParentActive ? 'bg-blue-50 border border-blue-100' : 'hover:bg-slate-100'
-      )}>
+      <div
+        className="flex items-center rounded-lg transition-all duration-150"
+        style={{ backgroundColor: isParentActive ? 'rgba(255,255,255,0.12)' : 'transparent' }}
+      >
         <button
           onClick={() => { navigate(parentTo); setOpen(v => !v); }}
-          className={cn(
-            'flex flex-1 items-center gap-3 px-3 py-2 text-sm',
-            isParentActive ? 'text-[#1565C0] font-semibold' : 'text-slate-600 hover:text-slate-900'
-          )}
+          className="flex flex-1 items-center gap-3 px-3 py-2 text-sm"
+          style={{ color: '#ffffff' }}
         >
           <Icon className="h-4 w-4 flex-shrink-0" />
-          <span className="flex-1 whitespace-nowrap text-left">{label}</span>
+          <span className="flex-1 whitespace-nowrap text-left font-medium">{label}</span>
         </button>
         <button
           onClick={() => setOpen(v => !v)}
-          className={cn('px-2 py-2 transition-colors', isParentActive ? 'text-[#1565C0]' : 'text-slate-400 hover:text-slate-700')}
+          className="px-2 py-2 transition-colors"
+          style={{ color: 'rgba(255,255,255,0.6)' }}
         >
           <ChevronDown className={cn('h-3 w-3 transition-transform duration-200', open && 'rotate-180')} />
         </button>
@@ -272,14 +302,16 @@ function SidebarExpandableItem({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="ml-3 mt-0.5 border-l-2 border-slate-200 pl-2 space-y-0.5 py-1">
+            <div className="ml-3 mt-0.5 pl-2 space-y-0.5 py-1" style={{ borderLeft: '2px solid rgba(255,255,255,0.2)' }}>
               <NavLink
                 to={parentTo}
                 end
-                className={({ isActive }) => cn(
-                  'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-all',
-                  isActive ? 'bg-[#E3F2FD] text-[#1565C0] font-semibold' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-                )}
+                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-all"
+                style={({ isActive }) => ({
+                  backgroundColor: isActive ? 'rgba(255,255,255,0.18)' : 'transparent',
+                  color: isActive ? '#fff' : 'rgba(255,255,255,0.65)',
+                  fontWeight: isActive ? 600 : 400,
+                })}
               >
                 <span className="text-sm">📊</span>
                 <span className="whitespace-nowrap">All Projects</span>
@@ -288,10 +320,12 @@ function SidebarExpandableItem({
                 <NavLink
                   key={sub.to}
                   to={sub.to}
-                  className={({ isActive }) => cn(
-                    'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-all',
-                    isActive ? 'bg-[#E3F2FD] text-[#1565C0] font-semibold' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-                  )}
+                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-all"
+                  style={({ isActive }) => ({
+                    backgroundColor: isActive ? 'rgba(255,255,255,0.18)' : 'transparent',
+                    color: isActive ? '#fff' : 'rgba(255,255,255,0.65)',
+                    fontWeight: isActive ? 600 : 400,
+                  })}
                 >
                   <span className="text-sm">{sub.icon}</span>
                   <span className="whitespace-nowrap">{sub.label}</span>

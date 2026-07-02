@@ -390,25 +390,25 @@ function FilterBar({
   return (
     <div className="flex flex-wrap gap-3 items-center">
       {/* Date + time range — two separate labeled inputs */}
-      <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-3 py-2">
-        <Calendar size={13} className="text-slate-500 shrink-0" />
+      <div className="date-pill">
+        <Calendar size={13} className="shrink-0" style={{ color: 'rgba(255,255,255,0.75)' }} />
         <div className="flex flex-col gap-0.5">
-          <span className="text-[9px] text-slate-500 uppercase tracking-wider leading-none">From</span>
+          <span className="text-[9px] uppercase tracking-wider leading-none" style={{ color: 'rgba(255,255,255,0.65)' }}>From</span>
           <input
             type="datetime-local"
             value={filters.startDate}
             onChange={(e) => onChange('startDate', e.target.value)}
-            className="bg-transparent text-xs text-slate-700 outline-none [color-scheme:dark]"
+            className="bg-transparent text-xs outline-none text-white [color-scheme:dark]"
           />
         </div>
-        <span className="text-slate-600 mx-1 self-center">—</span>
+        <span className="mx-1 self-center" style={{ color: 'rgba(255,255,255,0.40)' }}>—</span>
         <div className="flex flex-col gap-0.5">
-          <span className="text-[9px] text-slate-500 uppercase tracking-wider leading-none">To</span>
+          <span className="text-[9px] uppercase tracking-wider leading-none" style={{ color: 'rgba(255,255,255,0.65)' }}>To</span>
           <input
             type="datetime-local"
             value={filters.endDate}
             onChange={(e) => onChange('endDate', e.target.value)}
-            className="bg-transparent text-xs text-slate-700 outline-none [color-scheme:dark]"
+            className="bg-transparent text-xs outline-none text-white [color-scheme:dark]"
           />
         </div>
       </div>
@@ -1584,7 +1584,7 @@ export default function CallMasterDashboard() {
   const GRID = { strokeDasharray: '3 3', stroke: '#FFFFFF' };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen text-slate-900">
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="px-6 pt-6 pb-4 bg-white border-b border-slate-200">
         <div className="flex items-center justify-between mb-5">

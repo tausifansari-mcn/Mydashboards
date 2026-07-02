@@ -73,11 +73,31 @@ interface PosKeywordLeadRow {
   date:      string;
 }
 
+interface ScoreParamDetail { column: string; label: string; pct: number; }
+interface ScoreComponentData {
+  total: number;
+  opening_skill:  ScoreParamDetail[];
+  soft_skill:     ScoreParamDetail[];
+  hold_procedure: ScoreParamDetail[];
+  resolution:     ScoreParamDetail[];
+  closing:        ScoreParamDetail[];
+}
+
 interface TranscriptData {
   lead_id:    string;
   agent_id:   string;
   date:       string;
   transcript: string;
+}
+
+interface FatalCallItem {
+  lead_id:        string;
+  agent_id:       string;
+  call_date:      string;
+  scenario:       string;
+  scenario1:      string;
+  failed_params:  string[];
+  negative_words: string;
 }
 
 interface SocialThreatDetailRow {
@@ -213,6 +233,335 @@ function DrillModal({ title, accent, onClose, children }: DrillModalProps) {
   );
 }
 
+// ─── Score Component Detail Modal ────────────────────────────────────────────
+function ScoreComponentModal({
+  label, accent, params, loading, onClose,
+}: {
+  label:   string;
+  accent:  string;
+  params:  ScoreParamDetail[];
+  loading: boolean;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  const color = (pct: number) => pct >= 90 ? '#22C55E' : pct >= 75 ? '#F59E0B' : '#EF4444';
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
+          <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: `${accent}15`, color: accent }}>
+            <ClipboardCheck size={16} />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-bold text-slate-900">{label}</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Parameter-wise compliance score</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-auto flex-1 p-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-12 gap-3 text-slate-400">
+              <Loader2 size={18} className="animate-spin" />
+              <span className="text-sm">Loading parameters…</span>
+            </div>
+          ) : params.length === 0 ? (
+            <p className="text-center text-slate-400 text-sm py-10">No data available for this period.</p>
+          ) : (
+            <div className="space-y-3">
+              {params.map(p => {
+                const c = color(p.pct);
+                return (
+                  <div key={p.column} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-slate-700">{p.label}</span>
+                      <span className="text-sm font-bold tabular-nums" style={{ color: c }}>{p.pct}%</span>
+                    </div>
+                    <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(p.pct, 100)}%`, backgroundColor: c }} />
+                    </div>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <span className="text-[10px] text-slate-400">
+                        {p.pct >= 90 ? '✅ On Target' : p.pct >= 75 ? '⚠️ Needs Attention' : '❌ Below Target'}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">{p.column}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ─── Fatal Transcript Modal (with highlighting) ───────────────────────────────
+function FatalTranscriptModal({
+  data, loading, onClose, fatalItem,
+}: {
+  data: TranscriptData | null;
+  loading: boolean;
+  onClose: () => void;
+  fatalItem: FatalCallItem | null;
+}) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  const highlightTerms = fatalItem
+    ? fatalItem.negative_words
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 2)
+    : [];
+
+  function renderHighlighted(text: string) {
+    if (!highlightTerms.length) return <span>{text}</span>;
+    const escaped = highlightTerms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const regex = new RegExp(`(${escaped.join('|')})`, 'gi');
+    const parts = text.split(regex);
+    return (
+      <>
+        {parts.map((part, i) =>
+          regex.test(part)
+            ? <mark key={i} style={{ background: '#FEF08A', color: '#92400E', borderRadius: 3, padding: '0 2px', fontWeight: 700 }}>{part}</mark>
+            : <span key={i}>{part}</span>
+        )}
+      </>
+    );
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.75)' }} onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-3 border-b" style={{ background: 'linear-gradient(135deg,#B71C1C 0%,#D32F2F 100%)' }}>
+          <AlertTriangle size={16} className="text-red-200 shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-bold text-white">Fatal Call Transcript</p>
+            {data && (
+              <p className="text-[10px] text-red-200 mt-0.5">
+                Lead: <span className="font-mono text-white">{data.lead_id}</span>
+                {' · '}Agent: <span className="font-semibold text-white">{data.agent_id}</span>
+                {' · '}{data.date}
+              </p>
+            )}
+          </div>
+          <button onClick={onClose} className="text-red-200 hover:text-white p-1"><X size={18} /></button>
+        </div>
+
+        <div className="flex flex-1 overflow-hidden">
+          {/* Left: transcript */}
+          <div className="flex-1 overflow-auto p-5">
+            {loading ? (
+              <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+                <Loader2 size={20} className="animate-spin" />
+                <span className="text-sm">Loading transcript…</span>
+              </div>
+            ) : !data?.transcript ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-400">
+                <span className="text-4xl">📭</span>
+                <p className="text-sm">No transcript available for this call.</p>
+              </div>
+            ) : (
+              <>
+                {highlightTerms.length > 0 && (
+                  <div className="mb-3 flex items-start gap-2 rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-2.5">
+                    <span className="text-yellow-600 shrink-0 mt-0.5">⚠️</span>
+                    <p className="text-[11px] text-yellow-800">
+                      <span className="font-bold">Highlighted keywords:</span>{' '}
+                      {highlightTerms.join(' · ')}
+                    </p>
+                  </div>
+                )}
+                <div className="rounded-xl border border-red-100 bg-red-50/40 p-5">
+                  <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap font-mono">
+                    {renderHighlighted(data.transcript)}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Right: Why Fatal panel */}
+          {fatalItem && (
+            <div className="w-64 shrink-0 border-l border-slate-200 bg-slate-50 overflow-auto p-4 flex flex-col gap-4">
+              <div>
+                <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest mb-2">Why This Call is Fatal</p>
+                <p className="text-[11px] text-slate-500 mb-3">Quality score = 0. The following parameters all failed:</p>
+              </div>
+
+              {fatalItem.failed_params.length === 0 ? (
+                <p className="text-[11px] text-slate-400 italic">All parameters passed — marked fatal due to score = 0</p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {fatalItem.failed_params.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-2.5 py-1.5">
+                      <span className="text-red-400 shrink-0">✗</span>
+                      <span className="text-[11px] font-semibold text-red-700">{p}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {fatalItem.negative_words && (
+                <div>
+                  <p className="text-[10px] font-bold text-orange-600 uppercase tracking-widest mb-1.5">Negative Words Detected</p>
+                  <div className="flex flex-wrap gap-1">
+                    {fatalItem.negative_words.split(',').map((w, i) => (
+                      <span key={i} className="text-[10px] bg-orange-100 text-orange-800 border border-orange-200 rounded px-1.5 py-0.5 font-semibold">{w.trim()}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Call Details</p>
+                <div className="space-y-1 text-[11px] text-slate-600">
+                  <p><span className="font-semibold">Scenario:</span> {fatalItem.scenario}</p>
+                  <p><span className="font-semibold">Sub-scenario:</span> {fatalItem.scenario1}</p>
+                  <p><span className="font-semibold">Date:</span> {fatalItem.call_date}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ─── Fatal Calls List Modal ───────────────────────────────────────────────────
+function FatalCallsModal({
+  calls, loading, onClose, onLeadClick, resolveAgent,
+}: {
+  calls:        FatalCallItem[];
+  loading:      boolean;
+  onClose:      () => void;
+  onLeadClick:  (item: FatalCallItem) => void;
+  resolveAgent: (masId: string) => string;
+}) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[99998] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.75)' }} onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-3 border-b" style={{ background: 'linear-gradient(135deg,#B71C1C 0%,#D32F2F 100%)' }}>
+          <div className="p-2 rounded-xl bg-red-900/30">
+            <AlertTriangle size={16} className="text-red-100" />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-bold text-white">Fatal Calls — Quality Score = 0</p>
+            <p className="text-[10px] text-red-200 mt-0.5">
+              {loading ? 'Loading…' : `${calls.length} fatal call${calls.length !== 1 ? 's' : ''} in selected period · Click Lead ID to view transcript`}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-red-200 hover:text-white p-1"><X size={18} /></button>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-auto flex-1">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+              <Loader2 size={20} className="animate-spin" />
+              <span className="text-sm font-semibold">Loading fatal calls…</span>
+            </div>
+          ) : calls.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-400">
+              <span className="text-4xl">✅</span>
+              <p className="text-sm">No fatal calls found for this period.</p>
+            </div>
+          ) : (
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="sticky top-0">
+                  <th className="px-3 py-2.5 text-left">#</th>
+                  <th className="px-3 py-2.5 text-left">Agent</th>
+                  <th className="px-3 py-2.5 text-left">Lead ID</th>
+                  <th className="px-3 py-2.5 text-left">Date</th>
+                  <th className="px-3 py-2.5 text-left">Scenario</th>
+                  <th className="px-3 py-2.5 text-left">Sub-Scenario</th>
+                  <th className="px-3 py-2.5 text-left">Failed Parameters</th>
+                </tr>
+              </thead>
+              <tbody>
+                {calls.map((c, i) => (
+                  <tr key={c.lead_id + i} className="border-t border-slate-100 hover:bg-red-50 transition-colors">
+                    <td className="px-3 py-2 text-slate-400 font-mono">{i + 1}</td>
+                    <td className="px-3 py-2">
+                      <span className="font-semibold text-slate-700">{resolveAgent(c.agent_id)}</span>
+                      <span className="block text-[10px] text-slate-400 font-mono">{c.agent_id}</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <button
+                        className="font-mono text-blue-600 hover:text-blue-800 hover:underline font-bold transition-colors"
+                        onClick={() => onLeadClick(c)}
+                        title="Click to view transcript"
+                      >
+                        {c.lead_id || '—'}
+                      </button>
+                    </td>
+                    <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{c.call_date}</td>
+                    <td className="px-3 py-2">
+                      <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600">{c.scenario}</span>
+                    </td>
+                    <td className="px-3 py-2 text-slate-500 text-[10px]">{c.scenario1}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1 max-w-xs">
+                        {c.failed_params.slice(0, 4).map((p, pi) => (
+                          <span key={pi} className="text-[9px] bg-red-100 text-red-700 border border-red-200 rounded px-1 py-0.5 font-semibold">{p}</span>
+                        ))}
+                        {c.failed_params.length > 4 && (
+                          <span className="text-[9px] bg-slate-100 text-slate-500 rounded px-1 py-0.5">+{c.failed_params.length - 4} more</span>
+                        )}
+                        {c.failed_params.length === 0 && (
+                          <span className="text-[9px] text-slate-400 italic">Score = 0 (all params)</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // ─── Transcript Modal ────────────────────────────────────────────────────────
 function TranscriptModal({ data, loading, onClose }: { data: TranscriptData | null; loading: boolean; onClose: () => void }) {
   useEffect(() => {
@@ -227,13 +576,12 @@ function TranscriptModal({ data, loading, onClose }: { data: TranscriptData | nu
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
 
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200"
-          style={{ background: 'linear-gradient(135deg, #EFF6FF, #DBEAFE)' }}>
-          <div className="p-2 rounded-xl bg-blue-100">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
+          <div className="p-2 rounded-xl bg-blue-50">
             <span className="text-lg">📋</span>
           </div>
           <div className="flex-1">
-            <p className="text-sm font-black text-slate-900">Call Transcript</p>
+            <p className="text-sm font-bold text-slate-900">Call Transcript</p>
             {data && (
               <p className="text-[10px] text-slate-500 mt-0.5 font-medium">
                 Lead: <span className="font-mono text-blue-700">{data.lead_id}</span>
@@ -292,82 +640,142 @@ function PosSignalDetailModal({
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
 
+  const custCount  = leads.filter(r => r.source === 'Customer').length;
+  const agentCount = leads.filter(r => r.source === 'Agent').length;
+  const topPhrase  = phrases[0]?.phrase ?? null;
+
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
-      style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+      style={{ backgroundColor: 'rgba(0,0,0,0.65)' }} onClick={onClose}>
+      <div className="rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+        style={{ background: '#ffffff', border: `2px solid ${color}40` }}
         onClick={e => e.stopPropagation()}>
 
-        {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100"
-          style={{ background: `linear-gradient(135deg, ${color}12, ${color}06)` }}>
-          <span className="text-xl">✨</span>
-          <div>
-            <h2 className="text-base font-bold text-slate-800">"{keyword}" — Positive Signal</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {leads.length > 0 ? `${leads.length} calls · ` : ''}{phrases.length} unique phrases
-            </p>
+        {/* Gradient header */}
+        <div className="relative px-6 py-5 flex items-start gap-4 overflow-hidden"
+          style={{ background: `linear-gradient(135deg, ${color}EE 0%, ${color}99 100%)` }}>
+          {/* Background pattern */}
+          <div className="absolute inset-0 opacity-10"
+            style={{ backgroundImage: `radial-gradient(circle at 80% 20%, #ffffff 0%, transparent 60%)` }} />
+
+          {/* Icon bubble */}
+          <div className="shrink-0 w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shadow-lg z-10"
+            style={{ background: 'rgba(255,255,255,0.25)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.4)' }}>
+            ✨
           </div>
-          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700 transition-colors">
-            <X size={18} />
+
+          {/* Title */}
+          <div className="flex-1 z-10">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/70 mb-0.5">Positive Signal Analysis</p>
+            <h2 className="text-lg font-bold text-white leading-tight">"{keyword}"</h2>
+            {topPhrase && (
+              <p className="text-[11px] text-white/75 mt-1 italic">Top phrase: "{topPhrase}"</p>
+            )}
+          </div>
+
+          <button onClick={onClose}
+            className="shrink-0 z-10 w-8 h-8 rounded-full flex items-center justify-center transition-all hover:bg-white/20"
+            style={{ color: 'rgba(255,255,255,0.8)' }}>
+            <X size={16} />
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-1 px-6 pt-4 pb-0 border-b border-slate-100">
+        {/* Stats strip */}
+        <div className="grid grid-cols-3 divide-x divide-white/40"
+          style={{ background: `${color}10`, borderBottom: `1px solid ${color}30` }}>
           {[
-            { key: 'phrases' as const, label: '💬 Top Phrases', count: phrases.length },
-            { key: 'calls'   as const, label: '📋 Call Details', count: leads.length },
+            { label: 'Unique Phrases', value: phrases.length, icon: '💬' },
+            { label: 'Customer Mentions', value: custCount,  icon: '👤' },
+            { label: 'Agent Mentions',    value: agentCount, icon: '🎧' },
+          ].map(s => (
+            <div key={s.label} className="flex items-center gap-3 px-5 py-3">
+              <span className="text-lg">{s.icon}</span>
+              <div>
+                <p className="text-lg font-bold leading-none" style={{ color }}>{s.value}</p>
+                <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider mt-0.5">{s.label}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 px-5 py-2.5" style={{ borderBottom: `1px solid ${color}25`, background: `${color}08` }}>
+          {[
+            { key: 'phrases' as const, icon: '💬', label: 'Top Phrases', count: phrases.length },
+            { key: 'calls'   as const, icon: '📋', label: 'Call Details',  count: leads.length },
           ].map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
-              className="px-4 py-2 text-xs font-semibold transition-all border-b-2 -mb-px"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold transition-all duration-150"
               style={tab === t.key
-                ? { borderColor: color, color, background: `${color}08` }
-                : { borderColor: 'transparent', color: '#64748B' }}>
-              {t.label} ({t.count})
+                ? { background: color, color: '#fff', boxShadow: `0 2px 8px ${color}50` }
+                : { background: 'rgba(255,255,255,0.7)', color: '#64748B' }}>
+              {t.icon} {t.label}
+              <span className="ml-1 rounded-full text-[9px] px-1.5 py-0.5 font-bold"
+                style={tab === t.key
+                  ? { background: 'rgba(255,255,255,0.25)', color: '#fff' }
+                  : { background: `${color}20`, color }}>
+                {t.count}
+              </span>
             </button>
           ))}
         </div>
 
         {/* Body */}
-        <div className="overflow-auto flex-1 p-6">
+        <div className="overflow-auto flex-1" style={{ background: '#F8FAFC' }}>
 
           {/* Phrases tab */}
           {tab === 'phrases' && (
             phrasesLoading ? (
-              <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
-                <Loader2 size={18} className="animate-spin" /><span className="text-sm">Loading phrases…</span>
+              <div className="flex items-center justify-center py-16 gap-3" style={{ color }}>
+                <Loader2 size={20} className="animate-spin" />
+                <span className="text-sm font-semibold">Loading phrases…</span>
               </div>
             ) : phrases.length === 0 ? (
-              <p className="text-center text-slate-400 text-sm py-10">No phrases found for this period.</p>
+              <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-400">
+                <span className="text-4xl">💬</span>
+                <p className="text-sm font-medium">No phrases found for this period.</p>
+              </div>
             ) : (
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr style={{ backgroundColor: `${color}10` }}>
-                      {['Source', 'Phrase', 'Count'].map(h => (
-                        <th key={h} className="text-left px-4 py-2.5 font-semibold text-slate-600 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {phrases.map((p, i) => (
-                      <tr key={i} className="hover:bg-slate-50 border-b border-slate-100 last:border-0">
-                        <td className="px-4 py-2.5">
-                          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            p.source === 'Customer' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
-                          }`}>
-                            {p.source === 'Customer' ? '👤 Customer' : '🎧 Agent'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-slate-700">{p.phrase}</td>
-                        <td className="px-4 py-2.5 font-mono font-semibold" style={{ color }}>{p.count}</td>
+              <div className="p-5">
+                <div className="rounded-xl overflow-hidden shadow-sm" style={{ border: `1px solid ${color}25` }}>
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr style={{ background: `linear-gradient(135deg, ${color}22 0%, ${color}12 100%)` }}>
+                        {['#', 'Source', 'Phrase', 'Count'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 font-bold uppercase tracking-wider text-[10px] whitespace-nowrap"
+                            style={{ color, borderBottom: `1px solid ${color}25` }}>
+                            {h}
+                          </th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {phrases.map((p, i) => (
+                        <tr key={i} className="border-b last:border-0 transition-colors"
+                          style={{ borderColor: `${color}12` }}
+                          onMouseEnter={e => (e.currentTarget.style.background = `${color}08`)}
+                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                          <td className="px-4 py-2.5 text-slate-400 font-mono text-[10px]">{i + 1}</td>
+                          <td className="px-4 py-2.5">
+                            <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold"
+                              style={p.source === 'Customer'
+                                ? { background: '#ECFDF5', color: '#065F46', border: '1px solid #A7F3D0' }
+                                : { background: '#EFF6FF', color: '#1E40AF', border: '1px solid #BFDBFE' }}>
+                              {p.source === 'Customer' ? '👤' : '🎧'} {p.source}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-slate-700 font-medium">{p.phrase}</td>
+                          <td className="px-4 py-2.5">
+                            <span className="inline-block rounded-lg px-3 py-1 text-xs font-bold"
+                              style={{ background: `${color}18`, color }}>
+                              {p.count}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )
           )}
@@ -375,50 +783,66 @@ function PosSignalDetailModal({
           {/* Calls tab */}
           {tab === 'calls' && (
             leadsLoading ? (
-              <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
-                <Loader2 size={18} className="animate-spin" /><span className="text-sm">Loading calls…</span>
+              <div className="flex items-center justify-center py-16 gap-3" style={{ color }}>
+                <Loader2 size={20} className="animate-spin" />
+                <span className="text-sm font-semibold">Loading calls…</span>
               </div>
             ) : leads.length === 0 ? (
-              <p className="text-center text-slate-400 text-sm py-10">No call records found for this period.</p>
+              <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-400">
+                <span className="text-4xl">📋</span>
+                <p className="text-sm font-medium">No call records found for this period.</p>
+              </div>
             ) : (
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr style={{ backgroundColor: `${color}10` }}>
-                      {['Lead ID', 'Source', 'Agent ID', 'Phrase / Keyword', 'Scenario', 'Date'].map(h => (
-                        <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-600 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {leads.map((r, i) => (
-                      <tr key={i} className="hover:bg-slate-50 border-b border-slate-100 last:border-0">
-                        <td className="px-3 py-2.5">
-                          {r.lead_id ? (
-                            <button
-                              onClick={() => onLeadClick(r.lead_id)}
-                              className="font-mono text-blue-600 hover:text-blue-800 hover:underline text-[11px] font-semibold transition-colors">
-                              {r.lead_id}
-                            </button>
-                          ) : <span className="text-slate-400 font-mono">—</span>}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            r.source === 'Customer' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
-                          }`}>
-                            {r.source === 'Customer' ? '👤 Cust' : '🎧 Agent'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 font-semibold text-slate-700">{r.agent_id}</td>
-                        <td className="px-3 py-2.5 text-slate-600 max-w-[200px] truncate" title={r.phrase}>{r.phrase || '—'}</td>
-                        <td className="px-3 py-2.5 text-slate-500">{r.scenario}{r.scenario1 ? ` / ${r.scenario1}` : ''}</td>
-                        <td className="px-3 py-2.5 font-mono text-slate-400 whitespace-nowrap">{r.date}</td>
+              <div className="p-5">
+                <div className="rounded-xl overflow-hidden shadow-sm" style={{ border: `1px solid ${color}25` }}>
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr style={{ background: `linear-gradient(135deg, ${color}22 0%, ${color}12 100%)` }}>
+                        {['#', 'Lead ID', 'Source', 'Agent ID', 'Phrase', 'Scenario', 'Date'].map(h => (
+                          <th key={h} className="text-left px-3 py-3 font-bold uppercase tracking-wider text-[10px] whitespace-nowrap"
+                            style={{ color, borderBottom: `1px solid ${color}25` }}>
+                            {h}
+                          </th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {leads.map((r, i) => (
+                        <tr key={i} className="border-b last:border-0 transition-colors"
+                          style={{ borderColor: `${color}12` }}
+                          onMouseEnter={e => (e.currentTarget.style.background = `${color}08`)}
+                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                          <td className="px-3 py-2.5 text-slate-400 font-mono text-[10px]">{i + 1}</td>
+                          <td className="px-3 py-2.5">
+                            {r.lead_id ? (
+                              <button onClick={() => onLeadClick(r.lead_id)}
+                                className="font-mono text-[11px] font-bold hover:underline transition-colors"
+                                style={{ color }}>
+                                {r.lead_id}
+                              </button>
+                            ) : <span className="text-slate-400 font-mono">—</span>}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
+                              style={r.source === 'Customer'
+                                ? { background: '#ECFDF5', color: '#065F46', border: '1px solid #A7F3D0' }
+                                : { background: '#EFF6FF', color: '#1E40AF', border: '1px solid #BFDBFE' }}>
+                              {r.source === 'Customer' ? '👤' : '🎧'} {r.source === 'Customer' ? 'Cust' : 'Agent'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 font-semibold text-slate-700 text-[11px]">{r.agent_id}</td>
+                          <td className="px-3 py-2.5 text-slate-600 max-w-[180px] truncate" title={r.phrase}>{r.phrase || '—'}</td>
+                          <td className="px-3 py-2.5">
+                            <span className="rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600">
+                              {r.scenario}{r.scenario1 ? ` / ${r.scenario1}` : ''}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-slate-400 text-[10px] whitespace-nowrap">{r.date}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )
           )}
@@ -449,13 +873,12 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick }: { detail: A
         onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200"
-             style={{ background: 'linear-gradient(135deg, #FAF5FF, #F3E8FF)' }}>
-          <div className="p-2 rounded-xl bg-purple-500/10">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
+          <div className="p-2 rounded-xl bg-purple-50">
             <span className="text-lg">🚫</span>
           </div>
           <div className="flex-1">
-            <p className="text-sm font-black text-slate-900">Abuse Detection — Full Breakdown</p>
+            <p className="text-sm font-bold text-slate-900">Abuse Detection — Full Breakdown</p>
             <p className="text-[10px] text-slate-500 font-medium mt-0.5">Agent & customer abusive language detected from call transcripts</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-900 transition-colors p-1">
@@ -478,29 +901,25 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick }: { detail: A
             <>
               {/* Summary chips */}
               <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-purple-200 bg-purple-50">
-                  <span className="text-sm font-black text-purple-700">{rows.length}</span>
+                <div className="flex items-center gap-2 px-4 py-2 rounded-xl border border-purple-200 bg-purple-50">
+                  <span className="text-sm font-bold text-purple-700">{rows.length}</span>
                   <span className="text-xs font-semibold text-purple-600">Total Incidents</span>
                 </div>
-                <div className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-red-200 bg-red-50">
-                  <span className="text-sm font-black text-red-700">{agentCount}</span>
+                <div className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-200 bg-red-50">
+                  <span className="text-sm font-bold text-red-700">{agentCount}</span>
                   <span className="text-xs font-semibold text-red-600">Agent Abuse ⚠️ Critical</span>
                 </div>
-                <div className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-orange-200 bg-orange-50">
-                  <span className="text-sm font-black text-orange-700">{customerCount}</span>
+                <div className="flex items-center gap-2 px-4 py-2 rounded-xl border border-orange-200 bg-orange-50">
+                  <span className="text-sm font-bold text-orange-700">{customerCount}</span>
                   <span className="text-xs font-semibold text-orange-600">Customer Abuse</span>
                 </div>
               </div>
 
               {/* Tabs */}
-              <div className="flex gap-1 border-b border-slate-200">
+              <div className="pill-tabs">
                 {([['all', 'All', rows.length], ['agent', 'Agent Only', agentCount], ['customer', 'Customer Only', customerCount]] as [string, string, number][]).map(([t, lbl, cnt]) => (
                   <button key={t} onClick={() => setTab(t as 'all' | 'agent' | 'customer')}
-                    className="px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all"
-                    style={tab === t
-                      ? { borderColor: '#A855F7', color: '#A855F7', background: '#FAF5FF' }
-                      : { borderColor: 'transparent', color: '#64748B' }
-                    }>
+                    className={`pill-tab ${tab === t ? 'pill-tab-active' : ''}`}>
                     {lbl} ({cnt})
                   </button>
                 ))}
@@ -513,7 +932,7 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick }: { detail: A
                     <thead>
                       <tr style={{ background: '#FAF5FF' }}>
                         {['Lead ID','Speaker','Agent ID','Word Used','Meaning','Scenario','Sub-Scenario','Date'].map(h => (
-                          <th key={h} className="px-4 py-2.5 text-left font-black text-purple-700 uppercase tracking-wider text-[10px] border-b border-purple-100 whitespace-nowrap">{h}</th>
+                          <th key={h} className="px-4 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -531,7 +950,7 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick }: { detail: A
                               ) : <span className="text-slate-400 font-mono text-[11px]">—</span>}
                             </td>
                             <td className="px-4 py-2.5 border-b border-slate-100">
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                 isAgent
                                   ? 'bg-red-100 text-red-700 border border-red-200'
                                   : 'bg-orange-100 text-orange-700 border border-orange-200'
@@ -584,13 +1003,12 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: Po
         onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200"
-             style={{ background: 'linear-gradient(135deg, #FEF2F2, #FFF7ED)' }}>
-          <div className="p-2 rounded-xl bg-red-500/10">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
+          <div className="p-2 rounded-xl bg-red-50">
             <AlertOctagon size={18} className="text-red-500" />
           </div>
           <div className="flex-1">
-            <p className="text-sm font-black text-slate-900">Potential Scam Leads — Full Breakdown</p>
+            <p className="text-sm font-bold text-slate-900">Potential Scam Leads — Full Breakdown</p>
             <p className="text-[10px] text-slate-500 font-medium mt-0.5">Flag counts + words used + scenario context</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-900 transition-colors p-1">
@@ -610,7 +1028,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: Po
             <>
               {/* ── Flag Breakdown Cards ── */}
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Flag Type Breakdown</p>
+                <p className="text-label mb-3">Flag Type Breakdown</p>
                 <div className="grid grid-cols-2 gap-3">
                   {FLAGS.map(f => {
                     const count = detail.flags[f.key];
@@ -621,11 +1039,11 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: Po
                            style={{ background: f.bg, borderColor: `${f.color}30` }}>
                         <div className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ background: f.color }} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-black text-slate-900">{f.label}</p>
+                          <p className="text-xs font-semibold text-slate-900">{f.label}</p>
                           <p className="text-[10px] text-slate-500 font-medium mt-0.5 leading-snug">{f.desc}</p>
                         </div>
                         <div className="text-right shrink-0">
-                          <p className="text-xl font-black" style={{ color: f.color }}>{count.toLocaleString()}</p>
+                          <p className="text-xl font-bold" style={{ color: f.color }}>{count.toLocaleString()}</p>
                           <p className="text-[10px] font-bold text-slate-500">{pct}%</p>
                         </div>
                       </div>
@@ -636,7 +1054,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: Po
 
               {/* ── Call Detail Table ── */}
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">
+                <p className="text-label mb-3">
                   Call Details
                   <span className="ml-2 font-medium text-slate-400 normal-case">({detail.wordRows.length} calls)</span>
                 </p>
@@ -647,9 +1065,9 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: Po
                     <div className="overflow-auto max-h-[400px]">
                       <table className="w-full text-xs border-collapse">
                         <thead>
-                          <tr style={{ background: '#FEF2F2' }}>
+                          <tr className="bg-slate-50">
                             {['Flag', 'Lead ID', 'Agent ID', 'Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
-                              <th key={h} className="px-3 py-2.5 text-left font-semibold text-red-700 uppercase tracking-wider text-[10px] border-b border-red-100 whitespace-nowrap">
+                              <th key={h} className="px-3 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">
                                 {h}
                               </th>
                             ))}
@@ -736,9 +1154,8 @@ function SocialThreatDetailModal({
         onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100"
-          style={{ background: 'linear-gradient(135deg, #FFF7ED, #FEF3C7)' }}>
-          <div className="p-2 rounded-xl bg-orange-100">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
+          <div className="p-2 rounded-xl bg-orange-50">
             <ShieldAlert size={18} className="text-orange-500" />
           </div>
           <div>
@@ -757,28 +1174,26 @@ function SocialThreatDetailModal({
           <div className="flex items-center gap-3 px-6 py-3 border-b border-slate-100 bg-slate-50">
             <div className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 bg-blue-50 border border-blue-200">
               <span className="text-xs font-bold text-blue-700">📱 Social Media</span>
-              <span className="text-sm font-black text-blue-600">{socialCount}</span>
+              <span className="text-sm font-bold text-blue-600">{socialCount}</span>
             </div>
             <div className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 bg-red-50 border border-red-200">
               <span className="text-xs font-bold text-red-700">⚖️ Court &amp; Legal</span>
-              <span className="text-sm font-black text-red-600">{courtCount}</span>
+              <span className="text-sm font-bold text-red-600">{courtCount}</span>
             </div>
           </div>
         )}
 
         {/* Tabs */}
         {!loading && rows.length > 0 && (
-          <div className="flex gap-1 px-6 pt-4 pb-0">
-            {TABS.map(t => (
-              <button key={t.key}
-                onClick={() => setTab(t.key)}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                style={tab === t.key
-                  ? { backgroundColor: `${t.color}15`, color: t.color, border: `1px solid ${t.color}40` }
-                  : { backgroundColor: '#F8FAFC', color: '#64748B', border: '1px solid #E2E8F0' }}>
-                {t.label} ({t.count})
-              </button>
-            ))}
+          <div className="px-6 pt-3 pb-3 border-b border-slate-200 bg-slate-50">
+            <div className="pill-tabs">
+              {TABS.map(t => (
+                <button key={t.key} onClick={() => setTab(t.key)}
+                  className={`pill-tab ${tab === t.key ? 'pill-tab-active' : ''}`}>
+                  {t.label} ({t.count})
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -880,8 +1295,7 @@ function NegSignalDetailModal({
         onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100"
-          style={{ background: `linear-gradient(135deg, ${accent}18, ${accent}08)` }}>
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
           <span className="text-xl">{icon}</span>
           <div>
             <h2 className="text-base font-bold text-slate-800">{signal} Signal — Call Details</h2>
@@ -915,9 +1329,9 @@ function NegSignalDetailModal({
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr style={{ backgroundColor: bgLight }}>
+                  <tr className="bg-slate-50">
                     {['Lead ID', 'Agent ID', 'Word / Phrase Used', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
-                      <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200">
+                      <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-slate-200">
                         {h}
                       </th>
                     ))}
@@ -1094,36 +1508,29 @@ interface MetricCardProps {
 function MetricCard({ label, value, subValue, icon: Icon, accentColor, loading }: MetricCardProps) {
   return (
     <div
-      className="relative flex flex-col bg-white rounded-2xl overflow-hidden group transition-all duration-200 hover:-translate-y-1 cursor-default"
-      style={{ border: `2px solid ${accentColor}30`, borderTopWidth: 4, borderTopColor: accentColor,
-               boxShadow: `0 2px 8px ${accentColor}10` }}
-      onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.boxShadow = `0 12px 32px ${accentColor}28`}
-      onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.boxShadow = `0 2px 8px ${accentColor}10`}
+      className="relative flex flex-col bg-white rounded-xl overflow-hidden group transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md cursor-default border border-slate-200/80 shadow-sm"
+      style={{ borderTopWidth: 3, borderTopColor: accentColor }}
     >
-      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-           style={{ background: `linear-gradient(145deg, ${accentColor}08, transparent)` }} />
-      <div className="relative px-4 py-4">
-        <div className="flex items-start justify-between mb-3">
-          <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.12em] leading-tight pr-2">{label}</span>
-          <div className="p-2 rounded-xl shrink-0 group-hover:scale-110 transition-transform duration-200 shadow-sm"
-               style={{ backgroundColor: `${accentColor}18`, color: accentColor }}>
-            <Icon size={13} />
+      <div className="relative px-3 py-2.5">
+        <div className="flex items-start justify-between mb-1.5">
+          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-[0.05em] leading-tight pr-2">{label}</span>
+          <div className="p-1.5 rounded-lg shrink-0"
+               style={{ backgroundColor: `${accentColor}15`, color: accentColor }}>
+            <Icon size={12} />
           </div>
         </div>
         {loading ? (
-          <div className="h-8 w-20 bg-slate-100 rounded-lg animate-pulse" />
+          <div className="h-6 w-16 bg-slate-100 rounded-lg animate-pulse" />
         ) : (
-          <p className="text-[26px] font-black text-slate-900 leading-none tracking-tight">{value}</p>
+          <p className="text-xl font-bold text-slate-900 leading-none tracking-tight tabular-nums">{value}</p>
         )}
         {subValue && !loading && (
-          <div className="flex items-center gap-1.5 mt-2">
+          <div className="flex items-center gap-1 mt-1">
             <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: accentColor }} />
-            <p className="text-[11px] text-slate-600 font-semibold">{subValue}</p>
+            <p className="text-[10px] text-slate-400 font-medium">{subValue}</p>
           </div>
         )}
       </div>
-      <div className="absolute bottom-0 left-0 right-0 h-[3px] opacity-60 group-hover:opacity-100 transition-opacity duration-200"
-           style={{ background: `linear-gradient(90deg, ${accentColor}, ${accentColor}40)` }} />
     </div>
   );
 }
@@ -1234,6 +1641,14 @@ export default function InboundQualityDashboard() {
   const [transcriptData,   setTranscriptData]   = useState<TranscriptData | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
 
+  // Fatal calls modal
+  const [fatalModalOpen,    setFatalModalOpen]    = useState(false);
+  const [fatalCalls,        setFatalCalls]        = useState<FatalCallItem[]>([]);
+  const [fatalCallsLoading, setFatalCallsLoading] = useState(false);
+  const [fatalTranscriptItem, setFatalTranscriptItem] = useState<FatalCallItem | null>(null);
+  const [fatalTranscriptData, setFatalTranscriptData] = useState<TranscriptData | null>(null);
+  const [fatalTranscriptLoading, setFatalTranscriptLoading] = useState(false);
+
   // Positive signal detail modal
   const [posModalOpen,    setPosModalOpen]    = useState(false);
   const [posModalKeyword, setPosModalKeyword] = useState('');
@@ -1242,6 +1657,11 @@ export default function InboundQualityDashboard() {
   const [posModalPhrasesLoading, setPosModalPhrasesLoading] = useState(false);
   const [posModalLeads,  setPosModalLeads]   = useState<PosKeywordLeadRow[]>([]);
   const [posModalLeadsLoading, setPosModalLeadsLoading] = useState(false);
+
+  // Score Component detail modal
+  const [scoreCompModal, setScoreCompModal] = useState<{ label: string; accent: string; key: keyof ScoreComponentData } | null>(null);
+  const [scoreCompData, setScoreCompData] = useState<ScoreComponentData | null>(null);
+  const [scoreCompLoading, setScoreCompLoading] = useState(false);
 
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
@@ -1253,6 +1673,7 @@ export default function InboundQualityDashboard() {
     setThreatDetail(null);
     setFrustDetail(null);
     setSocialThreatDetail(null);
+    setFatalCalls([]);
   }, [sd, ed]);
 
   const handleLeadClick = useCallback((leadId: string) => {
@@ -1266,22 +1687,51 @@ export default function InboundQualityDashboard() {
       .finally(() => setTranscriptLoading(false));
   }, []);
 
-  const openBandDetail = async (band: string, title: string, accent: string) => {
-    const cols = [
-      { key: 'Agent',       label: 'Agent' },
-      { key: 'Scenario',    label: 'Scenario' },
-      { key: 'Count',       label: 'Count' },
-      { key: 'Avg Score%',  label: 'Avg Score%' },
-    ];
+  const openFatalModal = () => {
+    setFatalModalOpen(true);
+    if (fatalCalls.length === 0) {
+      setFatalCallsLoading(true);
+      const clientParam = clientId ? `&clientId=${clientId}` : '';
+      api.get<{ data: FatalCallItem[] }>(`/inbound-quality/fatal-calls-list?startDate=${sd}&endDate=${ed}${clientParam}`)
+        .then(r => setFatalCalls(r.data?.data ?? []))
+        .catch(() => setFatalCalls([]))
+        .finally(() => setFatalCallsLoading(false));
+    }
+  };
+
+  const openFatalTranscript = (item: FatalCallItem) => {
+    setFatalTranscriptItem(item);
+    setFatalTranscriptData(null);
+    setFatalTranscriptLoading(true);
+    api.get<{ data: TranscriptData | null }>(`/inbound-quality/transcript?leadId=${encodeURIComponent(item.lead_id)}`)
+      .then(r => setFatalTranscriptData(r.data?.data ?? null))
+      .catch(() => setFatalTranscriptData(null))
+      .finally(() => setFatalTranscriptLoading(false));
+  };
+
+  const openBandDetail = async (band: string, title: string, accent: string, agentId?: string) => {
+    const cols = agentId
+      ? [
+          { key: 'Scenario',    label: 'Scenario' },
+          { key: 'Count',       label: 'Count' },
+          { key: 'Avg Score%',  label: 'Avg Score%' },
+        ]
+      : [
+          { key: 'Agent',       label: 'Agent' },
+          { key: 'Scenario',    label: 'Scenario' },
+          { key: 'Count',       label: 'Count' },
+          { key: 'Avg Score%',  label: 'Avg Score%' },
+        ];
     setDrillModal({ title, accent, rows: [], columns: cols });
     setDrillLoading(true);
     try {
-      const q = `clientId=${clientId}&startDate=${sd}&endDate=${ed}&band=${band}`;
+      const agentParam = agentId ? `&agentId=${encodeURIComponent(agentId)}` : '';
+      const q = `clientId=${clientId}&startDate=${sd}&endDate=${ed}&band=${band}${agentParam}`;
       const { data } = await api.get<{ data: { agent: string; scenario: string; count: number; avg_score: number }[] }>(
         `/inbound-quality/band-detail?${q}`
       );
       setDrillModal({ title, accent, columns: cols, rows: data.data.map(r => ({
-        Agent:        r.agent,
+        ...(agentId ? {} : { Agent: resolveAgent(r.agent) }),
         Scenario:     r.scenario,
         Count:        r.count,
         'Avg Score%': `${r.avg_score}%`,
@@ -1453,7 +1903,7 @@ export default function InboundQualityDashboard() {
   const pct = (n: number) => total > 0 ? `${((n / total) * 100).toFixed(1)}%` : '—';
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+    <div className="min-h-screen text-slate-900 flex flex-col">
 
       {/* Top bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
@@ -1474,13 +1924,13 @@ export default function InboundQualityDashboard() {
       <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-6 w-full">
 
         {/* Date filter */}
-        <div className="flex items-center gap-3 flex-wrap mb-6">
-          <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider">From</label>
+        <div className="filter-bar mb-6">
+          <label className="text-label">From</label>
           <input type="datetime-local" value={startDate} onChange={e => setStartDate(e.target.value)}
-            className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-sky-500" />
-          <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wider">To</label>
+            className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
+          <label className="text-label">To</label>
           <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
-            className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-sky-500" />
+            className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
           <button
             onClick={async () => {
               setDrillLoading(true);
@@ -1512,7 +1962,7 @@ export default function InboundQualityDashboard() {
               } catch { alert('Failed to export raw data. Please try again.'); }
               finally { setDrillLoading(false); }
             }}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors">
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-700 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition-colors">
             {drillLoading ? <span className="animate-spin w-3 h-3 border border-emerald-400 border-t-transparent rounded-full inline-block" /> : <Download size={12} />}
             Export Raw Data
           </button>
@@ -1598,25 +2048,15 @@ export default function InboundQualityDashboard() {
         )}
 
         {/* Slide tabs */}
-        <div className="flex gap-2 mb-6">
-          {SLIDES.map((s, i) => {
-            const isActive = activeSlide === i;
-            const activeClass =
-              s.color === 'red'    ? 'bg-red-500/20 border-red-500/60 text-red-300' :
-              s.color === 'purple' ? 'bg-purple-500/20 border-purple-500/60 text-purple-300' :
-              s.color === 'teal'   ? 'bg-teal-500/20 border-teal-500/60 text-teal-300' :
-                                     'bg-sky-500/20 border-sky-500/60 text-sky-300';
-            return (
-              <button key={s.label}
-                onClick={() => setActiveSlide(i)}
-                className={`px-5 py-2 rounded-lg border text-xs font-bold uppercase tracking-widest transition-all duration-150 ${
-                  isActive ? activeClass : 'bg-slate-50 border-slate-200 text-slate-500 hover:text-slate-600'
-                }`}
-              >
-                {s.label}
-              </button>
-            );
-          })}
+        <div className="pill-tabs mb-6">
+          {SLIDES.map((s, i) => (
+            <button key={s.label}
+              onClick={() => setActiveSlide(i)}
+              className={`pill-tab ${activeSlide === i ? 'pill-tab-active' : ''}`}
+            >
+              {s.label}
+            </button>
+          ))}
         </div>
 
         {/* Quality Performance slide */}
@@ -1708,24 +2148,40 @@ export default function InboundQualityDashboard() {
 
               {/* Score Components — LEFT */}
               <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+                <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                   <div className="w-1 h-4 rounded-full bg-violet-500" />
-                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Score Components</h3>
+                  <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Score Components</h3>
                 </div>
                 <div className="p-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {[
-                    { label: 'Opening Skill',  value: kpis?.opening_skill  ?? 0 },
-                    { label: 'Soft Skill',      value: kpis?.soft_skill     ?? 0 },
-                    { label: 'Hold Procedure',  value: kpis?.hold_procedure ?? 0 },
-                    { label: 'Resolution',      value: kpis?.resolution     ?? 0 },
-                    { label: 'Closing',         value: kpis?.closing        ?? 0 },
-                    { label: 'Avg Score',       value: kpis?.avg_score      ?? 0, isAvg: true },
-                  ].map(({ label, value, isAvg }) => {
+                    { label: 'Opening Skill',  value: kpis?.opening_skill  ?? 0, key: 'opening_skill'  as const, accent: '#0EA5E9' },
+                    { label: 'Soft Skill',     value: kpis?.soft_skill     ?? 0, key: 'soft_skill'     as const, accent: '#8B5CF6' },
+                    { label: 'Hold Procedure', value: kpis?.hold_procedure ?? 0, key: 'hold_procedure' as const, accent: '#F59E0B' },
+                    { label: 'Resolution',     value: kpis?.resolution     ?? 0, key: 'resolution'     as const, accent: '#14B8A6' },
+                    { label: 'Closing',        value: kpis?.closing        ?? 0, key: 'closing'        as const, accent: '#EC4899' },
+                    { label: 'Avg Score',      value: kpis?.avg_score      ?? 0, key: null,                      accent: '#8B5CF6' },
+                  ].map(({ label, value, key, accent }) => {
+                    const isAvg = key === null;
                     const color = value >= 90 ? '#22C55E' : value >= 85 ? '#F59E0B' : value > 0 ? '#EF4444' : '#64748B';
                     return (
                       <div key={label}
-                        className={`relative flex flex-col items-center justify-center gap-1.5 rounded-xl border py-4 px-3 overflow-hidden ${
-                          isAvg ? 'border-violet-500/30 bg-violet-500/5' : 'border-slate-200 bg-white'
+                        onClick={() => {
+                          if (isAvg) return;
+                          setScoreCompModal({ label, accent, key: key! });
+                          if (!scoreCompData) {
+                            setScoreCompLoading(true);
+                            const clientParam = clientId ? `&clientId=${clientId}` : '';
+                            api.get<{ data: ScoreComponentData }>(
+                              `/inbound-quality/score-component-detail?startDate=${sd}&endDate=${ed}${clientParam}`
+                            ).then(r => setScoreCompData(r.data?.data ?? null))
+                              .catch(() => setScoreCompData(null))
+                              .finally(() => setScoreCompLoading(false));
+                          }
+                        }}
+                        className={`relative flex flex-col items-center justify-center gap-1.5 rounded-xl border py-4 px-3 overflow-hidden transition-all ${
+                          isAvg
+                            ? 'border-violet-500/30 bg-violet-500/5 cursor-default'
+                            : 'border-slate-200 bg-white cursor-pointer hover:shadow-md hover:-translate-y-0.5'
                         }`}>
                         <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-xl" style={{ backgroundColor: isAvg ? '#8B5CF6' : color }} />
                         {loading ? (
@@ -1738,6 +2194,9 @@ export default function InboundQualityDashboard() {
                         <span className={`text-[10px] font-semibold uppercase tracking-widest text-center leading-tight ${isAvg ? 'text-violet-400' : 'text-slate-600'}`}>
                           {label}
                         </span>
+                        {!isAvg && !loading && (
+                          <span className="text-[9px] text-slate-400 font-medium">Click for detail</span>
+                        )}
                       </div>
                     );
                   })}
@@ -1754,10 +2213,10 @@ export default function InboundQualityDashboard() {
                 const grandFatalPct = grandTotal > 0 ? (grandFatal / grandTotal) * 100 : 0;
                 return (
                   <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+                    <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                       <div className="w-1 h-4 rounded-full bg-amber-500" />
-                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">ACHT Categorization</h3>
-                      <ExportBtn onClick={() => kpis && downloadCSV(kpis.acht_data.map(r => ({ Category: r.category, 'Audit Count': r.audit_count, 'Score%': r.score_pct, 'Fatal Count': r.fatal_count, 'Fatal%': r.fatal_pct })), 'acht-categorization.csv')} />
+                      <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">ACHT Categorization</h3>
+                      <ExportBtn onClick={() => { const AL: Record<string,string> = { 'Short(<1min)': '< 1 min (Short)', 'Average(1min-5min)': 'Average (1-5 min)', 'Long(5min-10min)': 'Long (5-10 min)', 'Extremely Long(>10min)': 'Extremely Long (>10 min)' }; kpis && downloadCSV(kpis.acht_data.map(r => ({ Category: AL[r.category]??r.category, 'Audit Count': r.audit_count, 'Score%': r.score_pct, 'Fatal Count': r.fatal_count, 'Fatal%': r.fatal_pct })), 'acht-categorization.csv'); }} />
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
@@ -1771,9 +2230,17 @@ export default function InboundQualityDashboard() {
                           </tr>
                         </thead>
                         <tbody>
-                          {kpis.acht_data.map((row, i) => (
+                          {kpis.acht_data.map((row, i) => {
+                            const ACHT_LABELS: Record<string, string> = {
+                              'Short(<1min)':           '< 1 min (Short)',
+                              'Average(1min-5min)':     'Average (1–5 min)',
+                              'Long(5min-10min)':       'Long (5–10 min)',
+                              'Extremely Long(>10min)': 'Extremely Long (> 10 min)',
+                            };
+                            const label = ACHT_LABELS[row.category] ?? row.category;
+                            return (
                             <tr key={i} className={`border-b border-slate-100 hover:bg-slate-50 ${i % 2 === 0 ? '' : 'bg-transparent'}`}>
-                              <td className="py-2.5 px-4 text-slate-700 font-medium">{row.category}</td>
+                              <td className="py-2.5 px-4 text-slate-700 font-medium">{label}</td>
                               <td className="py-2.5 px-4 text-slate-600 tabular-nums">{row.audit_count.toLocaleString()}</td>
                               <td className="py-2.5 px-4 tabular-nums">
                                 <span className="font-semibold" style={{
@@ -1793,7 +2260,7 @@ export default function InboundQualityDashboard() {
                                 </span>
                               </td>
                             </tr>
-                          ))}
+                          );})}
                         </tbody>
                         <tfoot>
                           <tr className="border-t border-slate-200 bg-white">
@@ -1828,7 +2295,7 @@ export default function InboundQualityDashboard() {
             </div>
 
             {/* Portfolio Insight */}
-            <div className="bg-white/60 border border-slate-200 rounded-2xl px-5 py-5 mb-6">
+            <div className="portfolio-insight rounded-2xl px-5 py-5 mb-6" style={{ background: 'linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 60%, #7DD3FC 100%)', border: '1px solid #7DD3FC' }}>
               {/* Section header */}
               <div className="flex items-center gap-2 mb-5">
                 <div className="w-1 h-5 rounded-full bg-violet-500" />
@@ -1864,7 +2331,7 @@ export default function InboundQualityDashboard() {
                     <div className="h-8 w-20 bg-slate-100 rounded animate-pulse" />
                   ) : (
                     <div className="flex items-end gap-2">
-                      <span className="text-3xl font-black text-orange-400 tabular-nums leading-none">
+                      <span className="text-3xl font-bold text-orange-500 tabular-nums leading-none">
                         {(kpis?.social_media_court_threat ?? 0).toLocaleString()}
                       </span>
                       <span className="text-xs text-slate-600 mb-0.5">
@@ -1906,7 +2373,7 @@ export default function InboundQualityDashboard() {
                     <div className="h-8 w-20 bg-slate-100 rounded animate-pulse" />
                   ) : (
                     <div className="flex items-end gap-2">
-                      <span className="text-3xl font-black text-red-400 tabular-nums leading-none">
+                      <span className="text-3xl font-bold text-red-500 tabular-nums leading-none">
                         {(kpis?.potential_scam ?? 0).toLocaleString()}
                       </span>
                       <span className="text-xs text-slate-600 mb-0.5">
@@ -1928,7 +2395,7 @@ export default function InboundQualityDashboard() {
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-1 h-4 rounded-full bg-rose-500" />
-                <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Top Negative Signals</h3>
+                <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Top Negative Signals</h3>
                 <span className="ml-auto text-[10px] text-slate-400">Based on top_negative_words categorisation</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -1988,11 +2455,11 @@ export default function InboundQualityDashboard() {
                   };
                   return (
                     <div key={label}
-                      className="relative flex flex-col gap-2 rounded-xl border border-slate-200 px-4 py-4 overflow-hidden cursor-pointer hover:brightness-110 transition-all"
-                      style={{ backgroundColor: bg }}
+                      className="relative flex flex-col gap-2 rounded-xl px-4 py-4 overflow-hidden cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all"
+                      style={{ backgroundColor: '#ffffff', border: `2px solid ${color}60`, boxShadow: `0 2px 8px ${color}25` }}
                       title={`Click to view ${label} details`}
                       onClick={handleClick}>
-                      <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-xl" style={{ backgroundColor: color }} />
+                      <div className="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style={{ backgroundColor: color }} />
                       <div className="flex items-center justify-between">
                         <span className="text-base">{icon}</span>
                         <span className="text-[10px] font-bold rounded-full px-2 py-0.5"
@@ -2003,11 +2470,11 @@ export default function InboundQualityDashboard() {
                       {loading ? (
                         <div className="h-7 w-16 bg-slate-100 rounded animate-pulse" />
                       ) : (
-                        <span className="text-2xl font-black tabular-nums" style={{ color }}>
+                        <span className="text-2xl font-bold tabular-nums" style={{ color }}>
                           {count.toLocaleString()}
                         </span>
                       )}
-                      <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-600">
+                      <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-700">
                         {label}
                       </span>
                     </div>
@@ -2020,7 +2487,7 @@ export default function InboundQualityDashboard() {
             <div className="mt-5">
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-1 h-4 rounded-full bg-emerald-500" />
-                <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Top Positive Signals</h3>
+                <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Top Positive Signals</h3>
                 <span className="ml-auto text-[10px] text-slate-400">
                   {posSignals.length > 0
                     ? `${posSignals.reduce((s, r) => s + r.total, 0).toLocaleString()} total mentions · scroll →`
@@ -2049,8 +2516,8 @@ export default function InboundQualityDashboard() {
 
                     return (
                       <div key={r.keyword}
-                        className="relative flex-shrink-0 flex flex-col justify-between rounded-xl border px-3 py-2.5 overflow-hidden cursor-pointer transition-all hover:shadow-md hover:-translate-y-0.5"
-                        style={{ width: 112, backgroundColor: `${color}10`, borderColor: `${color}35` }}
+                        className="relative flex-shrink-0 flex flex-col justify-between rounded-xl px-3 py-2.5 overflow-hidden cursor-pointer transition-all hover:shadow-lg hover:-translate-y-0.5"
+                        style={{ width: 112, backgroundColor: '#ffffff', border: `2px solid ${color}60`, boxShadow: `0 2px 8px ${color}25` }}
                         title={`Click to see top phrases for "${r.keyword}"`}
                         onClick={() => {
                           setPosModalKeyword(r.keyword);
@@ -2076,7 +2543,7 @@ export default function InboundQualityDashboard() {
                         <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-xl" style={{ backgroundColor: color }} />
 
                         {/* count */}
-                        <span className="text-lg font-black tabular-nums leading-none" style={{ color }}>
+                        <span className="text-lg font-bold tabular-nums leading-none" style={{ color }}>
                           {r.total.toLocaleString()}
                         </span>
 
@@ -2091,7 +2558,7 @@ export default function InboundQualityDashboard() {
                             style={{ backgroundColor: `${color}20`, color }}>
                             👤 {r.customer_count}
                           </span>
-                          <span className="text-[9px] rounded px-1 py-0.5 font-semibold bg-slate-100 text-slate-600">
+                          <span className="text-[9px] rounded px-1 py-0.5 font-semibold bg-slate-200 text-slate-700">
                             🎧 {r.agent_count}
                           </span>
                         </div>
@@ -2103,14 +2570,30 @@ export default function InboundQualityDashboard() {
             </div>
             </div> {/* /Portfolio Insight */}
 
-            {/* Fatal count banner (if any) */}
+            {/* Fatal count banner */}
             {!loading && (kpis?.fatal_count ?? 0) > 0 && (
-              <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-red-500/20 bg-red-500/5 mb-6">
-                <AlertTriangle size={14} className="text-red-400 shrink-0" />
-                <span className="text-xs text-red-300">
-                  <span className="font-bold">{kpis!.fatal_count}</span> fatal call{kpis!.fatal_count !== 1 ? 's' : ''} (quality score = 0) excluded from W/O Fatal CQ Score
-                </span>
-              </div>
+              <button
+                className="w-full text-left mb-6 group"
+                onClick={openFatalModal}
+              >
+                <div className="flex items-center gap-4 px-5 py-3.5 rounded-xl border-2 border-red-400 transition-all duration-150 group-hover:shadow-lg group-hover:-translate-y-0.5"
+                  style={{ background: 'linear-gradient(135deg,#B71C1C 0%,#D32F2F 60%,#E53935 100%)', boxShadow: '0 4px 16px rgba(211,47,47,0.35)' }}>
+                  <div className="p-2.5 rounded-xl bg-red-900/40">
+                    <AlertTriangle size={18} className="text-red-100" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-white">
+                      {kpis!.fatal_count} Fatal Call{kpis!.fatal_count !== 1 ? 's' : ''} Detected
+                    </p>
+                    <p className="text-[11px] text-red-200 mt-0.5">
+                      Quality score = 0 · Excluded from W/O Fatal CQ Score · <span className="font-bold text-white underline">Click to view details &amp; transcripts →</span>
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-[10px] font-bold text-white bg-red-900/40 rounded-lg px-3 py-1.5 border border-red-300/30">
+                    VIEW ALL
+                  </div>
+                </div>
+              </button>
             )}
 
             {/* Top 5 Performers + 7-Day Chart */}
@@ -2139,9 +2622,9 @@ export default function InboundQualityDashboard() {
 
                   {/* Top 5 Performers */}
                   <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+                    <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                       <Trophy size={13} className="text-amber-400" />
-                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Top 5 Performers</h3>
+                      <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Top 5 Performers</h3>
                       <ExportBtn onClick={() => downloadCSV(performers.map((p, i) => ({ Rank: i + 1, 'MAS ID': p.user, Agent: resolveAgent(p.user), Audits: p.audit_count, 'Avg Score%': p.avg_score })), 'top-performers.csv')} />
                     </div>
                     <div className="p-4 space-y-2.5">
@@ -2151,8 +2634,8 @@ export default function InboundQualityDashboard() {
                         <div key={p.user}
                           className="flex items-center gap-3 cursor-pointer hover:bg-slate-50 rounded-lg px-1 transition-colors"
                           title={`Click to drill into ${resolveAgent(p.user)}'s performance`}
-                          onClick={() => openBandDetail('no_fatal', `${resolveAgent(p.user)} — Performance Breakdown`, RANK_COLORS[i])}>
-                          <div className="flex items-center justify-center w-8 h-8 rounded-lg text-[10px] font-black shrink-0"
+                          onClick={() => openBandDetail('no_fatal', `${resolveAgent(p.user)} — Performance Breakdown`, RANK_COLORS[i], p.user)}>
+                          <div className="flex items-center justify-center w-8 h-8 rounded-lg text-[10px] font-bold shrink-0"
                             style={{ backgroundColor: `${RANK_COLORS[i]}20`, color: RANK_COLORS[i] }}>
                             {RANK_LABELS[i]}
                           </div>
@@ -2180,9 +2663,9 @@ export default function InboundQualityDashboard() {
 
                   {/* 7-Day Bar Chart: Score vs Target */}
                   <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+                    <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                       <Target size={13} className="text-sky-400" />
-                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Last 7 Days vs Target</h3>
+                      <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Last 7 Days vs Target</h3>
                       <ExportBtn onClick={() => downloadCSV(chartData.map(d => ({ Date: d.date, 'Avg Score%': d.score ?? 'No data', 'Audit Count': d.audits, Target: d.target })), 'last-7-days.csv')} />
                       <span className="ml-auto flex items-center gap-1.5 text-[10px] text-red-400 font-semibold">
                         <span className="w-4 h-0.5 bg-red-400 rounded inline-block" />
@@ -2205,13 +2688,13 @@ export default function InboundQualityDashboard() {
                             tickFormatter={v => `${v}%`}
                           />
                           <Tooltip
-                            contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff20', borderRadius: 8, fontSize: 11 }}
+                            contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 11, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                             formatter={(val: unknown, name: unknown) => [
                               name === 'score' ? `${val ?? 'No data'}%` : `${val}%`,
                               name === 'score' ? 'Quality Score' : 'Target',
                             ]}
-                            labelStyle={{ color: '#ffffff', fontWeight: 600, marginBottom: 4 }}
-                            itemStyle={{ color: '#ffffff' }}
+                            labelStyle={{ color: '#0F172A', fontWeight: 600, marginBottom: 4 }}
+                            itemStyle={{ color: '#334155' }}
                           />
                           <ReferenceLine
                             y={95}
@@ -2279,9 +2762,9 @@ export default function InboundQualityDashboard() {
               const avg_cq       = agentAuditBand.reduce((s, r) => s + r.cq_score, 0) / agentAuditBand.length;
               return (
                 <div className="mb-6 bg-white border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                  <div className="px-4 py-3 card-header gap-3 px-5 py-3 flex-wrap">
                     <div className="w-1 h-4 rounded-full bg-sky-500 shrink-0" />
-                    <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Agent Audit Summary</h3>
+                    <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Agent Audit Summary</h3>
                     <span className="text-[10px] text-slate-600 ml-1">TQ ≥80% · MQ 60–79% · BQ &lt;60% · Stack Ranking: &gt;95% TQ · &gt;85% MQ · else BQ</span>
                     <ExportBtn onClick={() => downloadCSV(agentAuditBand.map((r, i) => ({
                       '#': i + 1,
@@ -2324,7 +2807,7 @@ export default function InboundQualityDashboard() {
                           <tr key={r.agent}
                             className="border-b border-slate-200 hover:bg-slate-100 transition-colors cursor-pointer"
                             title={`Click to drill into ${resolveAgent(r.agent)}'s band detail`}
-                            onClick={() => openBandDetail('no_fatal', `${resolveAgent(r.agent)} — Band Detail`, r.cq_score > 95 ? '#22C55E' : r.cq_score > 85 ? '#F59E0B' : '#EF4444')}>
+                            onClick={() => openBandDetail('no_fatal', `${resolveAgent(r.agent)} — Band Detail`, r.cq_score > 95 ? '#22C55E' : r.cq_score > 85 ? '#F59E0B' : '#EF4444', r.agent)}>
                             <td className="py-2 px-3 text-slate-400 text-center">{i + 1}</td>
                             <td className="py-2 px-3 font-medium text-slate-900 whitespace-nowrap">{agentTag(r.agent)}</td>
                             <td className="py-2 px-3 text-right text-slate-700">{r.audit_count.toLocaleString()}</td>
@@ -2379,9 +2862,9 @@ export default function InboundQualityDashboard() {
               return (
                 <div className="mt-6 mb-6 bg-white border border-slate-200 rounded-xl overflow-hidden">
                   {/* Header */}
-                  <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 flex-wrap">
+                  <div className="px-5 py-3 card-header gap-2 px-5 py-3 flex-wrap">
                     <div className="w-1 h-4 rounded-full bg-blue-500" />
-                    <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">
+                    <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">
                       Scenario Distribution
                     </h3>
                     <ExportBtn onClick={() => downloadCSV(filteredScenarios.map(s => ({ Scenario: s.scenario, Count: s.count, 'Count%': `${s.pct}%` })), 'scenario-distribution.csv')} />
@@ -2446,7 +2929,7 @@ export default function InboundQualityDashboard() {
                             ))}
                           </Pie>
                           <Tooltip
-                            contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 11 }}
+                            contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 11, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                             formatter={(v: unknown, n: unknown) => [
                               `${Number(v).toLocaleString()} calls (${filteredScenarios.find(s => s.scenario === n)?.pct ?? 0}%)`,
                               String(n),
@@ -2581,9 +3064,9 @@ export default function InboundQualityDashboard() {
                 extraCol?: string;
               }) => (
                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+                  <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                     <div className="w-1 h-4 rounded-full" style={{ background: accentColor }} />
-                    <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">{title}</h3>
+                    <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">{title}</h3>
                     <ExportBtn onClick={() => downloadCSV(rows.map(r => ({ Scenario: r.scenario, Scenario1: r.scenario1, ...(extraCol ? { [extraCol]: r.extra } : {}), Count: r.count, 'Count%': `${r.pct}%` })), `${title.replace(/\s+/g,'-').toLowerCase()}.csv`)} />
                     <span className="ml-auto text-xs font-bold" style={{ color: accentColor }}>
                       {rows.reduce((s, r) => s + r.count, 0).toLocaleString()} calls
@@ -2605,35 +3088,36 @@ export default function InboundQualityDashboard() {
                         </thead>
                         <tbody>
                           {rows.map((r, i) => (
-                            <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? '' : 'bg-transparent'}`}>
-                              <td className="py-2.5 px-4 text-slate-600">{r.scenario}</td>
-                              <td className="py-2.5 px-4 text-slate-400">{r.scenario1}</td>
+                            <tr key={i} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${i % 2 === 0 ? '' : 'bg-transparent'}`}>
+                              <td className="py-2.5 px-4 text-slate-900 font-semibold">{r.scenario}</td>
+                              <td className="py-2.5 px-4 text-slate-800 font-medium">{r.scenario1}</td>
                               {extraCol && (
                                 <td className="py-2.5 px-4">
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold"
                                     style={{
                                       background: `${negColor[r.extra ?? ''] ?? '#64748B'}22`,
-                                      color: negColor[r.extra ?? ''] ?? '#94A3B8',
+                                      color: negColor[r.extra ?? ''] ?? '#475569',
+                                      border: `1px solid ${negColor[r.extra ?? ''] ?? '#64748B'}40`,
                                     }}>
                                     {r.extra}
                                   </span>
                                 </td>
                               )}
-                              <td className="py-2.5 px-4 text-slate-700 font-semibold tabular-nums">{r.count.toLocaleString()}</td>
+                              <td className="py-2.5 px-4 text-slate-900 font-bold tabular-nums">{r.count.toLocaleString()}</td>
                               <td className="py-2.5 px-4 tabular-nums">
                                 <div className="flex items-center gap-2">
                                   <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden max-w-[60px]">
                                     <div className="h-full rounded-full" style={{ width: `${r.pct}%`, background: accentColor }} />
                                   </div>
-                                  <span className="text-slate-600 font-semibold">{r.pct}%</span>
+                                  <span className="text-slate-900 font-bold">{r.pct}%</span>
                                 </div>
                               </td>
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot className="border-t border-slate-200">
-                          <tr className="bg-slate-50">
-                            <td colSpan={extraCol ? 3 : 2} className="py-2.5 px-4 text-slate-600 font-semibold text-[10px] uppercase">Total</td>
+                        <tfoot className="border-t-2 border-slate-300">
+                          <tr className="bg-slate-100">
+                            <td colSpan={extraCol ? 3 : 2} className="py-2.5 px-4 text-slate-900 font-bold text-[11px] uppercase tracking-wide">Grand Total</td>
                             <td className="py-2.5 px-4 text-slate-900 font-bold tabular-nums">{rows.reduce((s, r) => s + r.count, 0).toLocaleString()}</td>
                             <td className="py-2.5 px-4 text-slate-900 font-bold">100%</td>
                           </tr>
@@ -2657,9 +3141,9 @@ export default function InboundQualityDashboard() {
                   {/* Sensitive Word Analysis — two metrics below the social threats table */}
                   {sensitiveWordAnalysis && (
                     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                      <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+                      <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                         <div className="w-1 h-4 rounded-full bg-orange-400" />
-                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">
+                        <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">
                           Sensitive Word Use Analysis
                         </h3>
                       </div>
@@ -2887,9 +3371,9 @@ export default function InboundQualityDashboard() {
 
                   {/* Top 5 Fatal Contributor */}
                   <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+                    <div className="px-4 py-3 card-header gap-2 px-5 py-3">
                       <div className="w-1 h-4 rounded-full bg-red-500" />
-                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Top 5 Fatal Contributor</h3>
+                      <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Top 5 Fatal Contributor</h3>
                       <ExportBtn onClick={() => downloadCSV(fd.top_contributors.map(r => ({ 'MAS ID': r.agent_name, Agent: resolveAgent(r.agent_name), Audits: r.audit_count, Fatals: r.fatal_count, 'Fatal%': r.fatal_pct })), 'fatal-contributors.csv')} />
                     </div>
                     <table className="w-full text-xs">
@@ -2928,9 +3412,9 @@ export default function InboundQualityDashboard() {
                   {/* Day Wise Fatal% chart */}
                   {chartData.length > 0 && (
                     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+                      <div className="px-4 py-3 card-header gap-2 px-5 py-3">
                         <div className="w-1 h-4 rounded-full bg-red-500" />
-                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Day Wise Fatal%</h3>
+                        <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Day Wise Fatal%</h3>
                       </div>
                       <div className="p-3">
                         <ResponsiveContainer width="100%" height={220}>
@@ -2939,7 +3423,7 @@ export default function InboundQualityDashboard() {
                             <XAxis dataKey="date" tick={{ fill: '#64748B', fontSize: 9 }} />
                             <YAxis tick={{ fill: '#64748B', fontSize: 9 }} allowDecimals={false} />
                             <Tooltip
-                              contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 11 }}
+                              contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 11, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                               formatter={(v: unknown, n: unknown) => [v as React.ReactNode, n === 'count' ? 'Fatal Count' : String(n)]}
                             />
                             <Bar dataKey="count" fill="#0EA5E9" radius={[3,3,0,0]}><LabelList content={renderFatalBarLabel as never} /></Bar>
@@ -2955,9 +3439,9 @@ export default function InboundQualityDashboard() {
 
                   {/* Scenario Wise Fatal Count — 4 cards */}
                   <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+                    <div className="px-4 py-3 card-header gap-2 px-5 py-3">
                       <div className="w-1 h-4 rounded-full bg-red-500" />
-                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Scenario Wise Fatal Count</h3>
+                      <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Scenario Wise Fatal Count</h3>
                     </div>
                     <div className="grid grid-cols-4 divide-x divide-slate-200">
                       {[
@@ -2977,9 +3461,9 @@ export default function InboundQualityDashboard() {
                   {/* Day Wise / Fatal heat-map table */}
                   {fd.day_wise.length > 0 && (
                     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+                      <div className="px-4 py-3 card-header gap-2 px-5 py-3">
                         <div className="w-1 h-4 rounded-full bg-red-500" />
-                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Day Wise / Fatal</h3>
+                        <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Day Wise / Fatal</h3>
                         <ExportBtn onClick={() => downloadCSV(fd.day_wise.map(r => ({ Date: r.call_date, 'Query Fatal': r.query_fatal, 'Complaint Fatal': r.complaint_fatal, 'Request Fatal': r.request_fatal, 'Total Fatal': r.total_fatal, 'Fatal%': r.fatal_pct })), 'day-wise-fatal.csv')} />
                       </div>
                       <div className="overflow-y-auto max-h-52">
@@ -3009,7 +3493,7 @@ export default function InboundQualityDashboard() {
                           </tbody>
                           <tfoot className="border-t border-slate-200">
                             <tr className="bg-slate-50">
-                              <td className="py-2 px-3 text-slate-400 font-semibold text-[10px]">Grand total</td>
+                              <td className="py-2 px-3 text-slate-900 font-semibold text-[10px]">Grand total</td>
                               {(['query_fatal','complaint_fatal','request_fatal'] as const).map(k => (
                                 <td key={k} className="py-2 px-3 text-slate-900 font-bold tabular-nums text-center">
                                   {fd.day_wise.reduce((s,r) => s + r[k], 0)}
@@ -3026,9 +3510,9 @@ export default function InboundQualityDashboard() {
                   {/* Week & Scenario Wise Fatal Count */}
                   {fd.week_scenario.length > 0 && (
                     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+                      <div className="px-4 py-3 card-header gap-2 px-5 py-3">
                         <div className="w-1 h-4 rounded-full bg-red-500" />
-                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Week &amp; Scenario Wise Fatal Count</h3>
+                        <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Week &amp; Scenario Wise Fatal Count</h3>
                       </div>
                       <table className="w-full text-xs">
                         <thead>
@@ -3051,7 +3535,7 @@ export default function InboundQualityDashboard() {
                         </tbody>
                         <tfoot className="border-t border-slate-200">
                           <tr className="bg-slate-50">
-                            <td className="py-2.5 px-3 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-semibold text-[10px] uppercase">Grand total</td>
                             {[
                               fd.query_fatal    > 0 ? Math.round(fd.query_fatal    / (fd.audit_count||1) * 1000)/10 : 0,
                               fd.complaint_fatal > 0 ? Math.round(fd.complaint_fatal / (fd.audit_count||1) * 1000)/10 : 0,
@@ -3072,9 +3556,9 @@ export default function InboundQualityDashboard() {
               {/* ── Agent Wise Performance (full width) ── */}
               {fd.agent_performance.length > 0 && (
                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+                  <div className="px-4 py-3 card-header gap-2 px-5 py-3">
                     <div className="w-1 h-4 rounded-full bg-red-500" />
-                    <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Agent Wise Performance</h3>
+                    <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Agent Wise Performance</h3>
                     <ExportBtn onClick={() => downloadCSV(fd.agent_performance.map(r => ({ 'MAS ID': r.agent_name, Agent: resolveAgent(r.agent_name), Audits: r.audit_count, 'CQ Score%': r.cq_score, Fatals: r.fatal_count, 'Fatal%': r.fatal_pct, 'Below Avg%': r.below_avg_pct, 'Avg%': r.avg_pct, 'Good%': r.good_pct, 'Excellent%': r.excellent_pct })), 'agent-performance.csv')} />
                   </div>
                   <div className="overflow-x-auto overflow-y-auto max-h-80">
@@ -3091,7 +3575,7 @@ export default function InboundQualityDashboard() {
                           <tr key={i}
                             className={`border-b border-slate-100 ${i % 2 === 0 ? '' : 'bg-transparent'} cursor-pointer hover:bg-slate-100 transition-colors`}
                             title={`Click to drill into ${resolveAgent(r.agent_name)}'s calls`}
-                            onClick={() => openBandDetail('no_fatal', `${resolveAgent(r.agent_name)} — Call Breakdown`, r.cq_score >= 90 ? '#22C55E' : '#F59E0B')}>
+                            onClick={() => openBandDetail('no_fatal', `${resolveAgent(r.agent_name)} — Call Breakdown`, r.cq_score >= 90 ? '#22C55E' : '#F59E0B', r.agent_name)}>
                             <td className="py-2.5 px-4 text-slate-700 whitespace-nowrap">{agentTag(r.agent_name)}</td>
                             <td className="py-2.5 px-4 tabular-nums text-slate-600">{r.audit_count}</td>
                             <td className="py-2.5 px-4">
@@ -3122,7 +3606,7 @@ export default function InboundQualityDashboard() {
                       </tbody>
                       <tfoot className="border-t border-slate-200">
                         <tr className="bg-slate-50">
-                          <td className="py-2.5 px-4 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
+                          <td className="py-2.5 px-4 text-slate-900 font-semibold text-[10px] uppercase">Grand total</td>
                           <td className="py-2.5 px-4 text-slate-900 font-bold tabular-nums">{gt.audit}</td>
                           <td className="py-2.5 px-4">
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold"
@@ -3242,7 +3726,7 @@ export default function InboundQualityDashboard() {
                       <div key={panel.scenario} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                         <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2">
                           <div className="w-1 h-4 rounded-full" style={{ background: color }} />
-                          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">
+                          <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">
                             Top 5 {panel.scenario}
                           </h3>
                           <span className="ml-auto text-xs font-bold" style={{ color }}>
@@ -3337,9 +3821,9 @@ export default function InboundQualityDashboard() {
 
                   {/* Scenario Wise Count — 4 cards */}
                   <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+                    <div className="px-4 py-3 card-header gap-2 px-5 py-3">
                       <div className="w-1 h-4 rounded-full bg-purple-500" />
-                      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Scenario Wise Count</h3>
+                      <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Scenario Wise Count</h3>
                     </div>
                     <div className="grid grid-cols-4 divide-x divide-slate-200">
                       {[
@@ -3361,9 +3845,9 @@ export default function InboundQualityDashboard() {
                   {/* Day Wise / Audit Count heat map */}
                   {dd.day_wise_audit.length > 0 && (
                     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+                      <div className="px-4 py-3 card-header gap-2 px-5 py-3">
                         <div className="w-1 h-4 rounded-full bg-purple-500" />
-                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Day Wise / Audit Count</h3>
+                        <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Day Wise / Audit Count</h3>
                       </div>
                       <div className="overflow-y-auto max-h-52">
                         <table className="w-full text-xs">
@@ -3377,12 +3861,12 @@ export default function InboundQualityDashboard() {
                           <tbody>
                             {dd.day_wise_audit.map((r, i) => (
                               <tr key={i} className="border-b border-slate-100">
-                                <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
+                                <td className="py-2 px-3 text-slate-900 font-medium whitespace-nowrap">
                                   {r.call_date.slice(5).replace('-', '/')}
                                 </td>
                                 {[r.complaint, r.request, r.query].map((v, ci) => (
                                   <td key={ci} className="py-2 px-3 tabular-nums text-center font-semibold"
-                                    style={{ background: auditHeatBg(v, dayMax), color: v > 0 ? '#fff' : '#475569' }}>
+                                    style={{ background: auditHeatBg(v, dayMax), color: v > 0 ? '#0F172A' : '#0F172A' }}>
                                     {v > 0 ? v : '—'}
                                   </td>
                                 ))}
@@ -3392,7 +3876,7 @@ export default function InboundQualityDashboard() {
                           </tbody>
                           <tfoot className="border-t border-slate-200">
                             <tr className="bg-slate-50">
-                              <td className="py-2 px-3 text-slate-400 font-semibold text-[10px]">Grand total</td>
+                              <td className="py-2 px-3 text-slate-900 font-semibold text-[10px]">Grand total</td>
                               {(['complaint','request','query'] as const).map(k => (
                                 <td key={k} className="py-2 px-3 text-slate-900 font-bold tabular-nums text-center">
                                   {dd.day_wise_audit.reduce((s, r) => s + r[k], 0)}
@@ -3409,9 +3893,9 @@ export default function InboundQualityDashboard() {
                   {/* Week & Scenario Wise Audit Count */}
                   {dd.week_scenario_audit.length > 0 && (
                     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+                      <div className="px-4 py-3 card-header gap-2 px-5 py-3">
                         <div className="w-1 h-4 rounded-full bg-purple-500" />
-                        <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Week &amp; Scenario Wise Audit Count</h3>
+                        <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Week &amp; Scenario Wise Audit Count</h3>
                       </div>
                       <table className="w-full text-xs">
                         <thead>
@@ -3435,7 +3919,7 @@ export default function InboundQualityDashboard() {
                         </tbody>
                         <tfoot className="border-t border-slate-200">
                           <tr className="bg-slate-50">
-                            <td className="py-2.5 px-3 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-semibold text-[10px] uppercase">Grand total</td>
                             {(() => {
                               const tot = dd.audit_count || 1;
                               return [
@@ -3458,9 +3942,9 @@ export default function InboundQualityDashboard() {
 
               {/* ── Agent & Parameter Wise CQ Score% ── */}
               <div className="mt-4 bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <div className="px-4 py-3 card-header gap-3 px-5 py-3 flex-wrap">
                   <div className="w-1 h-4 rounded-full bg-purple-500 shrink-0" />
-                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Agent &amp; Parameter Wise CQ Score%</h3>
+                  <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Agent &amp; Parameter Wise CQ Score%</h3>
                   <ExportBtn onClick={() => downloadCSV(agentParamData.map(r => ({ 'MAS ID': r.agent_name, Agent: resolveAgent(r.agent_name), 'TQ/MQ/BQ': r.cq_score > 95 ? 'TQ' : r.cq_score > 85 ? 'MQ' : 'BQ', Audits: r.audit_count, 'CQ Score%': r.cq_score, Fatals: r.fatal_count, 'Fatal%': r.fatal_pct, 'Opening%': r.opening_skill, 'Soft Skill%': r.soft_skill, 'Hold%': r.hold_procedure, 'Resolution%': r.resolution, 'Closing%': r.closing })), 'agent-param.csv')} />
                   <div className="ml-auto flex items-center gap-2 flex-wrap">
                     <span className="text-[10px] text-slate-600 uppercase tracking-wider">Scenario Wise</span>
@@ -3542,7 +4026,7 @@ export default function InboundQualityDashboard() {
                         </tbody>
                         <tfoot className="border-t border-slate-200">
                           <tr className="bg-slate-50">
-                            <td className="py-2.5 px-3 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-semibold text-[10px] uppercase">Grand total</td>
                             <td className="py-2.5 px-3">{tqBadge(Math.round(gt.cqSum / wa * 10) / 10)}</td>
                             <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.audit}</td>
                             <td className="py-2.5 px-3">{scoreCell(Math.round(gt.cqSum / wa * 10) / 10)}</td>
@@ -3565,9 +4049,9 @@ export default function InboundQualityDashboard() {
 
               {/* ── Week Wise Quality Performance ── */}
               <div className="mt-4 bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <div className="px-4 py-3 card-header gap-3 px-5 py-3 flex-wrap">
                   <div className="w-1 h-4 rounded-full bg-purple-500 shrink-0" />
-                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Week Wise Quality Performance</h3>
+                  <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Week Wise Quality Performance</h3>
                   <div className="ml-auto flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-slate-600 uppercase tracking-wider">Scenario Wise</span>
@@ -3648,7 +4132,7 @@ export default function InboundQualityDashboard() {
                         </tbody>
                         <tfoot className="border-t border-slate-200">
                           <tr className="bg-slate-50">
-                            <td className="py-2.5 px-3 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-semibold text-[10px] uppercase">Grand total</td>
                             <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.audit}</td>
                             <td className="py-2.5 px-3">{scoreCell(Math.round(gt.cqSum / wa * 10) / 10)}</td>
                             <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.fatal}</td>
@@ -3670,9 +4154,9 @@ export default function InboundQualityDashboard() {
 
               {/* ── Day Wise Quality Performance ── */}
               <div className="mt-4 bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <div className="px-4 py-3 card-header gap-3 px-5 py-3 flex-wrap">
                   <div className="w-1 h-4 rounded-full bg-purple-500 shrink-0" />
-                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Day Wise Quality Performance</h3>
+                  <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Day Wise Quality Performance</h3>
                   <div className="ml-auto flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-slate-500 uppercase tracking-wider">Scenario</span>
@@ -3753,7 +4237,7 @@ export default function InboundQualityDashboard() {
                         </tbody>
                         <tfoot className="border-t border-slate-200">
                           <tr className="bg-slate-50">
-                            <td className="py-2.5 px-3 text-slate-400 font-semibold text-[10px] uppercase">Grand total</td>
+                            <td className="py-2.5 px-3 text-slate-900 font-semibold text-[10px] uppercase">Grand total</td>
                             <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.audit}</td>
                             <td className="py-2.5 px-3">{scoreCell(Math.round(gt.cqSum / wa * 10) / 10)}</td>
                             <td className="py-2.5 px-3 text-slate-900 font-bold tabular-nums">{gt.fatal}</td>
@@ -3774,9 +4258,9 @@ export default function InboundQualityDashboard() {
               </div>
               {/* ── Quality Parameters ── */}
               <div className="mt-4 bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+                <div className="px-4 py-3 card-header gap-3 px-5 py-3 flex-wrap">
                   <div className="w-1 h-4 rounded-full bg-purple-500 shrink-0" />
-                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Quality Parameters</h3>
+                  <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-widest">Quality Parameters</h3>
                   <span className="text-[10px] text-slate-600 font-semibold ml-1">count &amp; score by parameter</span>
                   <ExportBtn onClick={() => downloadCSV(qualityParamData.map(r => ({ Parameter: r.parameter, 'Hit Count': r.hit_count, 'Applicable Count': r.total_count, 'Score%': r.score_pct })), 'quality-parameters.csv')} />
                   <div className="ml-auto flex items-center gap-3 flex-wrap">
@@ -3914,7 +4398,7 @@ export default function InboundQualityDashboard() {
 
                   {/* Day-wise repeat table */}
                   <div className="bg-white border border-slate-200 rounded-xl mb-6 overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+                    <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                       <h3 className="text-xs font-bold text-teal-300 uppercase tracking-widest">Day Wise Repeat Analysis</h3>
                       <ExportBtn onClick={() => downloadCSV(rd.day_wise.map(r => ({ Date: r.call_date, 'Unique Calls': r.unique_calls, 'Repeat Calls': r.repeat_calls, 'Repeat%': r.repeat_pct })), 'repeat-day-wise.csv')} />
                     </div>
@@ -3963,7 +4447,7 @@ export default function InboundQualityDashboard() {
 
                   {/* Repeat Count — Phone × Date pivot */}
                   <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+                    <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                       <h3 className="text-xs font-bold text-teal-300 uppercase tracking-widest">
                         Repeat Count Number &amp; Date Wise
                         <span className="ml-2 text-slate-500 normal-case font-normal">({rd.pivot_rows.length} callers · {rd.pivot_dates.length} dates)</span>
@@ -4184,6 +4668,35 @@ export default function InboundQualityDashboard() {
           data={transcriptData}
           loading={transcriptLoading}
           onClose={() => { setTranscriptLeadId(null); setTranscriptData(null); }}
+        />
+      )}
+
+      {scoreCompModal && (
+        <ScoreComponentModal
+          label={scoreCompModal.label}
+          accent={scoreCompModal.accent}
+          params={(Array.isArray(scoreCompData?.[scoreCompModal.key]) ? scoreCompData![scoreCompModal.key] : []) as ScoreParamDetail[]}
+          loading={scoreCompLoading}
+          onClose={() => setScoreCompModal(null)}
+        />
+      )}
+
+      {fatalModalOpen && (
+        <FatalCallsModal
+          calls={fatalCalls}
+          loading={fatalCallsLoading}
+          onClose={() => setFatalModalOpen(false)}
+          onLeadClick={openFatalTranscript}
+          resolveAgent={resolveAgent}
+        />
+      )}
+
+      {fatalTranscriptItem && (
+        <FatalTranscriptModal
+          data={fatalTranscriptData}
+          loading={fatalTranscriptLoading}
+          onClose={() => { setFatalTranscriptItem(null); setFatalTranscriptData(null); }}
+          fatalItem={fatalTranscriptItem}
         />
       )}
     </div>

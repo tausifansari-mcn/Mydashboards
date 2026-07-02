@@ -20,10 +20,10 @@ export default function AppShell() {
   }, [user, loaded, setProcesses]);
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: '#EEF4FF' }}>
+    <div className="flex h-screen overflow-hidden" style={{ background: '#C8CDD6' }}>
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <main className="flex-1 overflow-y-auto" style={{ background: '#EEF4FF' }}>
+        <main className="flex-1 overflow-y-auto" style={{ background: '#C8CDD6' }}>
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}

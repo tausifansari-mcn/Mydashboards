@@ -267,7 +267,7 @@ export default function InboundProjectDashboard() {
   );
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 p-6 space-y-6">
+    <div className="min-h-screen text-slate-900 p-6 space-y-6">
 
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -287,7 +287,7 @@ export default function InboundProjectDashboard() {
         <div className="flex items-center gap-2 flex-wrap">
           {(['today','7d','30d'] as const).map(r => (
             <button key={r} onClick={() => setRange(r)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${range===r?'bg-blue-600 text-slate-900':'border border-slate-200 text-slate-400 hover:text-slate-900'}`}>
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${range===r?'bg-blue-600 text-white':'border border-slate-200 text-slate-500 hover:text-slate-900'}`}>
               {r==='today'?'Today':r==='7d'?'Last 7 Days':'Last 30 Days'}
             </button>
           ))}
@@ -340,7 +340,7 @@ export default function InboundProjectDashboard() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="hour" tickFormatter={fmtHour} tick={{ fill: '#94A3B8', fontSize: 11 }} />
                   <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                  <Tooltip contentStyle={{ backgroundColor: '#F8FAFC', border: '1px solid #334155' }}
+                  <Tooltip contentStyle={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 11, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                     labelFormatter={(v: unknown) => `${fmtHour(Number(v))}`}
                     formatter={(v: unknown, n: unknown) => [Number(v).toLocaleString(), String(n)]} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -399,7 +399,7 @@ export default function InboundProjectDashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis dataKey="date" tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v: unknown) => fmtDateTick(v)} />
               <YAxis domain={[0,100]} tick={{ fill: '#94A3B8', fontSize: 11 }} unit="%" />
-              <Tooltip contentStyle={{ backgroundColor: '#F8FAFC', border: '1px solid #334155' }}
+              <Tooltip contentStyle={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 11, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                 formatter={(v: unknown, n: unknown) => [`${Number(v).toFixed(1)}%`, String(n)]} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <ReferenceLine y={95} stroke="#22C55E" strokeDasharray="4 4" label={{ value:'AL 95%', fill:'#22C55E', fontSize:10 }} />
@@ -428,7 +428,7 @@ export default function InboundProjectDashboard() {
               <XAxis dataKey="date" tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v: unknown) => fmtDateTick(v)} />
               <YAxis yAxisId="acht"   orientation="left"  tick={{ fill:'#94A3B8',fontSize:11 }} unit="s" />
               <YAxis yAxisId="repeat" orientation="right" tick={{ fill:'#94A3B8',fontSize:11 }} unit="%" />
-              <Tooltip contentStyle={{ backgroundColor: '#F8FAFC', border: '1px solid #334155' }}
+              <Tooltip contentStyle={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 11, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                 formatter={(v: unknown, n: unknown) => { const s=String(n); return s==='ACHT'?[`${Number(v)}s`,s]:[`${Number(v).toFixed(1)}%`,s]; }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <ReferenceLine yAxisId="acht"   y={300} stroke="#F59E0B" strokeDasharray="4 4" label={{ value:'300s', fill:'#F59E0B', fontSize:10 }} />
@@ -455,7 +455,7 @@ export default function InboundProjectDashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis dataKey="date" tick={{ fill: '#94A3B8', fontSize: 10 }} tickFormatter={(v: unknown) => fmtDateTick(v)} />
               <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} />
-              <Tooltip contentStyle={{ backgroundColor: '#F8FAFC', border: '1px solid #334155' }}
+              <Tooltip contentStyle={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 11, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
                 formatter={(v: unknown, n: unknown) => [Number(v).toLocaleString(), String(n)]} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="offered"  name="Offered"  fill={meta.color} radius={[2,2,0,0]} />

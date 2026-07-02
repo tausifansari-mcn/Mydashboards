@@ -139,12 +139,18 @@ interface ObjectionAnalysisResponse {
 }
 
 interface AgentNPSRow {
+  agentId:   string;
   agentName: string;
   detractor: number;
   passive:   number;
   promoter:  number;
   total:     number;
   npsScore:  number;
+}
+
+interface OutboundMissingAgentRow {
+  agentId:     string;
+  total_count: number;
 }
 
 interface KPIResponse {
@@ -186,7 +192,8 @@ const funnelCRTColors = ['#EF4444', '#F59E0B', '#A78BFA', '#3B82F6'];
 
 const TT: React.CSSProperties = {
   background: '#FFFFFF', border: '1px solid #E2E8F0',
-  borderRadius: 8, fontSize: 11, color: '#E2E8F0',
+  borderRadius: 8, fontSize: 11, color: '#334155',
+  boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
 };
 
 const COLORS = ['#3B82F6', '#22C55E', '#F59E0B', '#EF4444', '#14B8A6', '#A78BFA'];
@@ -570,6 +577,10 @@ export default function ProcessQualityDashboard() {
   const [detailAnalysis, setDetailAnalysis] = useState<DetailAnalysisResponse | null>(null);
   const [objectionAnalysis, setObjectionAnalysis] = useState<ObjectionAnalysisResponse | null>(null);
   const [agentNPS, setAgentNPS] = useState<AgentNPSRow[]>([]);
+  const [missingAgents, setMissingAgents]       = useState<OutboundMissingAgentRow[]>([]);
+  const [showMissingPanel, setShowMissingPanel] = useState(false);
+  const [addAgentForm, setAddAgentForm]         = useState<Record<string, { name: string; lob: string }>>({});
+  const [addAgentSaving, setAddAgentSaving]     = useState<Record<string, boolean>>({});
   const [clientName, setClientName] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -600,6 +611,10 @@ export default function ProcessQualityDashboard() {
     api.get<{ data: AgentNPSRow[] }>(`/quality/agent-nps?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
       .then(r => setAgentNPS(r.data?.data ?? []))
       .catch(() => setAgentNPS([]));
+
+    api.get<{ data: OutboundMissingAgentRow[] }>(`/quality/missing-agents?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      .then(r => setMissingAgents(r.data?.data ?? []))
+      .catch(() => setMissingAgents([]));
   }, [clientId, sd, ed]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -624,85 +639,130 @@ export default function ProcessQualityDashboard() {
   const [pqDrillModal, setPQDrillModal] = useState<{ title: string; accent: string; rows: Record<string,unknown>[]; columns: { key: string; label: string }[] } | null>(null);
 
   return (
-    <div className="min-h-screen text-slate-900 flex flex-col" style={{ background: '#EEF4FF' }}>
-      {/* ── MAS Brand Header ── */}
-      <div className="sticky top-0 z-30 shadow-xl" style={{ background: 'linear-gradient(135deg, #1565C0 0%, #1976D2 55%, #0D47A1 100%)' }}>
+    <div className="min-h-screen text-slate-900 flex flex-col">
+      {/* ── Page Header ── */}
+      <div className="page-header shadow-sm">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
           <button onClick={() => navigate('/quality')}
-            className="flex items-center gap-1.5 text-blue-200 hover:text-white transition-colors text-xs font-semibold bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg border border-white/10">
+            className="flex items-center gap-1.5 text-slate-500 hover:text-slate-900 transition-colors text-xs font-semibold hover:bg-slate-100 px-2.5 py-1.5 rounded-lg">
             <ChevronLeft size={14} /> AI Quality
           </button>
-          <div className="w-px h-5 bg-white/20" />
+          <div className="w-px h-5 bg-slate-200" />
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white shadow-md">
-              <img src="/Logo.png" alt="MAS" className="h-8 w-8 object-contain p-0.5" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white shadow-sm border border-slate-200">
+              <img src="/Logo.png" alt="MAS" className="h-7 w-7 object-contain" />
             </div>
             <div>
-              <h1 className="text-sm font-black text-white leading-none">{clientName || `Process #${clientId}`}</h1>
-              <p className="text-[10px] font-semibold mt-0.5" style={{ color: '#43A832' }}>Process Quality · CST · CRT</p>
+              <h1 className="text-sm font-bold text-slate-900 leading-none">{clientName || `Process #${clientId}`}</h1>
+              <p className="text-[11px] text-slate-500 font-medium mt-0.5">Outbound Process Quality</p>
             </div>
           </div>
           <div className="ml-auto flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: '#43A832' }} />
-              <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: '#43A832' }} />
-            </span>
-            <span className="text-[11px] font-bold" style={{ color: '#43A832' }}>Live</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[11px] text-emerald-600 font-semibold">Live</span>
           </div>
-        </div>
-        {/* Brand stripe */}
-        <div className="flex h-0.5">
-          <div className="flex-1" style={{ background: '#43A832' }} />
-          <div className="flex-1" style={{ background: '#D32F2F' }} />
-          <div className="flex-1 bg-white/20" />
         </div>
       </div>
 
-      <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-8 w-full space-y-8">
-        {/* Date Range */}
-        <div className="flex items-center gap-3 flex-wrap bg-white border-2 border-[#1565C020] rounded-2xl px-5 py-3 shadow-sm">
+      <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-5 w-full space-y-5">
+        {/* Filter bar + tabs */}
+        <div className="filter-bar">
           <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full" style={{ background: '#1565C0' }} />
-            <span className="text-xs font-black text-slate-800 uppercase tracking-widest">Date Range</span>
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+            <span className="text-xs font-semibold text-slate-700">Date Range</span>
           </div>
-          <div className="w-px h-5 bg-slate-200 mx-1" />
-          <label className="text-[11px] text-slate-600 font-bold uppercase tracking-wider">From</label>
+          <div className="w-px h-4 bg-slate-200 mx-0.5" />
+          <label className="text-[11px] text-slate-500 font-medium">From</label>
           <input type="datetime-local" value={startDate} onChange={e => setStartDate(e.target.value)}
-            className="bg-[#E3F2FD] border-2 border-[#1565C040] rounded-xl px-3 py-1.5 text-xs text-slate-900 font-semibold focus:outline-none focus:border-[#1565C0] focus:ring-2 focus:ring-[#1565C020] transition-all" />
-          <label className="text-[11px] text-slate-600 font-bold uppercase tracking-wider">To</label>
+            className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all" />
+          <label className="text-[11px] text-slate-500 font-medium">To</label>
           <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
-            className="bg-[#E3F2FD] border-2 border-[#1565C040] rounded-xl px-3 py-1.5 text-xs text-slate-900 font-semibold focus:outline-none focus:border-[#1565C0] focus:ring-2 focus:ring-[#1565C020] transition-all" />
+            className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all" />
         </div>
 
-        {/* ─── Slide Navigation ──────────────────────────────────────────── */}
+        {/* ─── Missing agents banner ── */}
+        {missingAgents.length > 0 && (
+          <div className="mb-2 rounded-xl border border-amber-500/30 bg-amber-500/5 overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
+              onClick={() => setShowMissingPanel(p => !p)}>
+              <span className="text-amber-500 text-base">⚠️</span>
+              <span className="text-xs font-semibold text-amber-700 flex-1">
+                {missingAgents.length} agent{missingAgents.length > 1 ? 's' : ''} found without a name — click to review &amp; add
+              </span>
+              <span className="text-amber-500 text-xs">{showMissingPanel ? '▲' : '▼'}</span>
+            </div>
+            {showMissingPanel && (
+              <div className="border-t border-amber-500/20 px-4 py-3">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200">
+                      <th className="py-2 text-left text-slate-700 font-semibold uppercase tracking-wider text-[9px]">Agent ID</th>
+                      <th className="py-2 text-center text-slate-700 font-semibold uppercase tracking-wider text-[9px]">Feedback Count</th>
+                      <th className="py-2 text-left text-slate-700 font-semibold uppercase tracking-wider text-[9px]">Display Name</th>
+                      <th className="py-2 text-left text-slate-700 font-semibold uppercase tracking-wider text-[9px]">LOB</th>
+                      <th className="py-2 text-center text-slate-700 font-semibold uppercase tracking-wider text-[9px]">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {missingAgents.map(ma => (
+                      <tr key={ma.agentId} className="border-b border-slate-100">
+                        <td className="py-2 pr-3 text-amber-700 font-mono font-bold">{ma.agentId}</td>
+                        <td className="py-2 pr-3 text-center text-slate-700">{ma.total_count}</td>
+                        <td className="py-2 pr-3">
+                          <input type="text" placeholder="Enter display name"
+                            value={addAgentForm[ma.agentId]?.name ?? ''}
+                            onChange={e => setAddAgentForm(prev => ({ ...prev, [ma.agentId]: { ...prev[ma.agentId], name: e.target.value, lob: prev[ma.agentId]?.lob ?? 'Outbound' } }))}
+                            className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-amber-400" />
+                        </td>
+                        <td className="py-2 pr-3">
+                          <input type="text" placeholder="LOB (e.g. Outbound)"
+                            value={addAgentForm[ma.agentId]?.lob ?? ''}
+                            onChange={e => setAddAgentForm(prev => ({ ...prev, [ma.agentId]: { ...prev[ma.agentId], lob: e.target.value, name: prev[ma.agentId]?.name ?? '' } }))}
+                            className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-amber-400" />
+                        </td>
+                        <td className="py-2 text-center">
+                          <button
+                            disabled={!addAgentForm[ma.agentId]?.name?.trim() || addAgentSaving[ma.agentId]}
+                            onClick={async () => {
+                              const form = addAgentForm[ma.agentId];
+                              if (!form?.name?.trim()) return;
+                              setAddAgentSaving(prev => ({ ...prev, [ma.agentId]: true }));
+                              try {
+                                await api.post('/quality/agent-master', {
+                                  agentId: ma.agentId,
+                                  agentName: form.name.trim(),
+                                  lob: form.lob?.trim() || 'Outbound',
+                                });
+                                setAgentNPS(prev => prev.map(r => r.agentId === ma.agentId ? { ...r, agentName: form.name.trim() } : r));
+                                setMissingAgents(prev => prev.filter(a => a.agentId !== ma.agentId));
+                                setAddAgentForm(prev => { const n = { ...prev }; delete n[ma.agentId]; return n; });
+                              } catch { alert('Failed to save agent. Please try again.'); }
+                              finally { setAddAgentSaving(prev => ({ ...prev, [ma.agentId]: false })); }
+                            }}
+                            className="px-3 py-1 rounded text-[10px] font-bold bg-amber-500/20 text-amber-700 border border-amber-500/30 hover:bg-amber-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                            {addAgentSaving[ma.agentId] ? 'Saving…' : 'Add'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ─── Pill tab navigation ── */}
         {(() => {
-          const SLIDES = [
-            { label: 'Dashboard',          color: 'purple' },
-            { label: 'Missed Opportunity', color: 'purple' },
-            { label: 'NPS & CSAT',         color: 'sky'    },
-            { label: 'Detail Analysis',    color: 'orange' },
-          ] as const;
-          const activeColors: Record<string, { border: string; text: string; bg: string }> = {
-            purple: { border: '#1565C0', text: '#1565C0', bg: '#E3F2FD' },
-            sky:    { border: '#1565C0', text: '#1565C0', bg: '#E3F2FD' },
-            orange: { border: '#43A832', text: '#43A832', bg: '#E8F5E9' },
-            violet: { border: '#D32F2F', text: '#D32F2F', bg: '#FFEBEE' },
-          };
+          const SLIDES = ['Dashboard', 'Missed Opportunity', 'NPS & CSAT', 'Detail Analysis'];
           return (
-            <div className="flex gap-1 border-b border-slate-200 -mt-4 overflow-x-auto bg-white px-2">
-              {SLIDES.map((s, i) => {
-                const ac = activeColors[s.color];
-                return (
+            <div className="pill-tabs w-fit">
+              {SLIDES.map((label, i) => (
                 <button key={i} onClick={() => setActiveSlide(i)}
-                  className="px-5 py-2.5 text-[11px] font-black uppercase tracking-wider border-b-2 transition-all whitespace-nowrap shrink-0"
-                  style={activeSlide === i
-                    ? { borderColor: ac.border, color: ac.text, background: ac.bg + '80' }
-                    : { borderColor: 'transparent', color: '#64748B' }
-                  }>
-                  {s.label}
+                  className={`pill-tab ${activeSlide === i ? 'pill-tab-active' : ''}`}>
+                  {label}
                 </button>
-                );
-              })}
+              ))}
             </div>
           );
         })()}
@@ -719,10 +779,10 @@ export default function ProcessQualityDashboard() {
           <div className="flex gap-4">
             {cst && (
               <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/30 bg-white overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-emerald-500/5">
+                <div className="card-header gap-2 px-4 py-2.5">
                   <TrendingUp size={13} className="text-emerald-400" />
                   <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">CST — Customer Success Track</span>
-                  <button onClick={() => showDetail('cstSection')} className="ml-auto text-slate-500 hover:text-emerald-400 transition-colors"><Info size={12} /></button>
+                  <button onClick={() => showDetail('cstSection')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={12} /></button>
                 </div>
                 <div className="flex flex-row gap-px bg-slate-100">
                   {CST_METRICS(cst).map((m, i) => (
@@ -732,8 +792,8 @@ export default function ProcessQualityDashboard() {
                       }}
                       className="flex-1 min-w-0 bg-white px-3 py-3 cursor-pointer hover:bg-slate-100 transition-colors"
                       title="Click for metric details & calculation">
-                      <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">{m.label}</span>
-                      <p className="text-lg font-black text-slate-900">{m.value}</p>
+                      <span className="text-label block mb-1">{m.label}</span>
+                      <p className="text-lg font-bold text-slate-900">{m.value}</p>
                     </div>
                   ))}
                 </div>
@@ -741,17 +801,17 @@ export default function ProcessQualityDashboard() {
             )}
             {crt && (
               <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-white overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-red-500/5">
+                <div className="card-header gap-2 px-4 py-2.5">
                   <XCircle size={13} className="text-red-400" />
                   <span className="text-[10px] font-bold uppercase tracking-widest text-red-400">CRT — Customer Rejection Track</span>
-                  <button onClick={() => showDetail('crtSection')} className="ml-auto text-slate-500 hover:text-red-400 transition-colors"><Info size={12} /></button>
+                  <button onClick={() => showDetail('crtSection')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={12} /></button>
                 </div>
                 <div className="flex flex-row gap-px bg-slate-100">
                   {CRT_METRICS(crt).map((m, i) => (
                     <div key={i} onClick={() => setModalMetric(m)}
                       className="flex-1 min-w-0 bg-white px-3 py-3 cursor-pointer hover:bg-slate-100 transition-colors">
-                      <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">{m.label}</span>
-                      <p className="text-lg font-black text-slate-900">{m.value}</p>
+                      <span className="text-label block mb-1">{m.label}</span>
+                      <p className="text-lg font-bold text-slate-900">{m.value}</p>
                     </div>
                   ))}
                 </div>
@@ -768,10 +828,10 @@ export default function ProcessQualityDashboard() {
             const cstLabeled = cstFunnel.map(s => ({ ...s, label: `${s.name}: ${s.value.toLocaleString()}` }));
             return (
               <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/30 bg-white overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-emerald-500/5">
+                <div className="card-header gap-2 px-5 py-3">
                   <TrendingUp size={14} className="text-emerald-400" />
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-emerald-400">CST Funnel</span>
-                  <button onClick={() => showDetail('cstFunnel')} className="ml-auto text-slate-500 hover:text-emerald-400 transition-colors"><Info size={13} /></button>
+                  <span className="text-[11px] font-bold uppercase tracking-widest">CST Funnel</span>
+                  <button onClick={() => showDetail('cstFunnel')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="px-4 pt-4 pb-4">
                   <ResponsiveContainer width="100%" height={340}>
@@ -804,10 +864,10 @@ export default function ProcessQualityDashboard() {
             const crtLabeled = sortedCRT.map(s => ({ ...s, label: `${s.name}: ${s.value.toLocaleString()}` }));
             return (
               <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-white overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-red-500/5">
+                <div className="card-header gap-2 px-5 py-3">
                   <XCircle size={14} className="text-red-400" />
                   <span className="text-[11px] font-bold uppercase tracking-widest text-red-400">CRT Funnel</span>
-                  <button onClick={() => showDetail('crtFunnel')} className="ml-auto text-slate-500 hover:text-red-400 transition-colors"><Info size={13} /></button>
+                  <button onClick={() => showDetail('crtFunnel')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="px-4 pt-4 pb-4">
                   <ResponsiveContainer width="100%" height={340}>
@@ -837,7 +897,7 @@ export default function ProcessQualityDashboard() {
         {/* ─── Rejected Status Pie Chart ──────────────────────────────────── */}
         {pie.length > 0 && (
           <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+            <div className="px-5 py-3 card-header gap-2 px-5 py-3">
               <BarChart3 size={14} className="text-slate-400" />
               <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Rejected Status Distribution</span>
               <button onClick={() => showDetail('rejectedPie')} className="ml-auto text-slate-500 hover:text-slate-600 transition-colors"><Info size={13} /></button>
@@ -908,11 +968,11 @@ export default function ProcessQualityDashboard() {
           {/* Objection Category Pie */}
           {opp && opp.objectionCategoryPie.length > 0 && (
             <div className="mt-6 rounded-xl border border-purple-500/20 bg-white overflow-hidden">
-              <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+              <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                 <BarChart3 size={14} className="text-purple-400" />
 
                 <span className="text-[11px] font-bold uppercase tracking-widest text-purple-400">Objection Category Distribution</span>
-                <button onClick={() => showDetail('objectionPie')} className="ml-auto text-slate-500 hover:text-purple-400 transition-colors"><Info size={13} /></button>
+                <button onClick={() => showDetail('objectionPie')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
               </div>
               <div className="p-5 flex flex-col lg:flex-row items-center gap-8">
                 <div className="shrink-0">
@@ -963,10 +1023,10 @@ export default function ProcessQualityDashboard() {
           {/* MO BreakDown + Category Table — side by side */}
           {opp && (
             <div className="mt-6 rounded-xl border border-purple-500/20 bg-white overflow-hidden">
-              <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+              <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                 <BarChart3 size={14} className="text-purple-400" />
                 <span className="text-[11px] font-bold uppercase tracking-widest text-purple-400">MO BreakDown</span>
-                <button onClick={() => showDetail('moBreakdown')} className="ml-auto text-slate-500 hover:text-purple-400 transition-colors"><Info size={13} /></button>
+                <button onClick={() => showDetail('moBreakdown')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
               </div>
 
               <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
@@ -1075,10 +1135,10 @@ export default function ProcessQualityDashboard() {
           {/* NED/ED Table */}
           {opp && opp.nedTable.length > 0 && (
             <div className="mt-6 rounded-xl border border-purple-500/20 bg-white overflow-hidden">
-              <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+              <div className="px-5 py-3 card-header gap-2 px-5 py-3">
                 <BarChart3 size={14} className="text-purple-400" />
                 <span className="text-[11px] font-bold uppercase tracking-widest text-purple-400">NED / ED Analysis</span>
-                <button onClick={() => showDetail('nedTable')} className="ml-auto text-slate-500 hover:text-purple-400 transition-colors mr-1"><Info size={13} /></button>
+                <button onClick={() => showDetail('nedTable')} className="ml-auto text-white/70 hover:text-white transition-colors mr-1"><Info size={13} /></button>
                 <ExportBtn onClick={() => opp && downloadCSV(opp.nedTable.map(r => ({ 'NED/ED Category': r.nedCategory, 'NED/ED QS': r.nedQS, 'NED/ED Status': r.nedStatus, Count: r.count, 'Count%': `${r.pct}%` })), 'ned-ed-analysis.csv')} />
               </div>
               <div className="overflow-x-auto">
@@ -1145,9 +1205,9 @@ export default function ProcessQualityDashboard() {
 
               {/* ── Card 1: NPS Gauge ── */}
               <div className="flex-1 min-w-0 rounded-xl border border-sky-500/20 bg-white overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-200">
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-sky-400">Net Promoter Score (NPS)</span>
-                  <button onClick={() => showDetail('npsGauge')} className="ml-auto text-slate-500 hover:text-sky-400 transition-colors"><Info size={13} /></button>
+                <div className="card-header px-5 py-3">
+                  <span className="text-[11px] font-bold uppercase tracking-widest">Net Promoter Score (NPS)</span>
+                  <button onClick={() => showDetail('npsGauge')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="p-4 flex flex-col items-center">
                   <svg viewBox="0 0 300 200" width="100%" style={{ maxWidth: 300 }}>
@@ -1173,9 +1233,9 @@ export default function ProcessQualityDashboard() {
                           {dPct  > 0.001 && <path d={gaugeArc(180, Math.max(dEnd, 0.5))} fill="#DC2626" />}
                           {pPct  > 0.001 && <path d={gaugeArc(dEnd, Math.max(pEnd, 0.5))} fill="#EC4899" />}
                           {prPct > 0.001 && <path d={gaugeArc(pEnd, 0)} fill="#22C55E" />}
-                          {dPct  > 0.06 && <text x={dL.x.toFixed(1)}  y={dL.y.toFixed(1)}  textAnchor="middle" fill="#FCA5A5" fontSize="8" fontFamily="system-ui,sans-serif">Detractors</text>}
-                          {pPct  > 0.06 && <text x={pL.x.toFixed(1)}  y={pL.y.toFixed(1)}  textAnchor="middle" fill="#F9A8D4" fontSize="8" fontFamily="system-ui,sans-serif">Passives</text>}
-                          {prPct > 0.06 && <text x={prL.x.toFixed(1)} y={prL.y.toFixed(1)} textAnchor="middle" fill="#86EFAC" fontSize="8" fontFamily="system-ui,sans-serif">Promoters</text>}
+                          {dPct  > 0.06 && <text x={dL.x.toFixed(1)}  y={dL.y.toFixed(1)}  textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold" fontFamily="system-ui,sans-serif">Detractors</text>}
+                          {pPct  > 0.06 && <text x={pL.x.toFixed(1)}  y={pL.y.toFixed(1)}  textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold" fontFamily="system-ui,sans-serif">Passives</text>}
+                          {prPct > 0.06 && <text x={prL.x.toFixed(1)} y={prL.y.toFixed(1)} textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold" fontFamily="system-ui,sans-serif">Promoters</text>}
                         </>
                       );
                     })()}
@@ -1195,11 +1255,11 @@ export default function ProcessQualityDashboard() {
                         </>
                       );
                     })()}
-                    <text x={G_CX} y={G_CY + 26} textAnchor="middle" fill="#FFFFFF" fontSize="26" fontWeight="bold" fontFamily="system-ui,sans-serif">
+                    <text x={G_CX} y={G_CY + 26} textAnchor="middle" fill="#0F172A" fontSize="26" fontWeight="bold" fontFamily="system-ui,sans-serif">
                       {nps.npsScore}
                     </text>
-                    <text x="6"   y={G_CY + 14} fill="#475569" fontSize="10" fontFamily="system-ui,sans-serif">-100</text>
-                    <text x="264" y={G_CY + 14} fill="#475569" fontSize="10" fontFamily="system-ui,sans-serif">100</text>
+                    <text x="6"   y={G_CY + 14} fill="#0F172A" fontSize="10" fontFamily="system-ui,sans-serif">-100</text>
+                    <text x="264" y={G_CY + 14} fill="#0F172A" fontSize="10" fontFamily="system-ui,sans-serif">100</text>
                   </svg>
                   <div className="flex flex-wrap justify-center gap-3 mt-2">
                     {[
@@ -1211,9 +1271,9 @@ export default function ProcessQualityDashboard() {
                       return (
                         <div key={i} className="flex items-center gap-1.5 text-[11px]">
                           <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: seg.color }} />
-                          <span className="text-slate-400">{seg.label}</span>
+                          <span className="text-slate-700 font-medium">{seg.label}</span>
                           <span className="font-bold text-slate-900 ml-1">{seg.count.toLocaleString()}</span>
-                          <span className="text-slate-500">({pct}%)</span>
+                          <span className="text-slate-700">({pct}%)</span>
                         </div>
                       );
                     })}
@@ -1223,9 +1283,9 @@ export default function ProcessQualityDashboard() {
 
               {/* ── Card 2: CSAT Gauge ── */}
               <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/20 bg-white overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-200">
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-emerald-400">Customer Satisfaction (CSAT)</span>
-                  <button onClick={() => showDetail('csatGauge')} className="ml-auto text-slate-500 hover:text-emerald-400 transition-colors"><Info size={13} /></button>
+                <div className="card-header px-5 py-3">
+                  <span className="text-[11px] font-bold uppercase tracking-widest">Customer Satisfaction (CSAT)</span>
+                  <button onClick={() => showDetail('csatGauge')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="p-4 flex flex-col items-center">
                   <svg viewBox="0 0 300 200" width="100%" style={{ maxWidth: 300 }}>
@@ -1251,16 +1311,16 @@ export default function ProcessQualityDashboard() {
                         </>
                       );
                     })()}
-                    <text x={G_CX} y={G_CY + 26} textAnchor="middle" fill="#FFFFFF" fontSize="24" fontWeight="bold" fontFamily="system-ui,sans-serif">
+                    <text x={G_CX} y={G_CY + 26} textAnchor="middle" fill="#0F172A" fontSize="24" fontWeight="bold" fontFamily="system-ui,sans-serif">
                       {nps.csatPct}%
                     </text>
-                    <text x={G_CX} y={G_CY + 42} textAnchor="middle" fill="#64748B" fontSize="9" fontFamily="system-ui,sans-serif" letterSpacing="1.5">
+                    <text x={G_CX} y={G_CY + 42} textAnchor="middle" fill="#0F172A" fontSize="9" fontWeight="600" fontFamily="system-ui,sans-serif" letterSpacing="1.5">
                       CSAT SCORE
                     </text>
-                    <text x="10"  y={G_CY + 14} fill="#475569" fontSize="10" fontFamily="system-ui,sans-serif">0%</text>
-                    <text x="256" y={G_CY + 14} fill="#475569" fontSize="10" fontFamily="system-ui,sans-serif">100%</text>
+                    <text x="10"  y={G_CY + 14} fill="#0F172A" fontSize="10" fontFamily="system-ui,sans-serif">0%</text>
+                    <text x="256" y={G_CY + 14} fill="#0F172A" fontSize="10" fontFamily="system-ui,sans-serif">100%</text>
                   </svg>
-                  <p className="text-[11px] text-slate-500 mt-1 text-center">(Positive + Neutral) / Total Feedback</p>
+                  <p className="text-[11px] text-slate-800 font-medium mt-1 text-center">(Positive + Neutral) / Total Feedback</p>
                   <div className="flex gap-6 mt-3">
                     {[
                       { label: 'Satisfied',   count: nps.promoter + nps.passive, color: '#22C55E' },
@@ -1270,9 +1330,9 @@ export default function ProcessQualityDashboard() {
                       return (
                         <div key={i} className="flex items-center gap-1.5 text-[11px]">
                           <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: seg.color }} />
-                          <span className="text-slate-400">{seg.label}</span>
+                          <span className="text-slate-700 font-medium">{seg.label}</span>
                           <span className="font-bold text-slate-900 ml-1">{seg.count.toLocaleString()}</span>
-                          <span className="text-slate-500">({pct}%)</span>
+                          <span className="text-slate-700">({pct}%)</span>
                         </div>
                       );
                     })}
@@ -1282,9 +1342,9 @@ export default function ProcessQualityDashboard() {
 
               {/* ── Card 3: Feedback Status Breakup ── */}
               <div className="flex-1 min-w-0 rounded-xl border border-purple-500/20 bg-white overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-200">
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-purple-400">Feedback Status Breakup</span>
-                  <button onClick={() => showDetail('feedbackPie')} className="ml-auto text-slate-500 hover:text-purple-400 transition-colors"><Info size={13} /></button>
+                <div className="card-header px-5 py-3">
+                  <span className="text-[11px] font-bold uppercase tracking-widest">Feedback Status Breakup</span>
+                  <button onClick={() => showDetail('feedbackPie')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="p-4 flex flex-col items-center gap-3">
                   {feedbackData.length > 0 ? (
@@ -1323,7 +1383,7 @@ export default function ProcessQualityDashboard() {
                         {feedbackData.map((d, i) => (
                           <div key={i} className="flex items-center gap-1.5 text-[11px]">
                             <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: d.color }} />
-                            <span className="text-slate-400">{d.name}:</span>
+                            <span className="text-slate-700 font-medium">{d.name}:</span>
                             <span className="font-bold text-slate-900">{d.value.toLocaleString()}</span>
                           </div>
                         ))}
@@ -1348,7 +1408,7 @@ export default function ProcessQualityDashboard() {
             const maxT  = Math.max(...rows.map(d => d.totalFeedbacks), 1);
             const cell  = (v: number, max: number, rgb: string) => ({
               backgroundColor: max > 0 ? `rgba(${rgb},${(v / max) * 0.75 + 0.1})` : 'transparent',
-              color: max > 0 && v / max > 0.55 ? '#fff' : '#E2E8F0',
+              color: max > 0 && v / max > 0.55 ? '#fff' : '#0F172A',
             });
             const fmtDate = (s: string) => {
               const d = new Date(s + 'T00:00:00');
@@ -1361,11 +1421,11 @@ export default function ProcessQualityDashboard() {
             const gNPS = gT > 0 ? ((gPr - gD) / gT * 100).toFixed(2) : '0.00';
             return (
               <div className="mt-6 rounded-xl border border-sky-500/20 bg-white overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-sky-500/5">
+                <div className="card-header gap-2 px-5 py-3">
                   <BarChart3 size={14} className="text-sky-400" />
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-sky-400">NPS and CSAT Analysis</span>
+                  <span className="text-[11px] font-bold uppercase tracking-widest">NPS and CSAT Analysis</span>
                   <span className="ml-2 text-[10px] text-slate-500">{allDays.length} days · scroll to see all</span>
-                  <button onClick={() => showDetail('npsTable')} className="ml-1 text-slate-500 hover:text-sky-400 transition-colors mr-1"><Info size={13} /></button>
+                  <button onClick={() => showDetail('npsTable')} className="ml-1 text-white/70 hover:text-white transition-colors mr-1"><Info size={13} /></button>
                   <ExportBtn onClick={() => nps && downloadCSV(nps.days.map(d => ({ Date: d.calldate, Detractor: d.detractor, Passive: d.passive, Promoter: d.promoter, 'Total Feedbacks': d.totalFeedbacks, 'NPS Score': d.npsScore })), 'nps-day-wise.csv')} />
                 </div>
                 <div style={{ maxHeight: 360, overflowY: 'auto', overflowX: 'auto' }}>
@@ -1432,10 +1492,10 @@ export default function ProcessQualityDashboard() {
             };
             return (
               <div className="mt-6 rounded-xl border border-sky-500/20 bg-white overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-sky-500/5">
+                <div className="card-header gap-2 px-5 py-3">
                   <BarChart3 size={14} className="text-sky-400" />
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-sky-400">NPS and CSAT Day Wise Trend</span>
-                  <button onClick={() => showDetail('npsTrend')} className="ml-auto text-slate-500 hover:text-sky-400 transition-colors"><Info size={13} /></button>
+                  <span className="text-[11px] font-bold uppercase tracking-widest">NPS and CSAT Day Wise Trend</span>
+                  <button onClick={() => showDetail('npsTrend')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="p-4">
                   <ResponsiveContainer width="100%" height={340}>
@@ -1444,7 +1504,7 @@ export default function ProcessQualityDashboard() {
                       <XAxis
                         dataKey="calldate"
                         tickFormatter={fmtShort}
-                        tick={{ fill: '#94A3B8', fontSize: 9 }}
+                        tick={{ fill: '#334155', fontSize: 9 }}
                         interval="preserveStartEnd"
                       />
                       <YAxis
@@ -1482,7 +1542,7 @@ export default function ProcessQualityDashboard() {
                         <LabelList
                           dataKey="npsScore"
                           position="top"
-                          style={{ fill: '#FCA5A5', fontSize: 8 }}
+                          style={{ fill: '#B91C1C', fontSize: 8, fontWeight: 600 }}
                           formatter={(v: unknown) => Number(v).toFixed(2)}
                         />
                       </Line>
@@ -1499,7 +1559,7 @@ export default function ProcessQualityDashboard() {
                         <LabelList
                           dataKey="totalFeedbacks"
                           position="bottom"
-                          style={{ fill: '#FCD34D', fontSize: 8 }}
+                          style={{ fill: '#92400E', fontSize: 8, fontWeight: 600 }}
                           formatter={(v: unknown) => Number(v).toLocaleString()}
                         />
                       </Line>
@@ -1522,14 +1582,14 @@ export default function ProcessQualityDashboard() {
             const maxPr = Math.max(...agentNPS.map(r => r.promoter),  1);
             const cell  = (v: number, max: number, rgb: string) => ({
               backgroundColor: max > 0 ? `rgba(${rgb},${(v / max) * 0.7 + 0.08})` : 'transparent',
-              color: max > 0 && v / max > 0.55 ? '#fff' : '#E2E8F0',
+              color: max > 0 && v / max > 0.55 ? '#fff' : '#0F172A',
             });
             const npsColor = (s: number) => s >= 50 ? '#22C55E' : s >= 0 ? '#F59E0B' : '#EF4444';
             return (
               <div className="mt-6 rounded-xl border border-violet-500/20 bg-white overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-violet-500/5">
+                <div className="card-header gap-2 px-5 py-3">
                   <Users size={14} className="text-violet-400" />
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-violet-400">Agent Wise — Detractor / Passive / Promoter</span>
+                  <span className="text-[11px] font-bold uppercase tracking-widest">Agent Wise — Detractor / Passive / Promoter</span>
                   <span className="ml-2 text-[10px] text-slate-500">{agentNPS.length} agents · sorted by NPS</span>
                   <div className="ml-auto">
                     <ExportBtn onClick={() => downloadCSV(agentNPS.map(r => ({
@@ -1613,17 +1673,17 @@ export default function ProcessQualityDashboard() {
             <div className="flex gap-4">
               {cst && (
                 <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/30 bg-white overflow-hidden">
-                  <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-emerald-500/5">
+                  <div className="card-header gap-2 px-4 py-2.5">
                     <TrendingUp size={13} className="text-emerald-400" />
                     <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">CST — Customer Success Track</span>
-                    <button onClick={() => showDetail('cstSection')} className="ml-auto text-slate-500 hover:text-emerald-400 transition-colors"><Info size={12} /></button>
+                    <button onClick={() => showDetail('cstSection')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={12} /></button>
                   </div>
                   <div className="flex flex-row gap-px bg-slate-100">
                     {CST_METRICS(cst).map((m, i) => (
                       <div key={i} onClick={() => setModalMetric(m)}
                         className="flex-1 min-w-0 bg-white px-3 py-3 cursor-pointer hover:bg-slate-100 transition-colors">
                         <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">{m.label}</span>
-                        <p className="text-lg font-black text-slate-900">{m.value}</p>
+                        <p className="text-lg font-bold text-slate-900">{m.value}</p>
                       </div>
                     ))}
                   </div>
@@ -1631,17 +1691,17 @@ export default function ProcessQualityDashboard() {
               )}
               {crt && (
                 <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-white overflow-hidden">
-                  <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-red-500/5">
+                  <div className="card-header gap-2 px-4 py-2.5">
                     <XCircle size={13} className="text-red-400" />
                     <span className="text-[10px] font-bold uppercase tracking-widest text-red-400">CRT — Customer Rejection Track</span>
-                    <button onClick={() => showDetail('crtSection')} className="ml-auto text-slate-500 hover:text-red-400 transition-colors"><Info size={12} /></button>
+                    <button onClick={() => showDetail('crtSection')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={12} /></button>
                   </div>
                   <div className="flex flex-row gap-px bg-slate-100">
                     {CRT_METRICS(crt).map((m, i) => (
                       <div key={i} onClick={() => setModalMetric(m)}
                         className="flex-1 min-w-0 bg-white px-3 py-3 cursor-pointer hover:bg-slate-100 transition-colors">
                         <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">{m.label}</span>
-                        <p className="text-lg font-black text-slate-900">{m.value}</p>
+                        <p className="text-lg font-bold text-slate-900">{m.value}</p>
                       </div>
                     ))}
                   </div>
@@ -1676,7 +1736,7 @@ export default function ProcessQualityDashboard() {
 
                 return (
                   <div className="rounded-xl border border-blue-500/20 bg-white overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-blue-500/5">
+                    <div className="card-header gap-2 px-5 py-3">
                       <BarChart3 size={14} className="text-blue-400" />
                       <span className="text-[11px] font-bold uppercase tracking-widest text-blue-400">OP Category Wise Success</span>
                     </div>
@@ -1758,7 +1818,7 @@ export default function ProcessQualityDashboard() {
 
                 return (
                   <div className="mt-6 rounded-xl border border-teal-500/20 bg-white overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-teal-500/5">
+                    <div className="card-header gap-2 px-5 py-3">
                       <BarChart3 size={14} className="text-teal-400" />
                       <span className="text-[11px] font-bold uppercase tracking-widest text-teal-400">Context Setting Analysis</span>
                     </div>
@@ -1841,7 +1901,7 @@ export default function ProcessQualityDashboard() {
 
               return (
                 <div className="mt-8 rounded-xl border border-amber-500/20 bg-white overflow-hidden">
-                  <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 bg-amber-500/5">
+                  <div className="card-header gap-2 px-5 py-3">
                     <BarChart3 size={14} className="text-amber-400" />
                     <span className="text-[11px] font-bold uppercase tracking-widest text-amber-400">Offered Pitch Analysis</span>
                   </div>
@@ -1976,9 +2036,9 @@ export default function ProcessQualityDashboard() {
 
               return (
                 <div className={`mt-6 rounded-xl border ${borderColor} bg-white overflow-hidden`}>
-                  <div className={`px-5 py-3 border-b border-slate-200 flex items-center gap-2 ${headerColor}`}>
-                    <BarChart3 size={14} className={iconColor} />
-                    <span className={`text-[11px] font-bold uppercase tracking-widest ${iconColor}`}>{title}</span>
+                  <div className="card-header gap-2 px-5 py-3">
+                    <BarChart3 size={14} />
+                    <span className="text-[11px] font-bold uppercase tracking-widest">{title}</span>
                     <div className="ml-auto">
                       <ExportBtn onClick={() => downloadCSV(rows.map(r => ({ [dimLabel]: r.label, 'Obj. Count': r.objectionCount, 'Failed Reb.': r.failedRebuttal, 'FR%': pct(r.failedRebuttal, r.objectionCount), 'Succ. Reb.': r.successfulRebuttal, 'SR%': pct(r.successfulRebuttal, r.objectionCount), 'Sale': r.saleCount, 'Conv%': pct(r.saleCount, r.objectionCount) })), `${title.replace(/\s+/g, '-').toLowerCase()}.csv`)} />
                     </div>
