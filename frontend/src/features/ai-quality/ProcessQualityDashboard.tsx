@@ -137,6 +137,16 @@ interface ObjectionAnalysisResponse {
   posSubcategory: POSSubcategoryRow[];
 }
 
+interface AgentNPSRow {
+  agent: string;
+  calls: number;
+  promoter: number;
+  passive: number;
+  detractor: number;
+  csat: number;
+  nps: number;
+}
+
 interface KPIResponse {
   cst: CSTData;
   crt: CRTData;
@@ -552,6 +562,7 @@ export default function ProcessQualityDashboard() {
   const [kpi, setKpi] = useState<KPIResponse | null>(null);
   const [detailAnalysis, setDetailAnalysis] = useState<DetailAnalysisResponse | null>(null);
   const [objectionAnalysis, setObjectionAnalysis] = useState<ObjectionAnalysisResponse | null>(null);
+  const [agentNPS, setAgentNPS] = useState<AgentNPSRow[]>([]);
   const [clientName, setClientName] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -578,6 +589,10 @@ export default function ProcessQualityDashboard() {
     api.get<{ data: ObjectionAnalysisResponse }>(`/quality/objection-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
       .then(r => setObjectionAnalysis(r.data?.data ?? null))
       .catch(() => setObjectionAnalysis(null));
+
+    api.get<{ data: AgentNPSRow[] }>(`/quality/agent-nps-csat?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      .then(r => setAgentNPS(r.data?.data ?? []))
+      .catch(() => setAgentNPS([]));
   }, [clientId, sd, ed]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -1461,6 +1476,97 @@ export default function ProcessQualityDashboard() {
               </div>
             );
           })()}
+
+          {/* ─── Agent-wise NPS & CSAT ─────────────────────────────────────── */}
+          {agentNPS.length > 0 && (
+            <div className="rounded-xl border border-sky-500/20 bg-[#1E293B] overflow-hidden">
+              <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+                <div className="w-1 h-4 bg-sky-400 rounded-full" />
+                <span className="text-[11px] font-bold uppercase tracking-widest text-sky-400">Agent-wise NPS &amp; CSAT</span>
+                <span className="ml-2 text-[10px] text-slate-500">{agentNPS.length} agents</span>
+                <div className="ml-auto">
+                  <ExportBtn onClick={() => downloadCSV(agentNPS as unknown as Record<string,unknown>[], 'agent-nps-csat.csv')} />
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/5 bg-white/[0.02]">
+                      <th className="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">#</th>
+                      <th className="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">Agent</th>
+                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-slate-500">Calls</th>
+                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-slate-500">CSAT %</th>
+                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-slate-500">NPS</th>
+                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-emerald-500">Promoter</th>
+                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-amber-500">Passive</th>
+                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-red-500">Detractor</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {agentNPS.map((row, i) => {
+                      const npsColor = row.nps >= 30 ? '#22C55E' : row.nps >= 0 ? '#F59E0B' : '#EF4444';
+                      const total = row.promoter + row.passive + row.detractor;
+                      return (
+                        <tr key={i} className="hover:bg-white/[0.03] transition-colors">
+                          <td className="px-4 py-2.5 text-slate-600">{i + 1}</td>
+                          <td className="px-4 py-2.5 font-medium text-white">{row.agent}</td>
+                          <td className="px-4 py-2.5 text-right text-slate-300">{row.calls.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            <span className="font-bold text-sky-400">{row.csat.toFixed(1)}%</span>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <span className="font-bold" style={{ color: npsColor }}>{row.nps.toFixed(1)}</span>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <span className="text-emerald-400 font-semibold">{row.promoter.toLocaleString()}</span>
+                            <span className="text-slate-600 ml-1 text-[10px]">
+                              ({total > 0 ? ((row.promoter / total) * 100).toFixed(0) : 0}%)
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <span className="text-amber-400 font-semibold">{row.passive.toLocaleString()}</span>
+                            <span className="text-slate-600 ml-1 text-[10px]">
+                              ({total > 0 ? ((row.passive / total) * 100).toFixed(0) : 0}%)
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <span className="text-red-400 font-semibold">{row.detractor.toLocaleString()}</span>
+                            <span className="text-slate-600 ml-1 text-[10px]">
+                              ({total > 0 ? ((row.detractor / total) * 100).toFixed(0) : 0}%)
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    {(() => {
+                      const totCalls = agentNPS.reduce((s, r) => s + r.calls, 0);
+                      const totPro   = agentNPS.reduce((s, r) => s + r.promoter, 0);
+                      const totPas   = agentNPS.reduce((s, r) => s + r.passive, 0);
+                      const totDet   = agentNPS.reduce((s, r) => s + r.detractor, 0);
+                      const totFb    = totPro + totPas + totDet;
+                      const totCSAT  = totFb > 0 ? ((totPro + totPas) / totFb * 100).toFixed(1) : '0.0';
+                      const totNPS   = totFb > 0 ? ((totPro - totDet) / totFb * 100).toFixed(1) : '0.0';
+                      const npsColor = Number(totNPS) >= 30 ? '#22C55E' : Number(totNPS) >= 0 ? '#F59E0B' : '#EF4444';
+                      return (
+                        <tr className="border-t border-white/10 bg-white/[0.03]">
+                          <td className="px-4 py-2.5" />
+                          <td className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Total</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-white">{totCalls.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-sky-400">{totCSAT}%</td>
+                          <td className="px-4 py-2.5 text-right font-bold" style={{ color: npsColor }}>{totNPS}</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-emerald-400">{totPro.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-amber-400">{totPas.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-right font-bold text-red-400">{totDet.toLocaleString()}</td>
+                        </tr>
+                      );
+                    })()}
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
         )}
 

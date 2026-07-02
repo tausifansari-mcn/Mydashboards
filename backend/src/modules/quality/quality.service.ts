@@ -65,6 +65,16 @@ export interface NPSDayRow {
   npsScore: number;
 }
 
+export interface AgentNPSRow {
+  agent: string;
+  calls: number;
+  promoter: number;
+  passive: number;
+  detractor: number;
+  csat: number;
+  nps: number;
+}
+
 export interface NPSData {
   total: number;
   promoter: number;
@@ -983,6 +993,56 @@ export interface ClientKPISummary {
   positive_pct:   number;
   valid_calls:    number;
   ops:            number;
+}
+
+export async function getAgentNPSCSAT(filters: QualityFilters): Promise<AgentNPSRow[]> {
+  const { startDate, endDate } = filters;
+  const { sql: cf, params: cfParams } = clientClause(filters);
+  const params = [startDate, endDate, ...cfParams];
+
+  const rows = await querySource<{
+    agent: string; calls: number;
+    promoter: number; passive: number; detractor: number;
+    csat: number | null; nps: number | null;
+  }>(`
+    SELECT
+      COALESCE(am.AgentName, cd.AgentName) AS agent,
+      COUNT(*) AS calls,
+      SUM(CASE WHEN cd.Feedback = 'Positive' THEN 1 ELSE 0 END) AS promoter,
+      SUM(CASE WHEN cd.Feedback = 'Neutral'  THEN 1 ELSE 0 END) AS passive,
+      SUM(CASE WHEN cd.Feedback = 'Negative' THEN 1 ELSE 0 END) AS detractor,
+      ROUND(
+        SUM(CASE WHEN cd.Feedback IN ('Positive','Neutral') THEN 1 ELSE 0 END) * 100.0 /
+        NULLIF(SUM(CASE WHEN cd.Feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0),
+        1
+      ) AS csat,
+      ROUND(
+        (SUM(CASE WHEN cd.Feedback = 'Positive' THEN 1 ELSE 0 END) * 100.0 /
+         NULLIF(SUM(CASE WHEN cd.Feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0))
+        -
+        (SUM(CASE WHEN cd.Feedback = 'Negative' THEN 1 ELSE 0 END) * 100.0 /
+         NULLIF(SUM(CASE WHEN cd.Feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0)),
+        1
+      ) AS nps
+    FROM db_external.CallDetails cd
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE cd.Feedback IN ('Positive','Negative','Neutral')
+      AND cd.CallDate BETWEEN ? AND ? ${cf}
+      AND cd.AgentName IS NOT NULL AND cd.AgentName != ''
+    GROUP BY cd.AgentName
+    HAVING calls >= 1
+    ORDER BY csat DESC
+  `, params);
+
+  return rows.map(r => ({
+    agent:     String(r.agent),
+    calls:     Number(r.calls),
+    promoter:  Number(r.promoter),
+    passive:   Number(r.passive),
+    detractor: Number(r.detractor),
+    csat:      Number(r.csat ?? 0),
+    nps:       Number(r.nps ?? 0),
+  }));
 }
 
 export async function getClientsSummary(filters: QualityFilters): Promise<ClientKPISummary[]> {

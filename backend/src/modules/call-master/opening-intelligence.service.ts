@@ -347,16 +347,17 @@ export async function getOpeningLeaderboard(filters: CallMasterFilters) {
 
   const baseSelect = `
     SELECT
-      AgentName AS name,
+      COALESCE(am.AgentName, d.AgentName) AS name,
       COUNT(*) AS calls,
       ROUND(SUM(CASE WHEN ${OPENING_GOOD_EXPR} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0), 2) AS opening_pct,
       ROUND(AVG(${OPENING_SCORE_EXPR}), 2) AS opening_score,
       ROUND(SUM(CASE WHEN ${SALE_EXPR} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0), 2) AS conv_pct
-    FROM db_external.CallDetails
-    WHERE CallDate BETWEEN ? AND ?
-      AND AgentName IS NOT NULL AND AgentName != ''
+    FROM db_external.CallDetails d
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = d.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE d.CallDate BETWEEN ? AND ?
+      AND d.AgentName IS NOT NULL AND d.AgentName != ''
       ${_cf(clientIds)}
-    GROUP BY AgentName
+    GROUP BY d.AgentName
     HAVING calls >= 5
   `;
 

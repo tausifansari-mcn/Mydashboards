@@ -118,6 +118,13 @@ export async function getAgentCXRanking(req: Request, res: Response) {
   } catch (err) { console.error('getAgentCXRanking:', err); res.status(500).json({ success: false, message: 'Failed' }); }
 }
 
+export async function getAgentNPSCSAT(req: Request, res: Response) {
+  try {
+    const filters = await buildFilters(req);
+    res.json({ success: true, data: await ci.getAgentNPSCSAT(filters) });
+  } catch (err) { console.error('getAgentNPSCSAT:', err); res.status(500).json({ success: false, message: 'Failed' }); }
+}
+
 export async function getProductFeedback(req: Request, res: Response) {
   try {
     const filters = await buildFilters(req);

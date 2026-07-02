@@ -355,23 +355,24 @@ export async function getTopAgents(filters: CallMasterFilters, limit = 10) {
   const params: (string | number | null)[] =[startDate, endDate, ...(clientIds || [])];
 
   const agentSelect = `
-      User AS agent,
+      COALESCE(am.AgentName, q.User) AS agent,
       COUNT(*) AS calls,
-      ROUND(AVG(quality_percentage), 2) AS quality,
+      ROUND(AVG(q.quality_percentage), 2) AS quality,
       ROUND(AVG(
-        (COALESCE(professionalism_maintained,0) + COALESCE(correct_and_complete_information,0) +
-         COALESCE(proper_call_closure,0)) / 3.0 * 100
+        (COALESCE(q.professionalism_maintained,0) + COALESCE(q.correct_and_complete_information,0) +
+         COALESCE(q.proper_call_closure,0)) / 3.0 * 100
       ), 2) AS compliance,
       ROUND(
-        SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
+        SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
         2
       ) AS fatal_rate`;
 
   const top = await querySource<{ agent: string; calls: number; quality: number; compliance: number; fatal_rate: number }>(`
     SELECT ${agentSelect}
-    FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ? ${clientFilter}
-    GROUP BY User
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    WHERE q.CallDate BETWEEN ? AND ? ${clientFilter.replace(/ClientId/g, 'q.ClientId')}
+    GROUP BY q.User
     HAVING calls >= 3
     ORDER BY quality DESC
     LIMIT ${limit}
@@ -379,9 +380,10 @@ export async function getTopAgents(filters: CallMasterFilters, limit = 10) {
 
   const bottom = await querySource<{ agent: string; calls: number; quality: number; compliance: number; fatal_rate: number }>(`
     SELECT ${agentSelect}
-    FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ? ${clientFilter}
-    GROUP BY User
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    WHERE q.CallDate BETWEEN ? AND ? ${clientFilter.replace(/ClientId/g, 'q.ClientId')}
+    GROUP BY q.User
     HAVING calls >= 3
     ORDER BY quality ASC
     LIMIT ${limit}
@@ -564,26 +566,28 @@ export async function getActiveAgentsList(filters: CallMasterFilters) {
 
   const ibQuery = `
     SELECT
-      q.User AS agent,
+      COALESCE(am.AgentName, q.User) AS agent,
       COUNT(*) AS calls,
       ROUND(AVG(q.quality_percentage), 1) AS quality,
       GROUP_CONCAT(DISTINCT COALESCE(c.name, CONCAT('Client ', q.ClientId)) ORDER BY c.name SEPARATOR ', ') AS clients,
       'Inbound' AS lob
     FROM db_audit.call_quality_assessment q
     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? ${ibCF}
     GROUP BY q.User
     ORDER BY calls DESC`;
 
   const obQuery = `
     SELECT
-      d.AgentName AS agent,
+      COALESCE(am.AgentName, d.AgentName) AS agent,
       COUNT(*) AS calls,
       ROUND(AVG(${OB_QUALITY_EXPR}), 1) AS quality,
       GROUP_CONCAT(DISTINCT COALESCE(c.name, CONCAT('Client ', d.client_id)) ORDER BY c.name SEPARATOR ', ') AS clients,
       'Outbound' AS lob
     FROM db_external.CallDetails d
     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = d.client_id
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = d.AgentName COLLATE utf8mb4_unicode_ci
     WHERE d.CallDate BETWEEN ? AND ? ${obCF}
       AND d.AgentName IS NOT NULL AND d.AgentName != ''
     GROUP BY d.AgentName
@@ -818,7 +822,7 @@ export async function getOBAgentPerf(filters: CallMasterFilters, limit = 100) {
     agent: string; calls: number; sales: number; conv_pct: number; ob_quality: number; avg_talk_sec: number;
   }>(`
     SELECT
-      AgentName AS agent,
+      COALESCE(am.AgentName, AgentName) AS agent,
       COUNT(*) AS calls,
       SUM(CASE WHEN SaleDone='1' OR SaleDone=1 THEN 1 ELSE 0 END) AS sales,
       ROUND(SUM(CASE WHEN SaleDone='1' OR SaleDone=1 THEN 1 ELSE 0 END)*100.0
@@ -826,6 +830,7 @@ export async function getOBAgentPerf(filters: CallMasterFilters, limit = 100) {
       ROUND(AVG(${OB_QUALITY_EXPR}), 2) AS ob_quality,
       ROUND(AVG(NULLIF(LengthSec,0)), 1) AS avg_talk_sec
     FROM db_external.CallDetails
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = AgentName COLLATE utf8mb4_unicode_ci
     WHERE CallDate BETWEEN ? AND ? ${_obCf(clientIds)}
       AND AgentName IS NOT NULL AND AgentName != ''
     GROUP BY AgentName
@@ -1051,20 +1056,21 @@ export async function getAgentAuditSummary(filters: CallMasterFilters) {
     bq_count: number;
   }>(`
     SELECT
-      User                                                                       AS agent,
+      COALESCE(am.AgentName, q.User)                                             AS agent,
       COUNT(*)                                                                   AS audit_count,
-      ROUND(AVG(quality_percentage), 1)                                          AS cq_score,
-      SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END)                  AS fatal_count,
+      ROUND(AVG(q.quality_percentage), 1)                                        AS cq_score,
+      SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END)                AS fatal_count,
       ROUND(
-        SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
+        SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
         1
       )                                                                          AS fatal_pct,
-      SUM(CASE WHEN quality_percentage >= 80 THEN 1 ELSE 0 END)                AS tq_count,
-      SUM(CASE WHEN quality_percentage >= 60 AND quality_percentage < 80 THEN 1 ELSE 0 END) AS mq_count,
-      SUM(CASE WHEN quality_percentage > 0  AND quality_percentage < 60 THEN 1 ELSE 0 END)  AS bq_count
-    FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ? ${clientFilter}
-    GROUP BY User
+      SUM(CASE WHEN q.quality_percentage >= 80 THEN 1 ELSE 0 END)              AS tq_count,
+      SUM(CASE WHEN q.quality_percentage >= 60 AND q.quality_percentage < 80 THEN 1 ELSE 0 END) AS mq_count,
+      SUM(CASE WHEN q.quality_percentage > 0  AND q.quality_percentage < 60 THEN 1 ELSE 0 END)  AS bq_count
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    WHERE q.CallDate BETWEEN ? AND ? ${clientFilter.replace(/ClientId/g, 'q.ClientId')}
+    GROUP BY q.User
     ORDER BY cq_score DESC
   `, [startDate, endDate, ...(clientIds || [])]);
 
@@ -1097,7 +1103,7 @@ export async function getFatalAgentSummary(filters: CallMasterFilters, limit = 5
   }>(`
     SELECT
       q.CallDate                                                             AS date,
-      q.User                                                                 AS agent,
+      COALESCE(am.AgentName, q.User)                 AS agent,
       COALESCE(c.name, CONCAT('Client ', q.ClientId))                       AS client,
       COUNT(*)                                                               AS total_calls,
       SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END)            AS fatal_calls,
@@ -1109,6 +1115,7 @@ export async function getFatalAgentSummary(filters: CallMasterFilters, limit = 5
       ROUND(AVG(q.quality_percentage), 2)                                    AS avg_quality
     FROM db_audit.call_quality_assessment q
     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? ${clientFilter}
     GROUP BY q.CallDate, q.User, q.ClientId, c.name
     ORDER BY q.CallDate DESC, q.User ASC

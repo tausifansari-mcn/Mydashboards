@@ -419,7 +419,7 @@ export async function getAgentCXRanking(filters: CallMasterFilters) {
 
   const baseSelect = `
     SELECT
-      AgentName AS agent,
+      COALESCE(am.AgentName, d.AgentName) AS agent,
       COUNT(*) AS calls,
       ROUND(SUM(CASE WHEN ${POSITIVE} THEN 1 ELSE 0 END)*100.0
         / NULLIF(SUM(CASE WHEN ${KNOWN_FB} THEN 1 ELSE 0 END),0),2) AS satisfaction_pct,
@@ -435,11 +435,12 @@ export async function getAgentCXRanking(filters: CallMasterFilters) {
         + (100 - SUM(CASE WHEN ${NEGATIVE} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0)) * 0.2
       ,2) AS trust_score,
       ROUND(SUM(CASE WHEN ${SALE} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS conv_pct
-    FROM db_external.CallDetails
-    WHERE CallDate BETWEEN ? AND ?
-      AND AgentName IS NOT NULL AND AgentName != ''
+    FROM db_external.CallDetails d
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = d.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE d.CallDate BETWEEN ? AND ?
+      AND d.AgentName IS NOT NULL AND d.AgentName != ''
       ${_cf(clientIds)}
-    GROUP BY AgentName HAVING calls >= 5
+    GROUP BY d.AgentName HAVING calls >= 5
   `;
 
   const [top10, bottom10] = await Promise.all([
@@ -454,6 +455,55 @@ export async function getAgentCXRanking(filters: CallMasterFilters) {
   ]);
 
   return { top10, bottom10 };
+}
+
+// ─── Agent-wise NPS & CSAT ───────────────────────────────────────────────────
+
+export async function getAgentNPSCSAT(filters: CallMasterFilters) {
+  const { startDate, endDate, clientIds } = filters;
+
+  return querySource<{
+    agent: string;
+    calls: number;
+    positive_count: number;
+    negative_count: number;
+    neutral_count: number;
+    positive_pct: number;
+    negative_pct: number;
+    neutral_pct: number;
+    promoter: number;
+    passive: number;
+    detractor: number;
+    csat: number;
+    nps: number;
+    conv_pct: number;
+  }>(`
+    SELECT
+      COALESCE(am.AgentName, d.AgentName)                                                 AS agent,
+      COUNT(*)                                                                             AS calls,
+      SUM(CASE WHEN ${POSITIVE} THEN 1 ELSE 0 END)                                       AS positive_count,
+      SUM(CASE WHEN ${NEGATIVE} THEN 1 ELSE 0 END)                                       AS negative_count,
+      SUM(CASE WHEN ${NEUTRAL}  THEN 1 ELSE 0 END)                                       AS neutral_count,
+      ROUND(SUM(CASE WHEN ${POSITIVE} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1)    AS positive_pct,
+      ROUND(SUM(CASE WHEN ${NEGATIVE} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1)    AS negative_pct,
+      ROUND(SUM(CASE WHEN ${NEUTRAL}  THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1)    AS neutral_pct,
+      SUM(CASE WHEN ${POSITIVE} THEN 1 ELSE 0 END)                                       AS promoter,
+      SUM(CASE WHEN ${NEUTRAL}  THEN 1 ELSE 0 END)                                       AS passive,
+      SUM(CASE WHEN ${NEGATIVE} THEN 1 ELSE 0 END)                                       AS detractor,
+      ROUND(SUM(CASE WHEN ${POSITIVE} THEN 1 ELSE 0 END)*100.0
+        / NULLIF(SUM(CASE WHEN ${KNOWN_FB} THEN 1 ELSE 0 END),0),1)                     AS csat,
+      ROUND((SUM(CASE WHEN ${POSITIVE} THEN 1 ELSE 0 END)
+           - SUM(CASE WHEN ${NEGATIVE} THEN 1 ELSE 0 END))*100.0/NULLIF(COUNT(*),0),1) AS nps,
+      ROUND(SUM(CASE WHEN ${SALE} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1)        AS conv_pct
+    FROM db_external.CallDetails d
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = d.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE d.CallDate BETWEEN ? AND ?
+      AND d.AgentName IS NOT NULL AND d.AgentName != ''
+      ${_cf(clientIds)}
+    GROUP BY d.AgentName
+    HAVING calls >= 1
+    ORDER BY csat DESC
+  `, _p(startDate, endDate, clientIds));
 }
 
 // ─── Product Feedback ─────────────────────────────────────────────────────────

@@ -13,5 +13,6 @@ router.get('/clients-summary',    ctrl.getClientsSummary);
 router.get('/kpis',               ctrl.getKPIs);
 router.get('/detail-analysis',    ctrl.getDetailAnalysis);
 router.get('/objection-analysis', ctrl.getObjectionAnalysis);
+router.get('/agent-nps-csat',     ctrl.getAgentNPSCSAT);
 
 export default router;

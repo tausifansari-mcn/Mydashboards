@@ -43,6 +43,7 @@ interface CampaignComp   { campaign: string; calls: number; satisfaction_pct: nu
 interface AgentRankData  { top10: AgentRank[]; bottom10: AgentRank[] }
 interface AgentRank      { agent: string; calls: number; satisfaction_pct: number; positive_pct: number; negative_pct: number; offer_accept_pct: number; trust_score: number; conv_pct: number }
 interface ProductFb      { product: string; calls: number; positive_pct: number; negative_pct: number; conv_pct: number }
+interface AgentNPSCSAT   { agent: string; calls: number; positive_count: number; negative_count: number; neutral_count: number; positive_pct: number; negative_pct: number; neutral_pct: number; promoter: number; passive: number; detractor: number; csat: number; nps: number; conv_pct: number }
 interface OfferingStage  { stage: string; count: number; pct: number }
 interface AIInsight      { type: 'alert' | 'success' | 'opportunity'; priority: string; title: string; what: string; why: string; impact: string; action: string }
 
@@ -427,6 +428,9 @@ export default function CustomerIntelligenceDashboard() {
   const [productFb,      setProductFb]      = useState<ProductFb[]>([]);
   const [offeringFunnel, setOfferingFunnel] = useState<OfferingStage[]>([]);
   const [insights,       setInsights]       = useState<AIInsight[]>([]);
+  const [agentNPSCSAT,   setAgentNPSCSAT]   = useState<AgentNPSCSAT[]>([]);
+  const [ncsatSearch,    setNcsatSearch]    = useState('');
+  const [ncsatSort,      setNcsatSort]      = useState<{ key: keyof AgentNPSCSAT; dir: 'asc' | 'desc' }>({ key: 'csat', dir: 'desc' });
 
   // Per-section loading states
   const [sumLoading,  setSumLoading]  = useState(true);
@@ -437,8 +441,9 @@ export default function CustomerIntelligenceDashboard() {
   const [sec6Loading, setSec6Loading] = useState(false);
   const [sec7Loading, setSec7Loading] = useState(false);
   const [sec8Loading, setSec8Loading] = useState(false);
-  const [sec9Loading, setSec9Loading] = useState(false);
-  const [error,       setError]       = useState('');
+  const [sec9Loading,  setSec9Loading]  = useState(false);
+  const [sec10Loading, setSec10Loading] = useState(false);
+  const [error,        setError]        = useState('');
 
   const isSingle = clients.length === 1;
 
@@ -462,17 +467,19 @@ export default function CustomerIntelligenceDashboard() {
   const sec6Loaded = useRef(false);
   const sec7Loaded = useRef(false);
   const sec8Loaded = useRef(false);
-  const sec9Loaded = useRef(false);
+  const sec9Loaded  = useRef(false);
+  const sec10Loaded = useRef(false);
 
   // Section refs for IntersectionObserver
-  const sec2Ref = useRef<HTMLElement>(null);
-  const sec3Ref = useRef<HTMLElement>(null);
-  const sec4Ref = useRef<HTMLElement>(null);
-  const sec5Ref = useRef<HTMLElement>(null);
-  const sec6Ref = useRef<HTMLElement>(null);
-  const sec7Ref = useRef<HTMLElement>(null);
-  const sec8Ref = useRef<HTMLElement>(null);
-  const sec9Ref = useRef<HTMLElement>(null);
+  const sec2Ref  = useRef<HTMLElement>(null);
+  const sec3Ref  = useRef<HTMLElement>(null);
+  const sec4Ref  = useRef<HTMLElement>(null);
+  const sec5Ref  = useRef<HTMLElement>(null);
+  const sec6Ref  = useRef<HTMLElement>(null);
+  const sec7Ref  = useRef<HTMLElement>(null);
+  const sec8Ref  = useRef<HTMLElement>(null);
+  const sec9Ref  = useRef<HTMLElement>(null);
+  const sec10Ref = useRef<HTMLElement>(null);
 
   const paramsRef = useRef(() => {
     const p: Record<string, string> = {
@@ -581,6 +588,13 @@ export default function CustomerIntelligenceDashboard() {
       .catch(() => {}).finally(() => setSec9Loading(false));
   }, []);
 
+  const fetchSec10 = useCallback(() => {
+    setSec10Loading(true);
+    api.get('/call-master/customer-intelligence/agent-nps-csat', { params: paramsRef.current() })
+      .then(r => setAgentNPSCSAT(r.data?.data ?? []))
+      .catch(() => {}).finally(() => setSec10Loading(false));
+  }, []);
+
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
 
   useSectionObserver(sec2Ref, fetchSec2, sec2Loaded);
@@ -590,7 +604,8 @@ export default function CustomerIntelligenceDashboard() {
   useSectionObserver(sec6Ref, fetchSec6, sec6Loaded);
   useSectionObserver(sec7Ref, fetchSec7, sec7Loaded);
   useSectionObserver(sec8Ref, fetchSec8, sec8Loaded);
-  useSectionObserver(sec9Ref, fetchSec9, sec9Loaded);
+  useSectionObserver(sec9Ref,  fetchSec9,  sec9Loaded);
+  useSectionObserver(sec10Ref, fetchSec10, sec10Loaded);
 
   const handlePeriod = (p: typeof period) => {
     setPeriod(p); periodRef.current = p;
@@ -617,7 +632,8 @@ export default function CustomerIntelligenceDashboard() {
     if (sec6Loaded.current) fetchSec6();
     if (sec7Loaded.current) fetchSec7();
     if (sec8Loaded.current) fetchSec8();
-    if (sec9Loaded.current) fetchSec9();
+    if (sec9Loaded.current)  fetchSec9();
+    if (sec10Loaded.current) fetchSec10();
   };
 
   return (
@@ -1197,6 +1213,121 @@ export default function CustomerIntelligenceDashboard() {
               <span className="text-[12px] text-slate-400">AI insights will appear once data is loaded.</span>
             </div>
           )}
+        </section>
+
+        {/* ─── Section 11: Agent-wise NPS & CSAT ────────────────────────── */}
+        <section ref={sec10Ref}>
+          <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
+            <span className="w-4 h-px bg-slate-600" /> Section 11 — Agent-wise NPS &amp; CSAT Analysis
+          </h2>
+          <SCard title="Agent NPS & CSAT Summary" accent={C.pink}
+            dl={{ filename: 'agent_nps_csat', rows: agentNPSCSAT as unknown as Record<string, unknown>[] }}>
+            <div className="flex items-center gap-2 mb-3">
+              <input
+                type="text" placeholder="Search agent…" value={ncsatSearch}
+                onChange={e => setNcsatSearch(e.target.value)}
+                className="flex-1 bg-slate-800/60 border border-white/10 rounded-lg px-3 py-1.5 text-[11px] text-slate-300 outline-none placeholder-slate-600"
+              />
+              <span className="text-[10px] text-slate-500 shrink-0">
+                {agentNPSCSAT.filter(r => r.agent.toLowerCase().includes(ncsatSearch.toLowerCase())).length} agents
+              </span>
+            </div>
+            {sec10Loading ? <SK h={260} /> : agentNPSCSAT.length === 0 ? (
+              <p className="text-[11px] text-slate-500 text-center py-6">No data available</p>
+            ) : (() => {
+              const filtered = agentNPSCSAT
+                .filter(r => r.agent.toLowerCase().includes(ncsatSearch.toLowerCase()))
+                .slice().sort((a, b) => {
+                  const av = a[ncsatSort.key] as number;
+                  const bv = b[ncsatSort.key] as number;
+                  return ncsatSort.dir === 'desc' ? bv - av : av - bv;
+                });
+              const thCls = 'pb-2 text-left cursor-pointer select-none hover:text-slate-300 transition-colors';
+              const thR   = 'pb-2 text-right cursor-pointer select-none hover:text-slate-300 transition-colors';
+              const sortIcon = (k: keyof AgentNPSCSAT) =>
+                ncsatSort.key === k ? (ncsatSort.dir === 'desc' ? ' ↓' : ' ↑') : '';
+              const handleSort = (k: keyof AgentNPSCSAT) =>
+                setNcsatSort(s => ({ key: k, dir: s.key === k && s.dir === 'desc' ? 'asc' : 'desc' }));
+              const npsColor = (v: number) => v >= 30 ? C.pos : v >= 0 ? C.neu : C.neg;
+              return (
+                <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
+                  <table className="w-full text-[11px]">
+                    <thead className="sticky top-0 bg-[#1E293B] z-10">
+                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-white/5">
+                        <th className="pb-2 text-left">#</th>
+                        <th className={thCls} onClick={() => handleSort('agent')}>Agent{sortIcon('agent')}</th>
+                        <th className={thR} onClick={() => handleSort('calls')}>Calls{sortIcon('calls')}</th>
+                        <th className={thR} onClick={() => handleSort('csat')}>CSAT %{sortIcon('csat')}</th>
+                        <th className={thR} onClick={() => handleSort('nps')}>NPS{sortIcon('nps')}</th>
+                        <th className={thR} onClick={() => handleSort('promoter')}>Promoter{sortIcon('promoter')}</th>
+                        <th className={thR} onClick={() => handleSort('passive')}>Passive{sortIcon('passive')}</th>
+                        <th className={thR} onClick={() => handleSort('detractor')}>Detractor{sortIcon('detractor')}</th>
+                        <th className={thR} onClick={() => handleSort('conv_pct')}>Conv %{sortIcon('conv_pct')}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {filtered.map((r, i) => (
+                        <tr key={r.agent} className="hover:bg-white/[0.02] transition-colors">
+                          <td className="py-1.5 text-slate-600 font-bold pr-2">{i + 1}</td>
+                          <td className="py-1.5 text-slate-300 font-medium max-w-[120px] truncate" title={r.agent}>{r.agent}</td>
+                          <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
+                          <td className="py-1.5 text-right">
+                            <span className="font-bold" style={{ color: pctColor(r.csat) }}>{r.csat}%</span>
+                          </td>
+                          <td className="py-1.5 text-right">
+                            <span className="font-bold" style={{ color: npsColor(r.nps) }}>{r.nps > 0 ? '+' : ''}{r.nps}</span>
+                          </td>
+                          <td className="py-1.5 text-right">
+                            <span className="font-semibold" style={{ color: C.pos }}>{Number(r.promoter).toLocaleString()}</span>
+                            <span className="text-slate-600 ml-1">({r.positive_pct}%)</span>
+                          </td>
+                          <td className="py-1.5 text-right">
+                            <span className="font-semibold" style={{ color: C.neu }}>{Number(r.passive).toLocaleString()}</span>
+                            <span className="text-slate-600 ml-1">({r.neutral_pct}%)</span>
+                          </td>
+                          <td className="py-1.5 text-right">
+                            <span className="font-semibold" style={{ color: negColor(r.negative_pct) }}>{Number(r.detractor).toLocaleString()}</span>
+                            <span className="text-slate-600 ml-1">({r.negative_pct}%)</span>
+                          </td>
+                          <td className="py-1.5 text-right">
+                            <span className="font-bold" style={{ color: pctColor(r.conv_pct) }}>{r.conv_pct}%</span>
+                          </td>
+                        </tr>
+                      ))}
+                      {filtered.length === 0 && (
+                        <tr><td colSpan={9} className="py-4 text-center text-slate-600">No matching agents</td></tr>
+                      )}
+                    </tbody>
+                    {/* Footer totals */}
+                    {filtered.length > 0 && (() => {
+                      const totCalls    = filtered.reduce((s, r) => s + r.calls, 0);
+                      const totPromoter = filtered.reduce((s, r) => s + r.promoter, 0);
+                      const totDetractor= filtered.reduce((s, r) => s + r.detractor, 0);
+                      const totPassive  = filtered.reduce((s, r) => s + r.passive, 0);
+                      const totKnown    = totPromoter + totDetractor + totPassive;
+                      const avgCSAT     = totKnown ? +((totPromoter / totKnown) * 100).toFixed(1) : 0;
+                      const avgNPS      = totCalls  ? +(((totPromoter - totDetractor) / totCalls) * 100).toFixed(1) : 0;
+                      return (
+                        <tfoot>
+                          <tr className="border-t border-white/10 text-[10px] font-bold text-slate-400">
+                            <td></td>
+                            <td className="py-2">Total / Avg</td>
+                            <td className="py-2 text-right">{totCalls.toLocaleString()}</td>
+                            <td className="py-2 text-right" style={{ color: pctColor(avgCSAT) }}>{avgCSAT}%</td>
+                            <td className="py-2 text-right" style={{ color: npsColor(avgNPS) }}>{avgNPS > 0 ? '+' : ''}{avgNPS}</td>
+                            <td className="py-2 text-right" style={{ color: C.pos }}>{totPromoter.toLocaleString()}</td>
+                            <td className="py-2 text-right" style={{ color: C.neu }}>{totPassive.toLocaleString()}</td>
+                            <td className="py-2 text-right" style={{ color: C.neg }}>{totDetractor.toLocaleString()}</td>
+                            <td></td>
+                          </tr>
+                        </tfoot>
+                      );
+                    })()}
+                  </table>
+                </div>
+              );
+            })()}
+          </SCard>
         </section>
 
         <div className="text-center py-4">

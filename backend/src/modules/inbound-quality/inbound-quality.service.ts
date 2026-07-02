@@ -510,10 +510,11 @@ export async function getTopPerformers(filters: InboundQualityFilters): Promise<
 
   const rows = await querySource<{ user: string; audit_count: number; avg_score: number | null }>(`
     SELECT
-      q.User                                  AS user,
+      COALESCE(am.AgentName, q.User) AS user,
       COUNT(*)                                AS audit_count,
       ROUND(AVG(q.quality_percentage), 1)     AS avg_score
     FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
       AND q.User IS NOT NULL
@@ -934,10 +935,11 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
     `, params),
 
     querySource<{ agent_name: string; audit_count: number; fatal_count: number; fatal_pct: number | null }>(`
-      SELECT q.User AS agent_name, COUNT(*) AS audit_count,
+      SELECT COALESCE(am.AgentName, q.User) AS agent_name, COUNT(*) AS audit_count,
         SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS fatal_pct
       FROM db_audit.call_quality_assessment q
+      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
         AND q.User IS NOT NULL AND TRIM(q.User) != '' ${clientFilter}
       GROUP BY q.User ORDER BY fatal_count DESC, fatal_pct DESC LIMIT 5
@@ -995,7 +997,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
       good_pct: number | null; excellent_pct: number | null;
     }>(`
       SELECT
-        q.User AS agent_name, COUNT(*) AS audit_count,
+        COALESCE(am.AgentName, q.User) AS agent_name, COUNT(*) AS audit_count,
         ROUND(AVG(q.quality_percentage),1) AS cq_score,
         SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
@@ -1004,6 +1006,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
         ROUND(SUM(CASE WHEN q.quality_percentage>=90 AND q.quality_percentage<98 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS good_pct,
         ROUND(SUM(CASE WHEN q.quality_percentage>=98  THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS excellent_pct
       FROM db_audit.call_quality_assessment q
+      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
         AND q.User IS NOT NULL AND TRIM(q.User) != '' ${clientFilter}
       GROUP BY q.User ORDER BY fatal_count DESC, fatal_pct DESC
@@ -1293,7 +1296,7 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
     hold_procedure: number | null; resolution: number | null; closing: number | null;
   }>(`
     SELECT
-      q.User                                       AS agent_name,
+      COALESCE(am.AgentName, q.User) AS agent_name,
       IFNULL(NULLIF(TRIM(q.Campaign),''),'-')      AS tq_mq_bq,
       COUNT(*)                                     AS audit_count,
       ROUND(AVG(q.quality_percentage),1)           AS cq_score,
@@ -1305,6 +1308,7 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
       ${_RESOLUTION} AS resolution,
       ${_CLOSING}    AS closing
     FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
       AND q.User IS NOT NULL AND TRIM(q.User) != ''
@@ -1703,7 +1707,7 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters): 
   const { startDate, endDate, clientId } = filters;
   const params: (string | number)[] = [startDate, endDate];
   let extra = '';
-  if (clientId) { extra += ' AND ClientId = ?'; params.push(clientId); }
+  if (clientId) { extra += ' AND q.ClientId = ?'; params.push(clientId); }
 
   const rows = await querySource<{
     agent: string; audit_count: number; cq_score: number | null;
@@ -1711,17 +1715,18 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters): 
     tq_count: number; mq_count: number; bq_count: number;
   }>(`
     SELECT
-      User                                                                                         AS agent,
+      COALESCE(am.AgentName, q.User)                                        AS agent,
       COUNT(*)                                                                                     AS audit_count,
-      ROUND(AVG(quality_percentage), 1)                                                            AS cq_score,
-      SUM(CASE WHEN quality_percentage = 0  THEN 1 ELSE 0 END)                                   AS fatal_count,
-      ROUND(SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0), 1) AS fatal_pct,
-      SUM(CASE WHEN quality_percentage >= 80 THEN 1 ELSE 0 END)                                  AS tq_count,
-      SUM(CASE WHEN quality_percentage >= 60 AND quality_percentage < 80 THEN 1 ELSE 0 END)       AS mq_count,
-      SUM(CASE WHEN quality_percentage >  0  AND quality_percentage < 60 THEN 1 ELSE 0 END)       AS bq_count
-    FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ? ${extra}
-    GROUP BY User
+      ROUND(AVG(q.quality_percentage), 1)                                                          AS cq_score,
+      SUM(CASE WHEN q.quality_percentage = 0  THEN 1 ELSE 0 END)                                 AS fatal_count,
+      ROUND(SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0), 1) AS fatal_pct,
+      SUM(CASE WHEN q.quality_percentage >= 80 THEN 1 ELSE 0 END)                                AS tq_count,
+      SUM(CASE WHEN q.quality_percentage >= 60 AND q.quality_percentage < 80 THEN 1 ELSE 0 END)   AS mq_count,
+      SUM(CASE WHEN q.quality_percentage >  0  AND q.quality_percentage < 60 THEN 1 ELSE 0 END)   AS bq_count
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    WHERE q.CallDate BETWEEN ? AND ? ${extra}
+    GROUP BY q.User
     ORDER BY cq_score DESC
   `, params);
 

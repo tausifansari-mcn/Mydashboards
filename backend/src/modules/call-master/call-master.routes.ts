@@ -65,6 +65,7 @@ router.get('/customer-intelligence/feedback-by-dim',     ciCtrl.getFeedbackByDim
 router.get('/customer-intelligence/client-comparison',   ciCtrl.getClientComparison);
 router.get('/customer-intelligence/campaign-comparison', ciCtrl.getCampaignComparison);
 router.get('/customer-intelligence/agent-ranking',       ciCtrl.getAgentCXRanking);
+router.get('/customer-intelligence/agent-nps-csat',      ciCtrl.getAgentNPSCSAT);
 router.get('/customer-intelligence/product-feedback',    ciCtrl.getProductFeedback);
 router.get('/customer-intelligence/offering-funnel',     ciCtrl.getOfferingFunnel);
 router.get('/customer-intelligence/ai-insights',         ciCtrl.getCIAIInsights);
