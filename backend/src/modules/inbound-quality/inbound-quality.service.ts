@@ -2713,6 +2713,8 @@ export interface RawDataRow {
   scenario1: string;
   quality_percentage: number;
   top_negative_words: string;
+  top_positive_words: string;
+  Transcribe_Text: string;
   call_answered_within_5_seconds: string;
   customer_concern_acknowledged: string;
   professionalism_maintained: string;
@@ -2751,6 +2753,8 @@ export async function getRawData(filters: InboundQualityFilters): Promise<RawDat
       COALESCE(NULLIF(TRIM(q.scenario1),''), 'Unknown')           AS scenario1,
       COALESCE(q.quality_percentage, 0)                           AS quality_percentage,
       COALESCE(q.top_negative_words, '')                          AS top_negative_words,
+      COALESCE(q.top_positive_words, '')                          AS top_positive_words,
+      COALESCE(q.Transcribe_Text, '')                             AS Transcribe_Text,
       COALESCE(q.call_answered_within_5_seconds, '')              AS call_answered_within_5_seconds,
       COALESCE(q.customer_concern_acknowledged, '')               AS customer_concern_acknowledged,
       COALESCE(q.professionalism_maintained, '')                  AS professionalism_maintained,
@@ -2788,6 +2792,8 @@ export async function getRawData(filters: InboundQualityFilters): Promise<RawDat
     scenario1:                          String(r.scenario1),
     quality_percentage:                 Number(r.quality_percentage),
     top_negative_words:                 String(r.top_negative_words),
+    top_positive_words:                 String(r.top_positive_words),
+    Transcribe_Text:                    String(r.Transcribe_Text),
     call_answered_within_5_seconds:     String(r.call_answered_within_5_seconds),
     customer_concern_acknowledged:      String(r.customer_concern_acknowledged),
     professionalism_maintained:         String(r.professionalism_maintained),
