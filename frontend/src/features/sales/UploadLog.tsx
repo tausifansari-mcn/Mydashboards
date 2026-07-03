@@ -1,107 +1,161 @@
-import { useState, useEffect } from 'react';
-import { Clock, Trash2, Loader2, AlertCircle } from 'lucide-react';
+import { useState, useRef, useCallback } from 'react';
+import { Upload, FileSpreadsheet, Trash2, AlertCircle, CheckCircle, Clock, RefreshCw } from 'lucide-react';
 import api from '@/lib/axios';
+import { useBrandAccent } from './SalesDashboard';
 
 interface LogEntry {
-  id: number;
-  batch_id: string;
-  table_name: string;
-  file_name: string;
-  row_count: number;
-  uploaded_by: number;
-  uploaded_at: string;
+  batchId: string;
+  tableName: string;
+  fileName: string;
+  rowsInserted: number;
+  uploadedBy: string;
+  uploadedAt: string;
 }
 
 interface Props {
-  tableName: string;
-  onDeleted?: () => void;
+  endpoint: string;
+  table: string;
+  title: string;
 }
 
-export default function UploadLog({ tableName, onDeleted }: Props) {
+export function UploadLog({ endpoint, table, title }: Props) {
+  const accentColor = useBrandAccent();
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string; rowsInserted?: number; batchId?: string } | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<string | null>(null);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const fetchLogs = async () => {
-    setLoading(true);
+  const fetchLogs = useCallback(async () => {
+    setLoadingLogs(true);
     try {
-      const { data } = await api.get('/sales/upload-logs', { params: { table: tableName } });
-      setLogs(data.data || []);
-    } catch { /* ignore */ }
-    setLoading(false);
+      const { data } = await api.get('/sales/upload-logs', { params: { table } });
+      setLogs(data.data ?? []);
+    } catch { setLogs([]); }
+    finally { setLoadingLogs(false); }
+  }, [table]);
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFile(e.target.files?.[0] ?? null);
+    setResult(null);
   };
 
-  useEffect(() => { fetchLogs(); }, [tableName]);
-
-  const handleDelete = async (batchId: string) => {
-    setDeleting(batchId);
-    try {
-      await api.delete(`/sales/upload-log/${batchId}`, { params: { table: tableName } });
-      setLogs(prev => prev.filter(l => l.batch_id !== batchId));
-      onDeleted?.();
-    } catch { /* ignore */ }
-    setDeleting(null);
-    setConfirm(null);
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setFile(e.dataTransfer.files?.[0] ?? null);
+    setResult(null);
   };
 
-  if (loading) return null;
+  const upload = async () => {
+    if (!file) return;
+    setUploading(true);
+    setResult(null);
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const { data } = await api.post(endpoint, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setResult({ success: true, message: `Uploaded ${data.data.rowsInserted} rows (batch: ${data.data.batchId})`, rowsInserted: data.data.rowsInserted, batchId: data.data.batchId });
+      setFile(null);
+      if (fileRef.current) fileRef.current.value = '';
+      fetchLogs();
+    } catch (err: any) {
+      setResult({ success: false, message: err.response?.data?.message ?? err.message ?? 'Upload failed' });
+    }
+    finally { setUploading(false); }
+  };
+
+  const deleteLog = async (batchId: string) => {
+    if (!confirm('Delete this upload log and revert its rows?')) return;
+    try {
+      await api.delete(`/sales/upload-log/${batchId}`);
+      fetchLogs();
+    } catch { alert('Failed to delete'); }
+  };
+
+  const btnBg = { backgroundColor: accentColor };
+  const btnHover = { backgroundColor: accentColor + 'dd' };
+  const dropBorder = { borderColor: accentColor + '40', ['--hover-border' as string]: accentColor };
 
   return (
-    <div className="mt-6">
-      <div className="flex items-center gap-2 mb-3">
-        <Clock size={15} className="text-slate-400" />
-        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Upload History</h3>
+    <div className="max-w-2xl mx-auto space-y-4">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <h2 className="text-base font-bold text-slate-900 mb-1">{title}</h2>
+        <p className="text-xs text-slate-500 mb-4">Upload a CSV or Excel file</p>
+
+        <div
+          onDrop={onDrop} onDragOver={(e) => e.preventDefault()}
+          onClick={() => fileRef.current?.click()}
+          className="cursor-pointer flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 py-8 px-4 transition-colors"
+          onMouseEnter={e => { e.currentTarget.style.borderColor = accentColor; e.currentTarget.style.backgroundColor = `${accentColor}08`; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.backgroundColor = '#f8fafc'; }}
+        >
+          {file ? (
+            <div className="flex items-center gap-3">
+              <FileSpreadsheet className="h-8 w-8" style={{ color: accentColor }} />
+              <div>
+                <p className="text-sm font-medium text-slate-800">{file.name}</p>
+                <p className="text-xs text-slate-400">{(file.size / 1024).toFixed(1)} KB</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <Upload className="h-8 w-8 text-slate-300 mb-2" />
+              <p className="text-sm font-medium text-slate-500">Drop file here or click to browse</p>
+              <p className="text-xs text-slate-400 mt-1">Supports .xlsx, .xls, .csv</p>
+            </>
+          )}
+          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFileChange} className="hidden" />
+        </div>
+
+        {file && (
+          <button onClick={upload} disabled={uploading}
+            className="mt-3 w-full rounded-xl py-2.5 text-sm font-semibold text-white disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+            style={btnBg}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = accentColor + 'dd'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = accentColor}
+          >
+            {uploading ? <><RefreshCw className="h-4 w-4 animate-spin" /> Uploading...</> : <><Upload className="h-4 w-4" /> Upload</>}
+          </button>
+        )}
+
+        {result && (
+          <div className={`mt-3 flex items-start gap-2 rounded-xl p-3 text-sm ${result.success ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+            {result.success ? <CheckCircle className="h-4 w-4 mt-0.5 shrink-0" /> : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+            <span>{result.message}</span>
+          </div>
+        )}
       </div>
 
-      {logs.length === 0 && (
-        <p className="text-xs text-slate-400 italic">No uploads yet</p>
-      )}
-
-      <div className="space-y-1.5 max-h-64 overflow-y-auto">
-        {logs.map(entry => (
-          <div key={entry.batch_id} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs">
-            <div className="flex-1 min-w-0">
-              <p className="font-medium text-slate-700 truncate">{entry.file_name || 'Unknown file'}</p>
-              <p className="text-slate-400">
-                {entry.row_count} rows &middot; {formatDate(entry.uploaded_at)}
-              </p>
-            </div>
-
-            {confirm === entry.batch_id ? (
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  onClick={() => handleDelete(entry.batch_id)}
-                  disabled={deleting === entry.batch_id}
-                  className="rounded-md bg-red-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-600 disabled:opacity-50"
-                >
-                  {deleting === entry.batch_id ? <Loader2 size={12} className="animate-spin" /> : 'Confirm'}
-                </button>
-                <button
-                  onClick={() => setConfirm(null)}
-                  className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200"
-                >
-                  Cancel
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-slate-900">Upload History</h3>
+          <button onClick={fetchLogs} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 transition-colors">
+            <RefreshCw className={`h-3 w-3 ${loadingLogs ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+        </div>
+        {loadingLogs ? (
+          <div className="flex items-center justify-center py-8 text-slate-400 text-sm">Loading...</div>
+        ) : logs.length === 0 ? (
+          <div className="flex items-center justify-center py-8 text-slate-400 text-sm">
+            <Clock className="h-4 w-4 mr-2" /> No uploads yet
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {logs.map((log) => (
+              <div key={log.batchId} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-700 truncate">{log.fileName}</p>
+                  <p className="text-slate-400">{log.rowsInserted} rows &middot; {new Date(log.uploadedAt).toLocaleString()} &middot; by {log.uploadedBy}</p>
+                </div>
+                <button onClick={() => deleteLog(log.batchId)} className="shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors">
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
-            ) : (
-              <button
-                onClick={() => setConfirm(entry.batch_id)}
-                className="p-1.5 rounded-md text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors shrink-0"
-                title="Delete this upload"
-              >
-                <Trash2 size={13} />
-              </button>
-            )}
+            ))}
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
-}
-
-function formatDate(d: string) {
-  if (!d) return '';
-  const date = new Date(d);
-  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }

@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Users, Building2, LogOut,
   ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck,
-  PhoneCall, Phone, ChevronDown, BarChart3, TrendingUp,
+  PhoneCall, Phone, ChevronDown, BarChart3, Package,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -17,8 +17,8 @@ const BLUE_DARK = '#0D47A1';
 
 const mainLinks = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Launcher' },
+  { to: '/sales',     icon: Package,         label: 'Sales' },
   { to: '/quality',   icon: BarChart3,       label: 'AI Quality' },
-  { to: '/sales',     icon: TrendingUp,      label: 'Sales Dashboard' },
 ];
 
 const ALL_INBOUND_PROJECTS = [
@@ -200,23 +200,23 @@ function SidebarLink({ to, icon: Icon, label, expanded }: { to: string; icon: Re
       end
       className={({ isActive }) => cn(
         'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150',
-        isActive ? 'active-nav font-semibold shadow-sm' : '',
+        isActive ? 'bg-white font-semibold' : '',
         !expanded && 'justify-center'
       )}
       style={({ isActive }) => isActive
-        ? { backgroundColor: BLUE_DARK, color: '#ffffff' }
+        ? { color: '#ffffff' }
         : { color: '#ffffff' }
       }
       onMouseEnter={(e) => {
         const el = e.currentTarget as HTMLAnchorElement;
-        if (!el.classList.contains('active-nav')) {
+        if (!el.classList.contains('bg-white')) {
           el.style.backgroundColor = 'rgba(255,255,255,0.12)';
           el.style.color = '#fff';
         }
       }}
       onMouseLeave={(e) => {
         const el = e.currentTarget as HTMLAnchorElement;
-        if (!el.classList.contains('active-nav')) {
+        if (!el.classList.contains('bg-white')) {
           el.style.backgroundColor = 'transparent';
           el.style.color = '#ffffff';
         }

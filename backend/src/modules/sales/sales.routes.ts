@@ -29,5 +29,6 @@ router.post('/upload-bellavita-chat', upload.single('file'), ctrl.uploadBellavit
 router.post('/upload-bellavita-cart', upload.single('file'), ctrl.uploadBellavitaCart);
 router.get('/upload-logs',              ctrl.getUploadLogs);
 router.delete('/upload-log/:batchId',   ctrl.deleteUploadLog);
+router.get('/bellavita-dashboard',      ctrl.getBellavitaDashboard);
 
 export default router;

@@ -1,18 +1,23 @@
-import { useState } from 'react';
+import { useState, createContext, useContext } from 'react';
 import { BarChart3, Upload, Package, ArrowLeft, Database } from 'lucide-react';
 import BellavitaUpload from './BellavitaUpload';
 import BellavitaAprUpload from './BellavitaAprUpload';
 import BellavitaChatUpload from './BellavitaChatUpload';
 import BellavitaCartUpload from './BellavitaCartUpload';
+import BellavitaDashboard from './BellavitaDashboard';
 import GncUpload from './GncUpload';
 import GncAprUpload from './GncAprUpload';
 import GncAllocationUpload from './GncAllocationUpload';
-import GncDashboard from './GncDashboard';
 
 type Brand = 'bellavita' | 'gnc';
 type Section = 'dashboards' | 'uploader';
 type BellavitaUploadType = 'sale' | 'apr' | 'chat' | 'cart';
 type GncUploadType = 'sale' | 'apr' | 'allocation';
+
+const BRAND_THEMES: Record<Brand, { color: string; lightBg: string; label: string }> = {
+  bellavita: { color: '#1A1A1A', lightBg: '#F0F0F0', label: 'Bellavita' },
+  gnc:       { color: '#ED1C24', lightBg: '#FFE0E0', label: 'GNC' },
+};
 
 const BRANDS: { key: Brand; label: string; desc: string }[] = [
   { key: 'bellavita', label: 'Bellavita', desc: 'Manage Bellavita sale data' },
@@ -37,6 +42,12 @@ const GNC_UPLOAD_TYPES: { key: GncUploadType; label: string; desc: string }[] = 
   { key: 'allocation', label: 'Allocation Data', desc: 'Upload GNC allocation data' },
 ];
 
+const BrandAccentCtx = createContext('#10B981');
+
+export function useBrandAccent() {
+  return useContext(BrandAccentCtx);
+}
+
 export default function SalesDashboard() {
   const [brand, setBrand] = useState<Brand | null>(null);
   const [section, setSection] = useState<Section | null>(null);
@@ -44,6 +55,9 @@ export default function SalesDashboard() {
   const [gncUploadType, setGncUploadType] = useState<GncUploadType | null>(null);
 
   const brandData = BRANDS.find((b) => b.key === brand);
+  const theme = brand ? BRAND_THEMES[brand] : null;
+  const accentColor = theme?.color ?? '#10B981';
+  const lightBg = theme?.lightBg ?? '#ECFDF5';
 
   function getBackLabel(): string {
     if (brand === 'bellavita' && bellavitaUploadType) return `Bellavita / Data Uploader / ${BELLAVITA_UPLOAD_TYPES.find(t => t.key === bellavitaUploadType)?.label}`;
@@ -59,11 +73,17 @@ export default function SalesDashboard() {
     setBrand(null);
   }
 
+  function brandHover(b: Brand) {
+    const c = BRAND_THEMES[b].color;
+    return `hover:border-[${c}] hover:shadow-[0_4px_12px_${c}20]`;
+  }
+
   return (
-    <div className="min-h-screen p-6 max-w-3xl mx-auto">
+    <div className="min-h-screen p-6 max-w-7xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100">
-          <Package className="h-5 w-5 text-emerald-600" />
+        <div className={`flex h-10 w-10 items-center justify-center rounded-xl`}
+             style={{ backgroundColor: lightBg }}>
+          <Package className="h-5 w-5" style={{ color: accentColor }} />
         </div>
         <div>
           <h1 className="text-lg font-bold text-slate-900">Sales Dashboard</h1>
@@ -78,28 +98,41 @@ export default function SalesDashboard() {
         </button>
       )}
 
-      {/* Level 1: Brand selection */}
       {!brand && (
         <div className="grid grid-cols-2 gap-4">
-          {BRANDS.map((b) => (
-            <button key={b.key} onClick={() => setBrand(b.key)} className="rounded-2xl border border-slate-200 bg-white p-8 text-left hover:border-emerald-300 hover:shadow-md transition-all group">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-100 mb-4 group-hover:bg-emerald-200 transition-colors">
-                <Package className="h-6 w-6 text-emerald-600" />
-              </div>
-              <h2 className="text-lg font-bold text-slate-900">{b.label}</h2>
-              <p className="text-xs text-slate-500 mt-1">{b.desc}</p>
-            </button>
-          ))}
+          {BRANDS.map((b) => {
+            const c = BRAND_THEMES[b.key].color;
+            const bg = BRAND_THEMES[b.key].lightBg;
+            return (
+              <button key={b.key} onClick={() => setBrand(b.key)}
+                className="rounded-2xl border border-slate-200 bg-white p-8 text-left transition-all group"
+                style={{ ['--brand-color' as string]: c }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = c; e.currentTarget.style.boxShadow = `0 4px 12px ${c}20`; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
+              >
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl mb-4 transition-colors"
+                     style={{ backgroundColor: bg }}>
+                  <Package className="h-6 w-6" style={{ color: c }} />
+                </div>
+                <h2 className="text-lg font-bold text-slate-900">{b.label}</h2>
+                <p className="text-xs text-slate-500 mt-1">{b.desc}</p>
+              </button>
+            );
+          })}
         </div>
       )}
 
-      {/* Level 2: Section selection */}
       {brand && !section && (
         <div className="grid grid-cols-2 gap-4">
           {SECTIONS.map((s) => (
-            <button key={s.key} onClick={() => setSection(s.key)} className="rounded-2xl border border-slate-200 bg-white p-8 text-left hover:border-emerald-300 hover:shadow-md transition-all group">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-100 mb-4 group-hover:bg-emerald-200 transition-colors">
-                <s.icon className="h-6 w-6 text-emerald-600" />
+            <button key={s.key} onClick={() => setSection(s.key)}
+              className="rounded-2xl border border-slate-200 bg-white p-8 text-left transition-all group"
+              onMouseEnter={e => { e.currentTarget.style.borderColor = accentColor; e.currentTarget.style.boxShadow = `0 4px 12px ${accentColor}20`; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl mb-4 transition-colors"
+                   style={{ backgroundColor: lightBg }}>
+                <s.icon className="h-6 w-6" style={{ color: accentColor }} />
               </div>
               <h2 className="text-lg font-bold text-slate-900">{s.label}</h2>
               <p className="text-xs text-slate-500 mt-1">{s.desc}</p>
@@ -108,13 +141,17 @@ export default function SalesDashboard() {
         </div>
       )}
 
-      {/* Level 3a: Bellavita uploader (shows sub-cards) */}
       {brand === 'bellavita' && section === 'uploader' && !bellavitaUploadType && (
         <div className="grid grid-cols-2 gap-4 mt-6">
           {BELLAVITA_UPLOAD_TYPES.map((t) => (
-            <button key={t.key} onClick={() => setBellavitaUploadType(t.key)} className="rounded-2xl border border-slate-200 bg-white p-6 text-left hover:border-emerald-300 hover:shadow-md transition-all group">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-100 mb-3 group-hover:bg-emerald-200 transition-colors">
-                <Database className="h-5 w-5 text-emerald-600" />
+            <button key={t.key} onClick={() => setBellavitaUploadType(t.key)}
+              className="rounded-2xl border border-slate-200 bg-white p-6 text-left transition-all group"
+              onMouseEnter={e => { e.currentTarget.style.borderColor = accentColor; e.currentTarget.style.boxShadow = `0 4px 12px ${accentColor}20`; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg mb-3 transition-colors"
+                   style={{ backgroundColor: lightBg }}>
+                <Database className="h-5 w-5" style={{ color: accentColor }} />
               </div>
               <h3 className="text-sm font-bold text-slate-900">{t.label}</h3>
               <p className="text-xs text-slate-500 mt-1">{t.desc}</p>
@@ -123,13 +160,17 @@ export default function SalesDashboard() {
         </div>
       )}
 
-      {/* Level 3b: GNC uploader (shows sub-cards) */}
       {brand === 'gnc' && section === 'uploader' && !gncUploadType && (
         <div className="grid grid-cols-3 gap-4 mt-6">
           {GNC_UPLOAD_TYPES.map((t) => (
-            <button key={t.key} onClick={() => setGncUploadType(t.key)} className="rounded-2xl border border-slate-200 bg-white p-6 text-left hover:border-emerald-300 hover:shadow-md transition-all group">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-100 mb-3 group-hover:bg-emerald-200 transition-colors">
-                <Database className="h-5 w-5 text-emerald-600" />
+            <button key={t.key} onClick={() => setGncUploadType(t.key)}
+              className="rounded-2xl border border-slate-200 bg-white p-6 text-left transition-all group"
+              onMouseEnter={e => { e.currentTarget.style.borderColor = accentColor; e.currentTarget.style.boxShadow = `0 4px 12px ${accentColor}20`; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg mb-3 transition-colors"
+                   style={{ backgroundColor: lightBg }}>
+                <Database className="h-5 w-5" style={{ color: accentColor }} />
               </div>
               <h3 className="text-sm font-bold text-slate-900">{t.label}</h3>
               <p className="text-xs text-slate-500 mt-1">{t.desc}</p>
@@ -138,19 +179,21 @@ export default function SalesDashboard() {
         </div>
       )}
 
-      {/* Level 4: Bellavita upload forms */}
-      {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'sale' && <div className="mt-6"><BellavitaUpload /></div>}
-      {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'apr' && <div className="mt-6"><BellavitaAprUpload /></div>}
-      {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'chat' && <div className="mt-6"><BellavitaChatUpload /></div>}
-      {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'cart' && <div className="mt-6"><BellavitaCartUpload /></div>}
+      <BrandAccentCtx.Provider value={accentColor}>
+        {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'sale' && <div className="mt-6"><BellavitaUpload /></div>}
+        {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'apr' && <div className="mt-6"><BellavitaAprUpload /></div>}
+        {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'chat' && <div className="mt-6"><BellavitaChatUpload /></div>}
+        {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'cart' && <div className="mt-6"><BellavitaCartUpload /></div>}
+        {brand === 'gnc' && section === 'uploader' && gncUploadType === 'sale' && <div className="mt-6"><GncUpload /></div>}
+        {brand === 'gnc' && section === 'uploader' && gncUploadType === 'apr' && <div className="mt-6"><GncAprUpload /></div>}
+        {brand === 'gnc' && section === 'uploader' && gncUploadType === 'allocation' && <div className="mt-6"><GncAllocationUpload /></div>}
+      </BrandAccentCtx.Provider>
 
-      {/* Level 4: GNC upload forms */}
-      {brand === 'gnc' && section === 'uploader' && gncUploadType === 'sale' && <div className="mt-6"><GncUpload /></div>}
-      {brand === 'gnc' && section === 'uploader' && gncUploadType === 'apr' && <div className="mt-6"><GncAprUpload /></div>}
-      {brand === 'gnc' && section === 'uploader' && gncUploadType === 'allocation' && <div className="mt-6"><GncAllocationUpload /></div>}
+      {brand === 'bellavita' && section === 'dashboards' && (
+        <div className="mt-6"><BellavitaDashboard /></div>
+      )}
 
-      {/* Dashboards placeholder */}
-      {brand && section === 'dashboards' && (
+      {brand === 'gnc' && section === 'dashboards' && (
         <div className="mt-6 flex flex-col items-center justify-center py-20 text-slate-400">
           <BarChart3 size={40} className="mb-3 text-slate-300" />
           <p className="text-sm font-medium">{brandData?.label} dashboards coming soon</p>
