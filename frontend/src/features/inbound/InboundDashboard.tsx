@@ -272,18 +272,17 @@ function SectionCard({
         className={`bg-white rounded-2xl overflow-hidden transition-shadow duration-200 ${className}`}
         style={{ border: `2px solid ${accent}22`, borderTopWidth: 4, borderTopColor: accent }}
       >
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-100"
-             style={{ background: `linear-gradient(90deg, ${accent}08, transparent)` }}>
+        <div className="flex items-center gap-3 px-5 py-3 border-b border-blue-700 bg-blue-600">
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-            <h3 className="text-[11px] font-semibold text-slate-700 uppercase tracking-[0.06em] truncate">{title}</h3>
+            <div className="w-2 h-2 rounded-full shrink-0 bg-white/60" />
+            <h3 className="text-[11px] font-semibold text-white uppercase tracking-[0.06em] truncate">{title}</h3>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             {onDownload && (
               <button
                 onClick={onDownload}
                 title="Download data as CSV"
-                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+                className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition-colors"
               >
                 <FileDown size={13} />
               </button>
@@ -291,7 +290,7 @@ function SectionCard({
             <button
               onClick={() => setExpanded(true)}
               title="Expand chart"
-              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+              className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition-colors"
             >
               <Maximize2 size={13} />
             </button>
@@ -310,26 +309,26 @@ function SectionCard({
           onClick={(e) => { if (e.target === e.currentTarget) setExpanded(false); }}
         >
           <div className="flex flex-col bg-white rounded-2xl border border-slate-200 overflow-hidden flex-1 min-h-0">
-            <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-200 bg-slate-50 shrink-0">
-              <div className="w-1.5 h-5 rounded-full" style={{ backgroundColor: accent }} />
-              <h3 className="text-sm font-semibold text-slate-700 flex-1">{title}</h3>
+            <div className="flex items-center gap-2.5 px-6 py-4 border-b border-blue-700 bg-blue-600 shrink-0">
+              <div className="w-1.5 h-5 rounded-full bg-white/60" />
+              <h3 className="text-sm font-semibold text-white flex-1">{title}</h3>
               {onDownload && (
                 <button
                   onClick={onDownload}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors mr-1"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/20 transition-colors mr-1"
                 >
                   <FileDown size={13} /> Download Data
                 </button>
               )}
               <button
                 onClick={() => downloadChartPNG(expandBodyRef, title)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors mr-1"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/20 transition-colors mr-1"
               >
                 <Download size={13} /> PNG
               </button>
               <button
                 onClick={() => setExpanded(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+                className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition-colors"
                 >
                   <X size={16} />
                 </button>
@@ -371,15 +370,15 @@ function DrillModal({ title, accent = COLOR_BLUE, onClose, loading, onExport, ch
       onClick={onClose}>
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-slate-50 shrink-0">
-          <div className="w-1.5 h-5 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-          <h3 className="text-sm font-semibold text-slate-700 flex-1 truncate">{title}</h3>
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-blue-700 bg-blue-600 shrink-0">
+          <div className="w-1.5 h-5 rounded-full shrink-0 bg-white/60" />
+          <h3 className="text-sm font-semibold text-white flex-1 truncate">{title}</h3>
           {onExport && (
-            <button onClick={onExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+            <button onClick={onExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/20 transition-colors">
               <FileDown size={13} /> Export CSV
             </button>
           )}
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors ml-1">
+          <button onClick={onClose} className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition-colors ml-1">
             <X size={15} />
           </button>
         </div>
@@ -1075,13 +1074,13 @@ export default function InboundDashboard() {
           return (
             <>
               <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200 bg-slate-50">
-                  <div className="w-1.5 h-4 rounded-full shrink-0 bg-blue-500" />
-                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">
+                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-blue-700 bg-blue-600">
+                  <div className="w-1.5 h-4 rounded-full shrink-0 bg-white/60" />
+                  <h3 className="text-xs font-semibold text-white uppercase tracking-widest flex-1">
                     Date-wise Performance · All Projects (Current Month)
                   </h3>
                   <button onClick={exportConsolidatedPerf}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/20 transition-colors">
                     <FileDown size={13} /> Export CSV
                   </button>
                 </div>
@@ -1131,13 +1130,13 @@ export default function InboundDashboard() {
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200 bg-slate-50">
-                  <div className="w-1.5 h-4 rounded-full shrink-0 bg-purple-500" />
-                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">
+                <div className="flex items-center gap-2.5 px-5 py-3 border-b border-blue-700 bg-blue-600">
+                  <div className="w-1.5 h-4 rounded-full shrink-0 bg-white/60" />
+                  <h3 className="text-xs font-semibold text-white uppercase tracking-widest flex-1">
                     👥 Manpower Details · All Projects (Current Month) · Mandate: {TOTAL_MANDATE} · Required: {TOTAL_REQUIRED}
                   </h3>
                   <button onClick={exportOverallManpower}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/20 transition-colors">
                     <FileDown size={13} /> Export CSV
                   </button>
                 </div>

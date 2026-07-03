@@ -58,26 +58,32 @@ function exportCSV(headers: string[], rows: (string | number)[][], filename: str
 
 // ─── Section card with expand + download ──────────────────────────────────────
 function SectionCard({
-  title, accent = '#3B82F6', children, onDownload,
-}: { title: string; accent?: string; children: React.ReactNode; onDownload?: () => void }) {
+  title, accent = '#3B82F6', textColor = '#FFFFFF', children, onDownload,
+}: { title: string; accent?: string; textColor?: string; children: React.ReactNode; onDownload?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const expandBodyRef = useRef<HTMLDivElement>(null);
 
   return (
     <>
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
-          <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: accent }} />
-          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">{title}</h3>
+        <div className="flex items-center gap-2.5 px-5 py-3 border-b" style={{ backgroundColor: accent, borderColor: accent }}>
+          <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: textColor + '99' }} />
+          <h3 className="text-xs font-semibold uppercase tracking-widest flex-1" style={{ color: textColor }}>{title}</h3>
           <div className="flex items-center gap-1">
             {onDownload && (
               <button onClick={onDownload} title="Download chart data as CSV"
-                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+                className="p-1.5 rounded-lg transition-colors"
+                style={{ color: textColor + '99' }}
+                onMouseEnter={e => { e.currentTarget.style.color = textColor; e.currentTarget.style.backgroundColor = textColor + '20'; }}
+                onMouseLeave={e => { e.currentTarget.style.color = textColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
                 <FileDown size={13} />
               </button>
             )}
             <button onClick={() => setExpanded(true)} title="Expand"
-              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+              className="p-1.5 rounded-lg transition-colors"
+              style={{ color: textColor + '99' }}
+              onMouseEnter={e => { e.currentTarget.style.color = textColor; e.currentTarget.style.backgroundColor = textColor + '20'; }}
+              onMouseLeave={e => { e.currentTarget.style.color = textColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
               <Maximize2 size={13} />
             </button>
           </div>
@@ -94,21 +100,30 @@ function SectionCard({
           onClick={e => { if (e.target === e.currentTarget) setExpanded(false); }}
         >
           <div className="flex flex-col bg-white rounded-2xl border border-slate-200 overflow-hidden flex-1 min-h-0">
-            <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-200 shrink-0">
-              <div className="w-1.5 h-5 rounded-full" style={{ backgroundColor: accent }} />
-              <h3 className="text-sm font-semibold text-slate-700 flex-1">{title}</h3>
+            <div className="flex items-center gap-2.5 px-6 py-4 border-b shrink-0" style={{ backgroundColor: accent, borderColor: accent }}>
+              <div className="w-1.5 h-5 rounded-full" style={{ backgroundColor: textColor + '99' }} />
+              <h3 className="text-sm font-semibold flex-1" style={{ color: textColor }}>{title}</h3>
               {onDownload && (
                 <button onClick={onDownload}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors mr-1">
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors mr-1"
+                  style={{ color: textColor + '99' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = textColor; e.currentTarget.style.backgroundColor = textColor + '20'; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = textColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
                   <FileDown size={13} /> Download Data
                 </button>
               )}
               <button onClick={() => downloadChartPNG(expandBodyRef, title)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors mr-1">
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors mr-1"
+                style={{ color: textColor + '99' }}
+                onMouseEnter={e => { e.currentTarget.style.color = textColor; e.currentTarget.style.backgroundColor = textColor + '20'; }}
+                onMouseLeave={e => { e.currentTarget.style.color = textColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
                 <Download size={13} /> PNG
               </button>
               <button onClick={() => setExpanded(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+                className="p-1.5 rounded-lg transition-colors"
+                style={{ color: textColor + '99' }}
+                onMouseEnter={e => { e.currentTarget.style.color = textColor; e.currentTarget.style.backgroundColor = textColor + '20'; }}
+                onMouseLeave={e => { e.currentTarget.style.color = textColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
                 <X size={16} />
               </button>
             </div>
@@ -124,14 +139,17 @@ function SectionCard({
 }
 
 // ─── Static project metadata ──────────────────────────────────────────────────
-const PROJECT_META: Record<string, { name: string; icon: string; color: string; mandate: number; required: number; hasFCR: boolean }> = {
-  gnc:          { name: 'GNC',          icon: '🛒', color: '#2E86C1', mandate: 8,  required: 6,  hasFCR: false },
-  bellavita:    { name: 'Bellavita',    icon: '🌸', color: '#E67E22', mandate: 14, required: 12, hasFCR: false },
-  clovia:       { name: 'Clovia',       icon: '👗', color: '#27AE60', mandate: 7,  required: 6,  hasFCR: false },
-  neemans:      { name: 'Neemans',      icon: '👟', color: '#8E44AD', mandate: 10, required: 10, hasFCR: true  },
-  viega:        { name: 'Viega',        icon: '🚰', color: '#E74C3C', mandate: 2,  required: 2,  hasFCR: false },
-  exicom:       { name: 'Exicom',       icon: '⚡', color: '#3498DB', mandate: 5,  required: 5,  hasFCR: false },
-  dubangladesh: { name: 'DU Bangladesh',icon: '🇧🇩', color: '#F39C12', mandate: 3,  required: 3,  hasFCR: false },
+const PROJECT_META: Record<string, {
+  name: string; icon: string; color: string; textOnColor: string; secondary: string;
+  mandate: number; required: number; hasFCR: boolean;
+}> = {
+  gnc:          { name: 'GNC',          icon: '🛒', color: '#ED1C24', textOnColor: '#FFFFFF', secondary: '#1A1A1A', mandate: 8,  required: 6,  hasFCR: false },
+  bellavita:    { name: 'Bellavita',    icon: '🌸', color: '#1A1A1A', textOnColor: '#FFFFFF', secondary: '#333333', mandate: 14, required: 12, hasFCR: false },
+  clovia:       { name: 'Clovia',       icon: '👗', color: '#E91E63', textOnColor: '#FFFFFF', secondary: '#C2185B', mandate: 7,  required: 6,  hasFCR: false },
+  neemans:      { name: 'Neemans',      icon: '👟', color: '#8E44AD', textOnColor: '#FFFFFF', secondary: '#6C3483', mandate: 10, required: 10, hasFCR: true  },
+  viega:        { name: 'Viega',        icon: '🚰', color: '#E74C3C', textOnColor: '#FFFFFF', secondary: '#B03A2E', mandate: 2,  required: 2,  hasFCR: false },
+  exicom:       { name: 'Exicom',       icon: '⚡', color: '#3498DB', textOnColor: '#FFFFFF', secondary: '#2471A3', mandate: 5,  required: 5,  hasFCR: false },
+  dubangladesh: { name: 'DU Bangladesh',icon: '🇧🇩', color: '#F39C12', textOnColor: '#FFFFFF', secondary: '#D68910', mandate: 3,  required: 3,  hasFCR: false },
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -245,9 +263,16 @@ export default function InboundProjectDashboard() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   if (!meta) return (
-    <div className="flex min-h-screen items-center justify-center bg-white">
-      <p className="text-slate-900 text-xl mr-4">Project not found: {projectKey}</p>
-      <button onClick={() => navigate('/inbound')} className="text-blue-400 underline">Back</button>
+    <div className="flex min-h-screen items-center justify-center" style={{ background: '#F8FAFC' }}>
+      <div className="text-center">
+        <p className="text-slate-400 text-5xl mb-4">404</p>
+        <p className="text-slate-600 text-lg mb-6">Project not found: {projectKey}</p>
+        <button onClick={() => navigate('/inbound')}
+          className="rounded-lg px-4 py-2 text-sm font-medium transition-colors text-white"
+          style={{ backgroundColor: '#3B82F6' }}>
+          ← Back to Projects
+        </button>
+      </div>
     </div>
   );
 
@@ -267,37 +292,48 @@ export default function InboundProjectDashboard() {
   );
 
   return (
-    <div className="min-h-screen text-slate-900 p-6 space-y-6">
+    <div className="min-h-screen text-slate-900 space-y-6">
 
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      {/* Brand banner */}
+      <div className="px-6 py-5" style={{ background: `linear-gradient(135deg, ${meta.color} 0%, ${meta.color}dd 50%, ${meta.secondary}44 100%)` }}>
+        <div className="flex items-center justify-between flex-wrap gap-3 max-w-7xl mx-auto">
         <div className="flex items-center gap-4">
-          <button onClick={() => navigate('/inbound')}
-            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-400 hover:text-slate-900 transition-colors">
+              <button onClick={() => navigate('/inbound')}
+            className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors"
+            style={{ borderColor: meta.textOnColor + '40', backgroundColor: meta.textOnColor + '10', color: meta.textOnColor }}
+            onMouseEnter={e => { e.currentTarget.style.backgroundColor = meta.textOnColor; e.currentTarget.style.color = meta.color; }}
+            onMouseLeave={e => { e.currentTarget.style.backgroundColor = meta.textOnColor + '10'; e.currentTarget.style.color = meta.textOnColor; }}>
             <ArrowLeft className="h-4 w-4" /> All Projects
           </button>
           <div className="flex items-center gap-3">
             <span className="text-3xl">{meta.icon}</span>
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">{meta.name} Inbound</h1>
-              <p className="text-xs text-slate-400">Mandate: {meta.mandate} agents · Required: {meta.required}</p>
+              <h1 className="text-2xl font-bold" style={{ color: meta.textOnColor }}>{meta.name} Inbound</h1>
+              <p className="text-xs" style={{ color: meta.textOnColor + '99' }}>Mandate: {meta.mandate} agents · Required: {meta.required}</p>
             </div>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {(['today','7d','30d'] as const).map(r => (
             <button key={r} onClick={() => setRange(r)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${range===r?'bg-blue-600 text-white':'border border-slate-200 text-slate-500 hover:text-slate-900'}`}>
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${range===r?'':'border border-slate-200 text-slate-500 hover:text-slate-900'}`}
+              style={range===r?{backgroundColor: meta.color, color: meta.textOnColor}:{}}>
               {r==='today'?'Today':r==='7d'?'Last 7 Days':'Last 30 Days'}
             </button>
           ))}
           <button onClick={fetchAll}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs text-slate-400 hover:text-slate-900 transition-colors">
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs transition-colors"
+            style={{ color: meta.textOnColor }}
+            onMouseEnter={e => { e.currentTarget.style.backgroundColor = meta.textOnColor + '12'; }}
+            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}>
             <RefreshCw className={`h-3 w-3 ${loading?'animate-spin':''}`} />
             {lastUpdated || 'Refresh'}
           </button>
         </div>
       </div>
+      </div>
+
+      <div className="p-6 space-y-6">
 
       {/* No-data banner */}
       {!loading && summary && !hasData && (
@@ -326,7 +362,7 @@ export default function InboundProjectDashboard() {
 
         {/* Hourly Distribution */}
         <div className="lg:col-span-2">
-          <SectionCard title="Hourly Call Distribution · Today" accent="#3B82F6"
+          <SectionCard title="Hourly Call Distribution · Today" accent="#3B82F6" textColor="#FFFFFF"
             onDownload={() => exportCSV(
               ['Hour','Offered','Answered','AL%','SL%'],
               hourly.map(r => [fmtHour(r.hour), r.offered, r.answered, r.al.toFixed(2), r.sl.toFixed(2)]),
@@ -353,8 +389,11 @@ export default function InboundProjectDashboard() {
         </div>
 
         {/* Login Progress */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col gap-4">
-          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Login Status</h3>
+        <div className="rounded-xl border border-slate-200 bg-white flex flex-col gap-4 overflow-hidden">
+          <div className="px-4 py-3" style={{ background: `linear-gradient(90deg, ${meta.color} 0%, ${meta.secondary}44 100%)` }}>
+            <h3 className="text-xs font-semibold uppercase tracking-widest" style={{ color: meta.textOnColor }}>Login Status</h3>
+          </div>
+          <div className="px-4 pb-4 space-y-4">
           <div className="flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-full border-2"
               style={{ borderColor: (summary?.login_count??0) >= meta.required ? '#22C55E' : '#F59E0B' }}>
@@ -385,7 +424,7 @@ export default function InboundProjectDashboard() {
       </div>
 
       {/* AL% & SL% trend */}
-      <SectionCard title="Daily AL% & SL% Trend · Last 30 Days" accent="#22C55E"
+      <SectionCard title="Daily AL% & SL% Trend · Last 30 Days" accent="#22C55E" textColor="#FFFFFF"
         onDownload={() => exportCSV(
           ['Date','AL%','SL%',...(meta.hasFCR?['FCR%']:[])],
           trend.map(r => [fmtDate(r.date), r.al.toFixed(2), r.sl.toFixed(2), ...(meta.hasFCR?[r.fcr_pct??'']:[])] ),
@@ -413,7 +452,7 @@ export default function InboundProjectDashboard() {
       </SectionCard>
 
       {/* ACHT & Repeat trend */}
-      <SectionCard title="Daily ACHT & Repeat% Trend · Last 30 Days" accent="#F59E0B"
+      <SectionCard title="Daily ACHT & Repeat% Trend · Last 30 Days" accent="#F59E0B" textColor="#FFFFFF"
         onDownload={() => exportCSV(
           ['Date','ACHT(s)','Repeat%'],
           trend.map(r => [fmtDate(r.date), r.acht, r.repeat_pct.toFixed(2)]),
@@ -441,7 +480,7 @@ export default function InboundProjectDashboard() {
       </SectionCard>
 
       {/* Daily Call Volume */}
-      <SectionCard title="Daily Call Volume · Last 30 Days" accent={meta.color}
+      <SectionCard title="Daily Call Volume · Last 30 Days" accent={meta.color} textColor={meta.textOnColor}
         onDownload={() => exportCSV(
           ['Date','Offered','Answered','Abandoned'],
           trend.map(r => [fmtDate(r.date), r.offered, r.answered, Math.max(0, r.offered - r.answered)]),
@@ -467,13 +506,16 @@ export default function InboundProjectDashboard() {
 
       {/* ── Date-wise Performance Table ── */}
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
-          <div className="w-1.5 h-4 rounded-full shrink-0 bg-blue-500" />
-          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">
+        <div className="flex items-center gap-2.5 px-5 py-3 border-b" style={{ backgroundColor: meta.color, borderColor: meta.color }}>
+          <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: meta.textOnColor + '99' }} />
+          <h3 className="text-xs font-semibold uppercase tracking-widest flex-1" style={{ color: meta.textOnColor }}>
             Date-wise Performance · {meta.name}
           </h3>
           <button onClick={exportPerf}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
+            style={{ color: meta.textOnColor + '99' }}
+            onMouseEnter={e => { e.currentTarget.style.color = meta.textOnColor; e.currentTarget.style.backgroundColor = meta.textOnColor + '20'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = meta.textOnColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
             <FileDown size={13} /> Export CSV
           </button>
         </div>
@@ -508,13 +550,16 @@ export default function InboundProjectDashboard() {
 
       {/* ── Manpower Details Table ── */}
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <div className="flex items-center gap-2.5 px-5 py-3 border-b border-slate-200">
-          <div className="w-1.5 h-4 rounded-full shrink-0 bg-purple-500" />
-          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-widest flex-1">
+        <div className="flex items-center gap-2.5 px-5 py-3 border-b" style={{ backgroundColor: meta.color, borderColor: meta.color }}>
+          <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: meta.textOnColor + '99' }} />
+          <h3 className="text-xs font-semibold uppercase tracking-widest flex-1" style={{ color: meta.textOnColor }}>
             👥 Manpower Details · {meta.name}
           </h3>
           <button onClick={exportManpower}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
+            style={{ color: meta.textOnColor + '99' }}
+            onMouseEnter={e => { e.currentTarget.style.color = meta.textOnColor; e.currentTarget.style.backgroundColor = meta.textOnColor + '20'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = meta.textOnColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
             <FileDown size={13} /> Export CSV
           </button>
         </div>
@@ -555,7 +600,8 @@ export default function InboundProjectDashboard() {
           </table>
         </div>
       </div>
-
+    </div>
+    </div>
     </div>
   );
 }
