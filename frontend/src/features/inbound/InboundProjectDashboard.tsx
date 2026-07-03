@@ -269,7 +269,7 @@ export default function InboundProjectDashboard() {
         <p className="text-slate-600 text-lg mb-6">Project not found: {projectKey}</p>
         <button onClick={() => navigate('/inbound')}
           className="rounded-lg px-4 py-2 text-sm font-medium transition-colors text-white"
-          style={{ backgroundColor: '#3B82F6' }}>
+          style={{ backgroundColor: '#1A1A1A' }}>
           ← Back to Projects
         </button>
       </div>
@@ -362,7 +362,7 @@ export default function InboundProjectDashboard() {
 
         {/* Hourly Distribution */}
         <div className="lg:col-span-2">
-          <SectionCard title="Hourly Call Distribution · Today" accent="#3B82F6" textColor="#FFFFFF"
+          <SectionCard title="Hourly Call Distribution · Today" accent={meta.color} textColor={meta.textOnColor}
             onDownload={() => exportCSV(
               ['Hour','Offered','Answered','AL%','SL%'],
               hourly.map(r => [fmtHour(r.hour), r.offered, r.answered, r.al.toFixed(2), r.sl.toFixed(2)]),
@@ -424,7 +424,7 @@ export default function InboundProjectDashboard() {
       </div>
 
       {/* AL% & SL% trend */}
-      <SectionCard title="Daily AL% & SL% Trend · Last 30 Days" accent="#22C55E" textColor="#FFFFFF"
+      <SectionCard title="Daily AL% & SL% Trend · Last 30 Days" accent={meta.color} textColor={meta.textOnColor}
         onDownload={() => exportCSV(
           ['Date','AL%','SL%',...(meta.hasFCR?['FCR%']:[])],
           trend.map(r => [fmtDate(r.date), r.al.toFixed(2), r.sl.toFixed(2), ...(meta.hasFCR?[r.fcr_pct??'']:[])] ),
@@ -452,7 +452,7 @@ export default function InboundProjectDashboard() {
       </SectionCard>
 
       {/* ACHT & Repeat trend */}
-      <SectionCard title="Daily ACHT & Repeat% Trend · Last 30 Days" accent="#F59E0B" textColor="#FFFFFF"
+      <SectionCard title="Daily ACHT & Repeat% Trend · Last 30 Days" accent={meta.color} textColor={meta.textOnColor}
         onDownload={() => exportCSV(
           ['Date','ACHT(s)','Repeat%'],
           trend.map(r => [fmtDate(r.date), r.acht, r.repeat_pct.toFixed(2)]),

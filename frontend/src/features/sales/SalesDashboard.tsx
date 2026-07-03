@@ -4,6 +4,7 @@ import BellavitaUpload from './BellavitaUpload';
 import BellavitaAprUpload from './BellavitaAprUpload';
 import BellavitaChatUpload from './BellavitaChatUpload';
 import BellavitaCartUpload from './BellavitaCartUpload';
+import BellavitaDashboard from './BellavitaDashboard';
 import GncUpload from './GncUpload';
 import GncAprUpload from './GncAprUpload';
 import GncAllocationUpload from './GncAllocationUpload';
@@ -78,7 +79,7 @@ export default function SalesDashboard() {
   }
 
   return (
-    <div className="min-h-screen p-6 max-w-3xl mx-auto">
+    <div className="min-h-screen p-6 max-w-7xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
         <div className={`flex h-10 w-10 items-center justify-center rounded-xl`}
              style={{ backgroundColor: lightBg }}>
@@ -188,7 +189,11 @@ export default function SalesDashboard() {
         {brand === 'gnc' && section === 'uploader' && gncUploadType === 'allocation' && <div className="mt-6"><GncAllocationUpload /></div>}
       </BrandAccentCtx.Provider>
 
-      {brand && section === 'dashboards' && (
+      {brand === 'bellavita' && section === 'dashboards' && (
+        <div className="mt-6"><BellavitaDashboard /></div>
+      )}
+
+      {brand === 'gnc' && section === 'dashboards' && (
         <div className="mt-6 flex flex-col items-center justify-center py-20 text-slate-400">
           <BarChart3 size={40} className="mb-3 text-slate-300" />
           <p className="text-sm font-medium">{brandData?.label} dashboards coming soon</p>

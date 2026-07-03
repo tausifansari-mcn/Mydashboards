@@ -691,6 +691,132 @@ export async function getUploadLogs(tableName?: string): Promise<any[]> {
   return rows as any[];
 }
 
+// ─── Bellavita Dashboard ───────────────────────────────────────────────────────
+
+export interface BellavitaDashboardMetrics {
+  totalRevenue: number;
+  totalSaleCount: number;
+  rtoPct: number;
+  codPct: number;
+  codCount: number;
+  paidPct: number;
+  paidCount: number;
+  aov: number;
+  rtoAmount: number;
+  netRevenue: number;
+  netSaleCount: number;
+  netRevenueWithoutGst: number;
+}
+
+export interface BellavitaDashboardLobRow {
+  campaign: string;
+  totalRevenue: number;
+  totalSaleCount: number;
+  rtoPct: number;
+  codPct: number;
+  paidPct: number;
+  aov: number;
+  rtoAmount: number;
+  netRevenue: number;
+  netSaleCount: number;
+  netRevenueWithoutGst: number;
+}
+
+export async function getBellavitaDashboard(month: string): Promise<{
+  metrics: BellavitaDashboardMetrics;
+  lob: BellavitaDashboardLobRow[];
+}> {
+  const startDate = `${month}-01`;
+  const [y, m] = month.split('-').map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  const endDate = `${month}-${String(lastDay).padStart(2, '0')} 23:59:59`;
+
+  const pool = getMasmisPool();
+
+  // Overall metrics
+  const [overallRows] = await pool.query(`
+    SELECT
+      COUNT(*) AS total_sale_count,
+      COALESCE(SUM(amount), 0) AS total_revenue,
+      SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count,
+      SUM(CASE WHEN LOWER(payment_status) = 'cod' THEN 1 ELSE 0 END) AS cod_count,
+      SUM(CASE WHEN LOWER(payment_status) = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+      COALESCE(SUM(CASE WHEN final_status = 'RTO' THEN amount ELSE 0 END), 0) AS rto_amount
+    FROM db_masmis.bb_sale
+    WHERE calling_status = 'Sale Made'
+      AND \`Date\` >= ? AND \`Date\` <= ?
+  `, [startDate, endDate]);
+
+  const o = (overallRows as any[])[0];
+
+  const totalRevenue = Number(o.total_revenue) || 0;
+  const totalSaleCount = Number(o.total_sale_count) || 0;
+  const rtoCount = Number(o.rto_count) || 0;
+  const codCount = Number(o.cod_count) || 0;
+  const paidCount = Number(o.paid_count) || 0;
+  const rtoAmount = Number(o.rto_amount) || 0;
+  const netSaleCount = totalSaleCount - rtoCount;
+  const netRevenue = totalRevenue - rtoAmount;
+
+  const metrics: BellavitaDashboardMetrics = {
+    totalRevenue: Math.round(totalRevenue * 100) / 100,
+    totalSaleCount,
+    rtoPct: totalSaleCount > 0 ? Math.round((rtoCount / totalSaleCount) * 10000) / 100 : 0,
+    codPct: totalSaleCount > 0 ? Math.round((codCount / totalSaleCount) * 10000) / 100 : 0,
+    codCount,
+    paidPct: totalSaleCount > 0 ? Math.round((paidCount / totalSaleCount) * 10000) / 100 : 0,
+    paidCount,
+    aov: totalSaleCount > 0 ? Math.round((totalRevenue / totalSaleCount) * 100) / 100 : 0,
+    rtoAmount: Math.round(rtoAmount * 100) / 100,
+    netRevenue: Math.round(netRevenue * 100) / 100,
+    netSaleCount,
+    netRevenueWithoutGst: Math.round((netRevenue / 1.18) * 100) / 100,
+  };
+
+  // LOB-wise (campaign) breakdown
+  const [lobRows] = await pool.query(`
+    SELECT
+      campaign,
+      COUNT(*) AS total_sale_count,
+      COALESCE(SUM(amount), 0) AS total_revenue,
+      SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count,
+      SUM(CASE WHEN LOWER(payment_status) = 'cod' THEN 1 ELSE 0 END) AS cod_count,
+      SUM(CASE WHEN LOWER(payment_status) = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+      COALESCE(SUM(CASE WHEN final_status = 'RTO' THEN amount ELSE 0 END), 0) AS rto_amount
+    FROM db_masmis.bb_sale
+    WHERE calling_status = 'Sale Made'
+      AND \`Date\` >= ? AND \`Date\` <= ?
+    GROUP BY campaign
+    ORDER BY total_revenue DESC
+  `, [startDate, endDate]);
+
+  const lob: BellavitaDashboardLobRow[] = (lobRows as any[]).map((r: any) => {
+    const rev = Number(r.total_revenue) || 0;
+    const count = Number(r.total_sale_count) || 0;
+    const rtoC = Number(r.rto_count) || 0;
+    const codC = Number(r.cod_count) || 0;
+    const paidC = Number(r.paid_count) || 0;
+    const rtoAmt = Number(r.rto_amount) || 0;
+    const netC = count - rtoC;
+    const netRev = rev - rtoAmt;
+    return {
+      campaign: r.campaign || 'Unknown',
+      totalRevenue: Math.round(rev * 100) / 100,
+      totalSaleCount: count,
+      rtoPct: count > 0 ? Math.round((rtoC / count) * 10000) / 100 : 0,
+      codPct: count > 0 ? Math.round((codC / count) * 10000) / 100 : 0,
+      paidPct: count > 0 ? Math.round((paidC / count) * 10000) / 100 : 0,
+      aov: count > 0 ? Math.round((rev / count) * 100) / 100 : 0,
+      rtoAmount: Math.round(rtoAmt * 100) / 100,
+      netRevenue: Math.round(netRev * 100) / 100,
+      netSaleCount: netC,
+      netRevenueWithoutGst: netRev > 0 ? Math.round((netRev / 1.18) * 100) / 100 : 0,
+    };
+  });
+
+  return { metrics, lob };
+}
+
 export async function deleteUploadBatch(batchId: string, tableName: string): Promise<{ deleted: number }> {
   const [dataResult] = await getMasmisPool().execute(
     `DELETE FROM db_masmis.${tableName} WHERE upload_batch_id = ?`, [batchId],

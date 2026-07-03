@@ -547,3 +547,18 @@ export async function deleteUploadLog(req: Request, res: Response) {
     res.status(500).json({ success: false, message: 'Failed to delete upload' });
   }
 }
+
+// ─── Bellavita Dashboard ──────────────────────────────────────────────────────
+
+export async function getBellavitaDashboard(req: Request, res: Response) {
+  try {
+    const month = (req.query.month as string) || (() => {
+      const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    })();
+    const data = await svc.getBellavitaDashboard(month);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('getBellavitaDashboard error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch Bellavita dashboard' });
+  }
+}
