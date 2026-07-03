@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Users, Building2, LogOut,
   ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck,
-  PhoneCall, Phone, ChevronDown, BarChart3,
+  PhoneCall, Phone, ChevronDown, BarChart3, Package,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -17,6 +17,7 @@ const BLUE_DARK = '#0D47A1';
 
 const mainLinks = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Launcher' },
+  { to: '/sales',     icon: Package,         label: 'Sales' },
   { to: '/quality',   icon: BarChart3,       label: 'AI Quality' },
 ];
 
@@ -203,7 +204,7 @@ function SidebarLink({ to, icon: Icon, label, expanded }: { to: string; icon: Re
         !expanded && 'justify-center'
       )}
       style={({ isActive }) => isActive
-        ? { color: BLUE }
+        ? { color: '#ffffff' }
         : { color: '#ffffff' }
       }
       onMouseEnter={(e) => {
