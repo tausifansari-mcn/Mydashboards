@@ -74,7 +74,7 @@
 
   /* ── MAS gradient ── */
   .bg-mas-gradient {
-    background: linear-gradient(135deg, #1565C0 0%, #1976D2 50%, #0D47A1 100%);
+    background: linear-gradient(135deg, #0369A1 0%, #0EA5E9 50%, #38BDF8 100%);
   }
 
   /* ── Cards ── */
@@ -99,8 +99,8 @@
   /* ── Filter bar ── */
   .filter-bar {
     @apply rounded-xl px-4 py-2.5 flex items-center gap-3 flex-wrap;
-    background: linear-gradient(135deg, #0D47A1 0%, #1565C0 100%);
-    box-shadow: 0 2px 8px rgba(21,101,192,0.30);
+    background: linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%);
+    box-shadow: 0 2px 8px rgba(3,105,161,0.30);
   }
   .filter-bar label,
   .filter-bar .text-label {
@@ -129,8 +129,8 @@
   /* ── Blue date pill (for inline date inputs not in a filter-bar) ── */
   .date-pill {
     @apply flex items-center gap-1.5 rounded-lg px-3 py-2;
-    background: linear-gradient(135deg, #0D47A1 0%, #1565C0 100%);
-    box-shadow: 0 2px 8px rgba(21,101,192,0.30);
+    background: linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%);
+    box-shadow: 0 2px 8px rgba(3,105,161,0.30);
   }
   .date-pill span,
   .date-pill label {
@@ -155,8 +155,8 @@
   /* ── Pill tabs ── */
   .pill-tabs {
     @apply flex gap-1 p-1 rounded-xl;
-    background: linear-gradient(135deg, #0D47A1 0%, #1565C0 100%);
-    box-shadow: 0 2px 8px rgba(21,101,192,0.30);
+    background: linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%);
+    box-shadow: 0 2px 8px rgba(3,105,161,0.30);
   }
   .pill-tab {
     @apply flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 cursor-pointer;
@@ -168,7 +168,7 @@
   }
   .pill-tab-active {
     @apply bg-white shadow-sm;
-    color: #1565C0 !important;
+    color: #0369A1 !important;
   }
 
   /* ── Section header ── */
@@ -182,8 +182,8 @@
   /* ── Card section header (blue bar) ── */
   .card-header {
     @apply flex items-center border-b;
-    background: linear-gradient(135deg, #0D47A1 0%, #1565C0 100%);
-    border-bottom-color: rgba(255,255,255,0.12) !important;
+    background: linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%);
+    border-bottom-color: rgba(255,255,255,0.15) !important;
   }
   .card-header h3,
   .card-header span:not(.ignore-header-style) {
@@ -263,7 +263,7 @@ tbody tr:hover td { color: #0F172A; }
   box-shadow: 0 4px 16px rgba(21,101,192,0.16);
 }
 
-/* ── Portfolio Insight — dark text on sky-blue bg ── */
+/* ── Customer Interaction Insights — dark text on sky-blue bg ── */
 .portfolio-insight h3 { color: #0F172A !important; font-weight: 700 !important; }
 .portfolio-insight p,
 .portfolio-insight span,

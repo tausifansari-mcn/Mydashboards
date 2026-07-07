@@ -104,7 +104,7 @@ export default function AIQualityDashboard() {
   const now = new Date();
   const [activeSlide, setActiveSlide] = useState(0);
 
-  const defaultStart = toLocalDT(new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0));
+  const defaultStart = toLocalDT(new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0));
   const defaultEnd   = toLocalDT(now);
 
   const [ibStart, setIbStart] = useState(defaultStart);

@@ -107,6 +107,32 @@ export async function getPosKeywordLeads(req: Request, res: Response) {
   }
 }
 
+export async function getClapKeywordDrill(req: Request, res: Response) {
+  try {
+    const type = (req.query.type as 'pos' | 'neg' | 'social' | 'scam') || 'pos';
+    const pattern = (req.query.pattern as string) || '';
+    const clap = req.query.clap as string | undefined;
+    const scenario = req.query.scenario as string | undefined;
+    const subScenario = req.query.subScenario as string | undefined;
+    if ((type === 'pos' || type === 'neg') && !pattern && !clap) {
+      res.status(400).json({ message: 'pattern or clap is required for pos/neg type' }); return;
+    }
+    const data = await svc.getClapKeywordDrill(parseFilters(req), type, pattern, clap, scenario, subScenario);
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getClapWords(req: Request, res: Response) {
+  try {
+    const data = await svc.getClapWords(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function getTranscript(req: Request, res: Response) {
   try {
     const leadId = (req.query.leadId as string) || '';
@@ -257,6 +283,15 @@ export async function getAgentParameterWise(req: Request, res: Response) {
   }
 }
 
+export async function getAgentGuidance(req: Request, res: Response) {
+  try {
+    const data = await svc.getAgentGuidance(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function getQualityParameters(req: Request, res: Response) {
   try {
     const filters = {
@@ -398,9 +433,76 @@ export async function getScoreComponentDetail(req: Request, res: Response) {
   }
 }
 
+export async function getAgentCalls(req: Request, res: Response) {
+  try {
+    const { agentId } = req.query;
+    if (!agentId || typeof agentId !== 'string') {
+      res.status(400).json({ message: 'agentId is required' });
+      return;
+    }
+    const data = await svc.getAgentCalls({ ...parseFilters(req), agentId });
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function getFatalCallsList(req: Request, res: Response) {
   try {
     const data = await svc.getFatalCallsList(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getTNIAnalysis(req: Request, res: Response) {
+  try {
+    const data = await svc.getTNIAnalysis(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getTNIAgentParams(req: Request, res: Response) {
+  try {
+    const agentId = req.query.agentId as string;
+    if (!agentId) { res.status(400).json({ message: 'agentId is required' }); return; }
+    const data = await svc.getTNIAgentParams({ ...parseFilters(req), agentId });
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getTNIComments(req: Request, res: Response) {
+  try {
+    const clientId = req.query.clientId as string | undefined;
+    const data = await svc.getTNIComments(clientId);
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function upsertTNIComment(req: Request, res: Response) {
+  try {
+    const { agentId, clientId, comment, updatedBy } = req.body as {
+      agentId?: string; clientId?: string; comment?: string; updatedBy?: string;
+    };
+    if (!agentId) { res.status(400).json({ message: 'agentId is required' }); return; }
+    await svc.upsertTNIComment(agentId, clientId ?? '', comment ?? '', updatedBy ?? '');
+    res.json({ success: true });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+
+export async function getClapCustomerAnalysis(req: Request, res: Response) {
+  try {
+    const data = await svc.getClapCustomerAnalysis(parseFilters(req));
     res.json({ data });
   } catch (err: unknown) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });

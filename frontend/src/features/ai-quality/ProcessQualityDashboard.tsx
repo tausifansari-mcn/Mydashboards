@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useProcessStore } from '@/store/processStore';
@@ -9,7 +9,7 @@ import {
 } from 'recharts';
 import {
   BarChart3, ChevronLeft, PhoneCall, PhoneOff,
-  Target, TrendingUp, Users, XCircle, AlertTriangle, ThumbsDown, Info, Download, X,
+  Target, TrendingUp, Users, XCircle, AlertTriangle, ThumbsDown, Info, Download, X, Pencil,
 } from 'lucide-react';
 import api from '@/lib/axios';
 
@@ -562,6 +562,21 @@ function gaugeArc(startDeg: number, endDeg: number): string {
   ].join(' ');
 }
 
+interface MagicalFlowStage {
+  stage: string; title: string; script: string | null;
+  total_in: number; passed: number; dropped: number;
+  success_rate: number; drop_rate: number;
+}
+interface MagicalObjection {
+  title: string; category: string | null; script: string | null;
+  total: number; sales: number; conv_pct: number; contribution: number;
+}
+interface MagicalScriptData {
+  summary: { total_calls: number; op_pass: number; csp_pass: number; offer_pass: number; sale_done: number; overall_conv: number };
+  flow: MagicalFlowStage[];
+  objections: MagicalObjection[];
+}
+
 export default function ProcessQualityDashboard() {
   const navigate = useNavigate();
   const { clientId } = useParams<{ clientId: string }>();
@@ -574,7 +589,7 @@ export default function ProcessQualityDashboard() {
     }
   }, [processLoaded, clientId, canAccessOutboundClient, navigate]);
   const [startDate, setStartDate] = useState(
-    toLocalDT(new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0))
+    toLocalDT(new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0))
   );
   const [endDate, setEndDate] = useState(toLocalDT(now));
   const [kpi, setKpi] = useState<KPIResponse | null>(null);
@@ -585,11 +600,18 @@ export default function ProcessQualityDashboard() {
   const [showMissingPanel, setShowMissingPanel] = useState(false);
   const [addAgentForm, setAddAgentForm]         = useState<Record<string, { name: string; lob: string }>>({});
   const [addAgentSaving, setAddAgentSaving]     = useState<Record<string, boolean>>({});
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [editingAgentName, setEditingAgentName] = useState('');
   const [clientName, setClientName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [magicalScript, setMagicalScript] = useState<MagicalScriptData | null>(null);
+  const [magicalLoading, setMagicalLoading] = useState(false);
 
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
+
+  const [activeSlide, setActiveSlide] = useState(0);
+  const loadedSlides = useRef<Record<number, boolean>>({});
 
   const fetchData = useCallback(() => {
     if (!clientId) return;
@@ -601,27 +623,44 @@ export default function ProcessQualityDashboard() {
       setKpi(kR.data?.data ?? null);
       const match = (cR.data?.data ?? []).find(c => String(c.client_id) === clientId);
       setClientName(match?.client_name ?? `Process #${clientId}`);
-    }).catch(() => {})
-    .finally(() => setLoading(false));
-
-    api.get<{ data: DetailAnalysisResponse }>(`/quality/detail-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
-      .then(r => setDetailAnalysis(r.data?.data ?? null))
-      .catch(() => setDetailAnalysis(null));
-
-    api.get<{ data: ObjectionAnalysisResponse }>(`/quality/objection-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
-      .then(r => setObjectionAnalysis(r.data?.data ?? null))
-      .catch(() => setObjectionAnalysis(null));
-
-    api.get<{ data: AgentNPSRow[] }>(`/quality/agent-nps-csat?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
-      .then(r => setAgentNPS(r.data?.data ?? []))
-      .catch(() => setAgentNPS([]));
-
-    api.get<{ data: OutboundMissingAgentRow[] }>(`/quality/missing-agents?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
-      .then(r => setMissingAgents(r.data?.data ?? []))
-      .catch(() => setMissingAgents([]));
+    }).catch(() => {}).finally(() => setLoading(false));
   }, [clientId, sd, ed]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Lazy load data per slide
+  useEffect(() => {
+    if (!clientId) return;
+    if (activeSlide === 1 && !loadedSlides.current[1]) {
+      loadedSlides.current[1] = true;
+      api.get<{ data: ObjectionAnalysisResponse }>(`/quality/objection-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+        .then(r => setObjectionAnalysis(r.data?.data ?? null))
+        .catch(() => setObjectionAnalysis(null));
+    }
+    if (activeSlide === 2 && !loadedSlides.current[2]) {
+      loadedSlides.current[2] = true;
+      api.get<{ data: AgentNPSRow[] }>(`/quality/agent-nps-csat?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+        .then(r => setAgentNPS(r.data?.data ?? []))
+        .catch(() => setAgentNPS([]));
+      api.get<{ data: OutboundMissingAgentRow[] }>(`/quality/missing-agents?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+        .then(r => setMissingAgents(r.data?.data ?? []))
+        .catch(() => setMissingAgents([]));
+    }
+    if (activeSlide === 3 && !loadedSlides.current[3]) {
+      loadedSlides.current[3] = true;
+      api.get<{ data: DetailAnalysisResponse }>(`/quality/detail-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+        .then(r => setDetailAnalysis(r.data?.data ?? null))
+        .catch(() => setDetailAnalysis(null));
+    }
+    if (activeSlide === 4 && !loadedSlides.current[4]) {
+      loadedSlides.current[4] = true;
+      setMagicalLoading(true);
+      api.get<{ data: MagicalScriptData }>(`/quality/magical-script?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+        .then(r => setMagicalScript(r.data?.data ?? null))
+        .catch(() => setMagicalScript(null))
+        .finally(() => setMagicalLoading(false));
+    }
+  }, [activeSlide, clientId, sd, ed]);
 
   const fmt = (n: number) => n.toLocaleString();
   const cst = kpi?.cst;
@@ -636,7 +675,6 @@ export default function ProcessQualityDashboard() {
     { name: 'Negative', value: nps.detractor, color: '#EC4899' },
     { name: 'Neutral',  value: nps.passive,   color: '#F59E0B' },
   ].filter(d => d.value > 0) : [];
-  const [activeSlide, setActiveSlide] = useState(0);
   const [modalMetric, setModalMetric] = useState<MetricInfo | null>(null);
   const [chartDetail, setChartDetail] = useState<ChartDetail | null>(null);
   const showDetail = (key: string) => setChartDetail(CHART_DETAILS[key] ?? null);
@@ -758,7 +796,7 @@ export default function ProcessQualityDashboard() {
 
         {/* ─── Pill tab navigation ── */}
         {(() => {
-          const SLIDES = ['Dashboard', 'Missed Opportunity', 'NPS & CSAT', 'Detail Analysis'];
+          const SLIDES = ['Dashboard', 'Missed Opportunity', 'NPS & CSAT', 'Detail Analysis', '✨ Magical Script'];
           return (
             <div className="pill-tabs w-fit">
               {SLIDES.map((label, i) => (
@@ -1208,10 +1246,11 @@ export default function ProcessQualityDashboard() {
             <div className="flex flex-col lg:flex-row gap-6">
 
               {/* ── Card 1: NPS Gauge ── */}
-              <div className="flex-1 min-w-0 rounded-xl border border-sky-500/20 bg-white overflow-hidden">
+              <div className="flex-1 min-w-0 rounded-xl border border-sky-500/20 bg-white overflow-hidden cursor-pointer"
+                onClick={() => showDetail('npsGauge')}>
                 <div className="card-header px-5 py-3">
                   <span className="text-[11px] font-bold uppercase tracking-widest">Net Promoter Score (NPS)</span>
-                  <button onClick={() => showDetail('npsGauge')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); showDetail('npsGauge'); }} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="p-4 flex flex-col items-center">
                   <svg viewBox="0 0 300 200" width="100%" style={{ maxWidth: 300 }}>
@@ -1286,10 +1325,11 @@ export default function ProcessQualityDashboard() {
               </div>
 
               {/* ── Card 2: CSAT Gauge ── */}
-              <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/20 bg-white overflow-hidden">
+              <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/20 bg-white overflow-hidden cursor-pointer"
+                onClick={() => showDetail('csatGauge')}>
                 <div className="card-header px-5 py-3">
                   <span className="text-[11px] font-bold uppercase tracking-widest">Customer Satisfaction (CSAT)</span>
-                  <button onClick={() => showDetail('csatGauge')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); showDetail('csatGauge'); }} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="p-4 flex flex-col items-center">
                   <svg viewBox="0 0 300 200" width="100%" style={{ maxWidth: 300 }}>
@@ -1345,10 +1385,11 @@ export default function ProcessQualityDashboard() {
               </div>
 
               {/* ── Card 3: Feedback Status Breakup ── */}
-              <div className="flex-1 min-w-0 rounded-xl border border-purple-500/20 bg-white overflow-hidden">
+              <div className="flex-1 min-w-0 rounded-xl border border-purple-500/20 bg-white overflow-hidden cursor-pointer"
+                onClick={() => showDetail('feedbackPie')}>
                 <div className="card-header px-5 py-3">
                   <span className="text-[11px] font-bold uppercase tracking-widest">Feedback Status Breakup</span>
-                  <button onClick={() => showDetail('feedbackPie')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); showDetail('feedbackPie'); }} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="p-4 flex flex-col items-center gap-3">
                   {feedbackData.length > 0 ? (
@@ -1424,12 +1465,13 @@ export default function ProcessQualityDashboard() {
             const gT   = allDays.reduce((a, r) => a + r.totalFeedbacks, 0);
             const gNPS = gT > 0 ? ((gPr - gD) / gT * 100).toFixed(2) : '0.00';
             return (
-              <div className="mt-6 rounded-xl border border-sky-500/20 bg-white overflow-hidden">
+              <div className="mt-6 rounded-xl border border-sky-500/20 bg-white overflow-hidden cursor-pointer"
+                onClick={() => showDetail('npsTable')}>
                 <div className="card-header gap-2 px-5 py-3">
                   <BarChart3 size={14} className="text-sky-400" />
                   <span className="text-[11px] font-bold uppercase tracking-widest">NPS and CSAT Analysis</span>
                   <span className="ml-2 text-[10px] text-slate-500">{allDays.length} days · scroll to see all</span>
-                  <button onClick={() => showDetail('npsTable')} className="ml-1 text-white/70 hover:text-white transition-colors mr-1"><Info size={13} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); showDetail('npsTable'); }} className="ml-1 text-white/70 hover:text-white transition-colors mr-1"><Info size={13} /></button>
                   <ExportBtn onClick={() => nps && downloadCSV(nps.days.map(d => ({ Date: d.calldate, Detractor: d.detractor, Passive: d.passive, Promoter: d.promoter, 'Total Feedbacks': d.totalFeedbacks, 'NPS Score': d.npsScore })), 'nps-day-wise.csv')} />
                 </div>
                 <div style={{ maxHeight: 360, overflowY: 'auto', overflowX: 'auto' }}>
@@ -1495,11 +1537,12 @@ export default function ProcessQualityDashboard() {
               return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             };
             return (
-              <div className="mt-6 rounded-xl border border-sky-500/20 bg-white overflow-hidden">
+              <div className="mt-6 rounded-xl border border-sky-500/20 bg-white overflow-hidden cursor-pointer"
+                onClick={() => showDetail('npsTrend')}>
                 <div className="card-header gap-2 px-5 py-3">
                   <BarChart3 size={14} className="text-sky-400" />
                   <span className="text-[11px] font-bold uppercase tracking-widest">NPS and CSAT Day Wise Trend</span>
-                  <button onClick={() => showDetail('npsTrend')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); showDetail('npsTrend'); }} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
                 <div className="p-4">
                   <ResponsiveContainer width="100%" height={340}>
@@ -1575,102 +1618,142 @@ export default function ProcessQualityDashboard() {
           })()}
 
           {/* ─── Agent-wise NPS & CSAT ─────────────────────────────────────── */}
-          {agentNPS.length > 0 && (
-            <div className="rounded-xl border border-sky-500/20 bg-[#1E293B] overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
-                <div className="w-1 h-4 bg-sky-400 rounded-full" />
-                <span className="text-[11px] font-bold uppercase tracking-widest text-sky-400">Agent-wise NPS &amp; CSAT</span>
-                <span className="ml-2 text-[10px] text-slate-500">{agentNPS.length} agents</span>
-                <div className="ml-auto">
-                  <ExportBtn onClick={() => downloadCSV(agentNPS as unknown as Record<string,unknown>[], 'agent-nps-csat.csv')} />
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-white/5 bg-white/[0.02]">
-                      <th className="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">#</th>
-                      <th className="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">Agent</th>
-                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-slate-500">Calls</th>
-                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-slate-500">CSAT %</th>
-                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-slate-500">NPS</th>
-                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-emerald-500">Promoter</th>
-                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-amber-500">Passive</th>
-                      <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-red-500">Detractor</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/[0.04]">
-                    {agentNPS.map((row, i) => {
-                      const npsColor = row.nps >= 30 ? '#22C55E' : row.nps >= 0 ? '#F59E0B' : '#EF4444';
-                      const total = row.promoter + row.passive + row.detractor;
-                      return (
-                        <tr key={i} className="hover:bg-white/[0.03] transition-colors">
-                          <td className="px-4 py-2.5 text-slate-600">{i + 1}</td>
-                          <td className="px-4 py-2.5 font-medium text-white">{row.agent}</td>
-                          <td className="px-4 py-2.5 text-right text-slate-300">{row.calls.toLocaleString()}</td>
-                          <td className="px-4 py-2.5 text-right">
-                            <span className="font-bold text-sky-400">{row.csat.toFixed(1)}%</span>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            <span className="font-bold" style={{ color: npsColor }}>{row.nps.toFixed(1)}</span>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            <span className="text-emerald-400 font-semibold">{row.promoter.toLocaleString()}</span>
-                            <span className="text-slate-600 ml-1 text-[10px]">
-                              ({total > 0 ? ((row.promoter / total) * 100).toFixed(0) : 0}%)
-                            </span>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            <span className="text-amber-400 font-semibold">{row.passive.toLocaleString()}</span>
-                            <span className="text-slate-600 ml-1 text-[10px]">
-                              ({total > 0 ? ((row.passive / total) * 100).toFixed(0) : 0}%)
-                            </span>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            <span className="text-red-400 font-semibold">{row.detractor.toLocaleString()}</span>
-                            <span className="text-slate-600 ml-1 text-[10px]">
-                              ({total > 0 ? ((row.detractor / total) * 100).toFixed(0) : 0}%)
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    {(() => {
-                      const totCalls = agentNPS.reduce((s, r) => s + r.calls, 0);
-                      const totPro   = agentNPS.reduce((s, r) => s + r.promoter, 0);
-                      const totPas   = agentNPS.reduce((s, r) => s + r.passive, 0);
-                      const totDet   = agentNPS.reduce((s, r) => s + r.detractor, 0);
-                      const totFb    = totPro + totPas + totDet;
-                      const totCSAT  = totFb > 0 ? ((totPro + totPas) / totFb * 100).toFixed(1) : '0.0';
-                      const totNPS   = totFb > 0 ? ((totPro - totDet) / totFb * 100).toFixed(1) : '0.0';
-                      const npsColor = Number(totNPS) >= 30 ? '#22C55E' : Number(totNPS) >= 0 ? '#F59E0B' : '#EF4444';
-                      return (
-                        <tr className="border-t border-white/10 bg-white/[0.03]">
-                          <td className="px-4 py-2.5" />
-                          <td className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Total</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-white">{totCalls.toLocaleString()}</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-sky-400">{totCSAT}%</td>
-                          <td className="px-4 py-2.5 text-right font-bold" style={{ color: npsColor }}>{totNPS}</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-emerald-400">{totPro.toLocaleString()}</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-amber-400">{totPas.toLocaleString()}</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-red-400">{totDet.toLocaleString()}</td>
-                        </tr>
-                      );
-                    })()}
-                  </tfoot>
-                </table>
+          <div className="rounded-xl border border-sky-500/20 bg-white overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+              <div className="w-1 h-4 bg-sky-500 rounded-full" />
+              <span className="text-[11px] font-bold uppercase tracking-widest text-sky-700">Agent-wise NPS &amp; CSAT</span>
+              {agentNPS.length > 0 && <span className="ml-2 text-[10px] text-slate-500">{agentNPS.length} agents</span>}
+              <div className="ml-auto">
+                <ExportBtn onClick={() => downloadCSV(agentNPS as unknown as Record<string,unknown>[], 'agent-nps-csat.csv')} />
               </div>
             </div>
-          )}
+            {agentNPS.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <th className="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-600">#</th>
+                    <th className="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-600">AgentName</th>
+                    <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-emerald-700">Promoter</th>
+                    <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-amber-700">Passive</th>
+                    <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-red-700">Detractor</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {agentNPS.map((row, i) => {
+                    const total = row.promoter + row.passive + row.detractor;
+                    const isMasId = /^MAS/i.test(row.agentId);
+                    return (
+                      <tr key={i} className="hover:bg-sky-50 transition-colors">
+                        <td className="px-4 py-2.5 text-slate-500">{i + 1}</td>
+                        <td className="px-4 py-2.5">
+                          {editingAgentId === row.agentId ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                value={editingAgentName}
+                                onChange={e => setEditingAgentName(e.target.value)}
+                                className="w-36 px-2 py-1 rounded text-xs border border-sky-300 bg-white text-slate-900 outline-none focus:border-sky-500"
+                                autoFocus
+                                onKeyDown={async e => {
+                                  if (e.key === 'Escape') { setEditingAgentId(null); return; }
+                                  if (e.key !== 'Enter') return;
+                                  if (!editingAgentName.trim()) return;
+                                  try {
+                                    await api.post('/quality/agent-master', {
+                                      agentId: row.agentId,
+                                      agentName: editingAgentName.trim(),
+                                      lob: 'Outbound',
+                                    });
+                                    setAgentNPS(prev => prev.map(r =>
+                                      r.agentId === row.agentId ? { ...r, agent: editingAgentName.trim() } : r
+                                    ));
+                                  } catch { alert('Failed to save agent name'); }
+                                  setEditingAgentId(null);
+                                }}
+                              />
+                              <button onClick={async () => {
+                                if (!editingAgentName.trim()) return;
+                                try {
+                                  await api.post('/quality/agent-master', {
+                                    agentId: row.agentId,
+                                    agentName: editingAgentName.trim(),
+                                    lob: 'Outbound',
+                                  });
+                                  setAgentNPS(prev => prev.map(r =>
+                                    r.agentId === row.agentId ? { ...r, agent: editingAgentName.trim() } : r
+                                  ));
+                                } catch { alert('Failed to save agent name'); }
+                                setEditingAgentId(null);
+                              }} className="px-2 py-1 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100">Save</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-sky-700 font-medium">{row.agentId}</span>
+                              <span className="text-slate-400 text-[10px]">→</span>
+                              <span className="text-slate-800">{row.agent}</span>
+                              {isMasId && (
+                                <button onClick={() => {
+                                  setEditingAgentId(row.agentId);
+                                  setEditingAgentName(row.agent);
+                                }} className="text-slate-400 hover:text-sky-600 transition-colors" title="Edit display name">
+                                  <Pencil size={12} />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-emerald-700 font-semibold">
+                          {row.promoter.toLocaleString()}
+                          <span className="text-slate-500 ml-1 text-[10px]">
+                            ({total > 0 ? ((row.promoter / total) * 100).toFixed(0) : 0}%)
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-amber-700 font-semibold">
+                          {row.passive.toLocaleString()}
+                          <span className="text-slate-500 ml-1 text-[10px]">
+                            ({total > 0 ? ((row.passive / total) * 100).toFixed(0) : 0}%)
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-red-700 font-semibold">
+                          {row.detractor.toLocaleString()}
+                          <span className="text-slate-500 ml-1 text-[10px]">
+                            ({total > 0 ? ((row.detractor / total) * 100).toFixed(0) : 0}%)
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  {(() => {
+                    const totPro = agentNPS.reduce((s, r) => s + r.promoter, 0);
+                    const totPas = agentNPS.reduce((s, r) => s + r.passive, 0);
+                    const totDet = agentNPS.reduce((s, r) => s + r.detractor, 0);
+                    return (
+                      <tr className="border-t border-slate-300 bg-slate-100">
+                        <td className="px-4 py-2.5" />
+                        <td className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-700">Total</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-emerald-800">{totPro.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-amber-800">{totPas.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-red-800">{totDet.toLocaleString()}</td>
+                      </tr>
+                    );
+                  })()}
+                </tfoot>
+              </table>
+            </div>
+            ) : (
+              <div className="py-8 text-center text-slate-500 text-xs">No agent NPS data available</div>
+            )}
+          </div>
 
           {/* ── Agent-wise Detractor / Passive / Promoter ── */}
-          {agentNPS.length > 0 && (() => {
+          {agentNPS.length > 0 ? (() => {
+            const withTotals = agentNPS.map(r => ({ ...r, rowTotal: r.promoter + r.passive + r.detractor }));
             const gD  = agentNPS.reduce((a, r) => a + r.detractor, 0);
             const gP  = agentNPS.reduce((a, r) => a + r.passive,   0);
             const gPr = agentNPS.reduce((a, r) => a + r.promoter,  0);
-            const gT  = agentNPS.reduce((a, r) => a + r.total,     0);
+            const gT  = gD + gP + gPr;
             const gNPS = gT > 0 ? ((gPr - gD) / gT * 100).toFixed(2) : '0.00';
             const maxD  = Math.max(...agentNPS.map(r => r.detractor), 1);
             const maxP  = Math.max(...agentNPS.map(r => r.passive),   1);
@@ -1687,13 +1770,13 @@ export default function ProcessQualityDashboard() {
                   <span className="text-[11px] font-bold uppercase tracking-widest">Agent Wise — Detractor / Passive / Promoter</span>
                   <span className="ml-2 text-[10px] text-slate-500">{agentNPS.length} agents · sorted by NPS</span>
                   <div className="ml-auto">
-                    <ExportBtn onClick={() => downloadCSV(agentNPS.map(r => ({
-                      Agent: r.agentName,
+                    <ExportBtn onClick={() => downloadCSV(withTotals.map(r => ({
+                      Agent: r.agent,
                       Detractor: r.detractor,
                       Passive: r.passive,
                       Promoter: r.promoter,
-                      Total: r.total,
-                      'NPS Score': r.npsScore,
+                      Total: r.rowTotal,
+                      'NPS Score': r.nps,
                     })), 'agent-nps.csv')} />
                   </div>
                 </div>
@@ -1718,9 +1801,9 @@ export default function ProcessQualityDashboard() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
-                      {agentNPS.map((row, i) => (
+                      {withTotals.map((row, i) => (
                         <tr key={i} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-4 py-2 text-slate-700 font-medium truncate">{row.agentName}</td>
+                          <td className="px-4 py-2 text-slate-700 font-medium truncate">{row.agent}</td>
                           <td className="px-4 py-2 text-right font-semibold" style={cell(row.detractor, maxD, '220,38,38')}>
                             {row.detractor.toLocaleString()}
                           </td>
@@ -1730,9 +1813,9 @@ export default function ProcessQualityDashboard() {
                           <td className="px-4 py-2 text-right font-semibold" style={cell(row.promoter, maxPr, '34,197,94')}>
                             {row.promoter.toLocaleString()}
                           </td>
-                          <td className="px-4 py-2 text-right text-slate-600">{row.total.toLocaleString()}</td>
-                          <td className="px-4 py-2 text-right font-bold" style={{ color: npsColor(row.npsScore) }}>
-                            {row.npsScore}
+                          <td className="px-4 py-2 text-right text-slate-600">{row.rowTotal.toLocaleString()}</td>
+                          <td className="px-4 py-2 text-right font-bold" style={{ color: npsColor(row.nps) }}>
+                            {row.nps}
                           </td>
                         </tr>
                       ))}
@@ -1751,7 +1834,9 @@ export default function ProcessQualityDashboard() {
                 </div>
               </div>
             );
-          })()}
+          })() : (
+            <div className="mt-6 rounded-xl border border-violet-500/20 bg-white overflow-hidden p-8 text-center text-slate-400 text-xs">No agent data available</div>
+          )}
         </div>
         )}
 
@@ -2349,6 +2434,166 @@ export default function ProcessQualityDashboard() {
             </div>
           </PQDrillModal>
         )}
+
+        {/* ─── Slide 4: Magical Script ───────────────────────────────────── */}
+        {activeSlide === 4 && (
+          <div className="mt-4">
+            {magicalLoading ? (
+              <div className="flex items-center justify-center h-64 gap-3 text-slate-500 text-sm">
+                <div className="w-5 h-5 border-2 border-slate-300 border-t-blue-500 rounded-full animate-spin" />
+                Loading Magical Script…
+              </div>
+            ) : !magicalScript ? (
+              <div className="flex items-center justify-center h-64 text-slate-400 text-sm">No script data available for this period.</div>
+            ) : (() => {
+              const ms = magicalScript;
+              const STAGE_COLORS: Record<string, { accent: string; bg: string; label: string }> = {
+                op:    { accent: '#1D4ED8', bg: '#EFF6FF', label: 'OP'    },
+                csp:   { accent: '#0891B2', bg: '#ECFEFF', label: 'CSP'   },
+                offer: { accent: '#059669', bg: '#ECFDF5', label: 'OFFER' },
+              };
+
+              return (
+                <>
+                  {/* ── Summary KPI Strip ── */}
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-6">
+                    {[
+                      { label: 'Total Calls',   value: ms.summary.total_calls.toLocaleString(),  color: '#475569' },
+                      { label: 'OP Passed',     value: ms.summary.op_pass.toLocaleString(),      color: '#1D4ED8' },
+                      { label: 'CSP Passed',    value: ms.summary.csp_pass.toLocaleString(),     color: '#0891B2' },
+                      { label: 'Offer Made',    value: ms.summary.offer_pass.toLocaleString(),   color: '#059669' },
+                      { label: 'Sale Done',     value: ms.summary.sale_done.toLocaleString(),    color: '#16A34A' },
+                      { label: 'Overall Conv%', value: `${ms.summary.overall_conv}%`,            color: ms.summary.overall_conv >= 10 ? '#16A34A' : ms.summary.overall_conv >= 5 ? '#D97706' : '#DC2626' },
+                    ].map(c => (
+                      <div key={c.label} className="bg-white rounded-xl px-4 py-3 relative overflow-hidden"
+                        style={{ border: `2px solid ${c.color}` }}>
+                        <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: c.color }} />
+                        <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: c.color }}>{c.label}</p>
+                        <p className="text-xl font-black tabular-nums text-slate-900 leading-none">{c.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* ── Main Flow Tree ── */}
+                  <div className="rounded-xl overflow-hidden mb-6" style={{ border: '1px solid #0369A1' }}>
+                    <div className="px-5 py-3 flex items-center gap-2"
+                      style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
+                      <span className="text-sm">✨</span>
+                      <h3 className="text-xs font-black text-white uppercase tracking-widest">Magical Script — Main Call Flow</h3>
+                      <span className="text-[9px] ml-1" style={{ color: 'rgba(255,255,255,0.65)' }}>Opening → Context → Offer</span>
+                    </div>
+                    <div className="bg-white p-5 space-y-0">
+                      {ms.flow.map((stage, idx) => {
+                        const col = STAGE_COLORS[stage.stage] ?? { accent: '#6B7280', bg: '#F9FAFB', label: stage.stage.toUpperCase() };
+                        return (
+                          <div key={stage.stage}>
+                            <div className="flex gap-4 items-stretch">
+                              {/* Stage badge (left) */}
+                              <div className="flex flex-col items-center" style={{ minWidth: '90px' }}>
+                                <div className="w-full text-center py-2 rounded-xl text-[10px] font-black text-white uppercase tracking-widest shadow-sm"
+                                  style={{ background: col.accent }}>
+                                  {stage.title}
+                                </div>
+                                {idx < ms.flow.length - 1 && (
+                                  <div className="w-0.5 flex-1 mt-1" style={{ background: `${col.accent}40`, minHeight: '32px' }} />
+                                )}
+                              </div>
+
+                              {/* Script box (centre) */}
+                              <div className="flex-1 rounded-xl px-4 py-3 text-[11px] text-slate-700 leading-relaxed font-medium mb-3 min-h-[52px] flex items-center"
+                                style={{ background: col.bg, border: `1px solid ${col.accent}30` }}>
+                                {stage.script
+                                  ? <span>{stage.script}</span>
+                                  : <span className="text-slate-400 italic">Call opening — no predefined script</span>
+                                }
+                              </div>
+
+                              {/* Metrics (right) */}
+                              <div className="flex flex-col gap-1.5 justify-center shrink-0" style={{ minWidth: '180px' }}>
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 h-5 rounded-full overflow-hidden bg-slate-100">
+                                    <div className="h-full rounded-full transition-all" style={{ width: `${stage.success_rate}%`, background: col.accent }} />
+                                  </div>
+                                  <span className="text-[10px] font-black tabular-nums w-12 text-right" style={{ color: col.accent }}>{stage.success_rate}% ✓</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 h-5 rounded-full overflow-hidden bg-slate-100">
+                                    <div className="h-full rounded-full transition-all" style={{ width: `${stage.drop_rate}%`, background: '#EF4444' }} />
+                                  </div>
+                                  <span className="text-[10px] font-black tabular-nums w-12 text-right text-red-500">{stage.drop_rate}% ✗</span>
+                                </div>
+                                <div className="flex items-center justify-between text-[9px] text-slate-400 font-semibold px-0.5">
+                                  <span>{stage.passed.toLocaleString()} passed</span>
+                                  <span>{stage.dropped.toLocaleString()} dropped</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* ── Objection Handling Grid ── */}
+                  {ms.objections.length > 0 && (
+                    <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #0369A1' }}>
+                      <div className="px-5 py-3 flex items-center gap-2"
+                        style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
+                        <span className="text-sm">🎯</span>
+                        <h3 className="text-xs font-black text-white uppercase tracking-widest">Objection Handling Scripts</h3>
+                        <span className="text-[9px] ml-1" style={{ color: 'rgba(255,255,255,0.65)' }}>Rebuttal scripts per objection type</span>
+                      </div>
+                      <div className="bg-slate-50 p-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                          {ms.objections.map((obj, i) => {
+                            const convColor = obj.conv_pct >= 15 ? '#16A34A' : obj.conv_pct >= 7 ? '#D97706' : '#DC2626';
+                            const CARD_ACCS = ['#1D4ED8','#7C3AED','#0891B2','#D97706'];
+                            const accent = CARD_ACCS[i % CARD_ACCS.length];
+                            return (
+                              <div key={i} className="bg-white rounded-xl overflow-hidden flex flex-col shadow-sm"
+                                style={{ border: `1px solid ${accent}30` }}>
+                                {/* Card header */}
+                                <div className="px-4 py-2.5"
+                                  style={{ background: accent }}>
+                                  <p className="text-[10px] font-black text-white uppercase tracking-wider leading-tight">{obj.title}</p>
+                                  <p className="text-[9px] text-white/70 mt-0.5 font-semibold">{obj.contribution}% Contribution · {obj.total.toLocaleString()} calls</p>
+                                </div>
+                                {/* Script text */}
+                                <div className="px-4 py-3 flex-1 overflow-y-auto" style={{ maxHeight: '140px' }}>
+                                  <p className="text-[10.5px] text-slate-700 leading-relaxed font-medium">
+                                    {obj.script ?? <span className="italic text-slate-400">No script configured</span>}
+                                  </p>
+                                </div>
+                                {/* Footer metrics */}
+                                <div className="px-4 py-2.5 border-t border-slate-100 flex items-center justify-between gap-2 bg-slate-50">
+                                  <div className="text-center">
+                                    <p className="text-[8px] text-slate-400 uppercase font-bold">Call End</p>
+                                    <p className="text-xs font-black text-slate-700">{(obj.total - obj.sales).toLocaleString()}</p>
+                                  </div>
+                                  <div className="w-px h-8 bg-slate-200" />
+                                  <div className="text-center">
+                                    <p className="text-[8px] text-slate-400 uppercase font-bold">Sale Done</p>
+                                    <p className="text-xs font-black" style={{ color: convColor }}>{obj.sales.toLocaleString()}</p>
+                                  </div>
+                                  <div className="w-px h-8 bg-slate-200" />
+                                  <div className="text-center">
+                                    <p className="text-[8px] text-slate-400 uppercase font-bold">Conv%</p>
+                                    <p className="text-sm font-black tabular-nums" style={{ color: convColor }}>{obj.conv_pct}%</p>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        )}
+
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ interface AuthState {
   isAuthenticated: boolean;
   setAuth: (token: string, user: User) => void;
   setAccessToken: (token: string) => void;
+  setUser: (user: User) => void;
   logout: () => void;
 }
 
@@ -20,6 +21,7 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       setAuth: (accessToken, user) => set({ accessToken, user, isAuthenticated: true }),
       setAccessToken: (accessToken) => set({ accessToken }),
+      setUser: (user) => set({ user }),
       logout: () => {
         useProcessStore.getState().reset();
         set({ accessToken: null, user: null, isAuthenticated: false });

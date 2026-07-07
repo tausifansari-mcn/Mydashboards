@@ -1,13 +1,35 @@
 import bcrypt from 'bcryptjs';
-import prisma from '../../lib/prismaClient';
+import { querySource } from '../../lib/sourceDb';
 import { signAccessToken, signRefreshToken, signResetToken, verifyRefreshToken, verifyResetToken, TokenPayload } from '../../lib/token';
 import { sendPasswordResetEmail } from '../../lib/mailer';
 
+// All queries run against shivamgiri (user-management DB) via the shared mysql2 pool.
+// This avoids Prisma opening a separate connection pool which exhausts MySQL on the
+// shared VICIdial server (max_connections ~151).
+
+interface DBUser {
+  id: number; name: string; email: string; password_hash: string;
+  role_id: number; client_id: number | null; is_active: number | boolean;
+  last_login: Date | null; created_at: Date;
+  role_name: string; role_display_name: string;
+  client_name: string | null;
+}
+
 export async function loginService(email: string, password: string, ip: string, userAgent: string) {
-  const user = await prisma.md_users.findUnique({
-    where: { email },
-    include: { role: true },
-  });
+  const rows = await querySource<DBUser>(`
+    SELECT u.id, u.name, u.email, u.password_hash, u.role_id, u.client_id,
+           u.is_active, u.last_login,
+           r.name        AS role_name,
+           r.display_name AS role_display_name,
+           c.name        AS client_name
+    FROM shivamgiri.md_users u
+    JOIN shivamgiri.md_roles  r ON r.id = u.role_id
+    LEFT JOIN shivamgiri.md_clients c ON c.id = u.client_id
+    WHERE u.email = ?
+    LIMIT 1
+  `, [email]);
+
+  const user = rows[0];
 
   if (!user || !user.is_active) {
     await logLoginAttempt(user?.id, ip, userAgent, 'failed');
@@ -20,59 +42,71 @@ export async function loginService(email: string, password: string, ip: string, 
     throw new Error('Invalid credentials');
   }
 
-  await prisma.md_users.update({ where: { id: user.id }, data: { last_login: new Date() } });
+  await querySource(
+    'UPDATE shivamgiri.md_users SET last_login = NOW() WHERE id = ?',
+    [user.id]
+  );
   await logLoginAttempt(user.id, ip, userAgent, 'success');
 
   const payload: TokenPayload = {
     id: user.id,
     email: user.email,
-    role: user.role.name,
+    role: user.role_name,
     clientId: user.client_id,
   };
 
-  const accessToken = signAccessToken(payload);
-  const refreshToken = signRefreshToken(payload);
-
   return {
-    accessToken,
-    refreshToken,
+    accessToken:  signAccessToken(payload),
+    refreshToken: signRefreshToken(payload),
     user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role.name,
-      roleDisplay: user.role.display_name,
-      clientId: user.client_id,
+      id:          user.id,
+      name:        user.name,
+      email:       user.email,
+      role:        user.role_name,
+      roleDisplay: user.role_display_name,
+      clientId:    user.client_id,
+      clientName:  user.client_name ?? null,
     },
   };
 }
 
 export async function refreshService(token: string) {
   const payload = verifyRefreshToken(token);
-  const user = await prisma.md_users.findUnique({
-    where: { id: payload.id },
-    include: { role: true },
-  });
+
+  const rows = await querySource<DBUser>(`
+    SELECT u.id, u.email, u.is_active,
+           r.name AS role_name
+    FROM shivamgiri.md_users u
+    JOIN shivamgiri.md_roles r ON r.id = u.role_id
+    WHERE u.id = ?
+    LIMIT 1
+  `, [payload.id]);
+
+  const user = rows[0];
   if (!user || !user.is_active) throw new Error('User not found');
 
   const newPayload: TokenPayload = {
-    id: user.id,
-    email: user.email,
-    role: user.role.name,
-    clientId: user.client_id,
+    id:       user.id,
+    email:    user.email,
+    role:     user.role_name,
+    clientId: payload.clientId,
   };
   return { accessToken: signAccessToken(newPayload) };
 }
 
 export async function forgotPasswordService(email: string, frontendUrl: string) {
-  const user = await prisma.md_users.findUnique({ where: { email } });
-  if (!user) return; // silent — don't reveal whether email exists
+  const rows = await querySource<{ id: number; name: string; email: string }>(
+    'SELECT id, name, email FROM shivamgiri.md_users WHERE email = ? LIMIT 1',
+    [email]
+  );
+  const user = rows[0];
+  if (!user) return;
+
   const token = signResetToken(user.id);
   const resetLink = `${frontendUrl}/reset-password/${token}`;
   try {
     await sendPasswordResetEmail(user.email, user.name, resetLink);
   } catch (err: unknown) {
-    // Log but don't throw — SMTP failure should not surface a 400 to the user
     console.error('[auth] Failed to send password reset email to', email, (err instanceof Error ? err.message : err));
   }
 }
@@ -80,39 +114,59 @@ export async function forgotPasswordService(email: string, frontendUrl: string) 
 export async function resetPasswordService(token: string, newPassword: string) {
   const { id } = verifyResetToken(token);
   const hash = await bcrypt.hash(newPassword, 12);
-  await prisma.md_users.update({ where: { id }, data: { password_hash: hash } });
+  await querySource('UPDATE shivamgiri.md_users SET password_hash = ? WHERE id = ?', [hash, id]);
 }
 
 export async function changePasswordService(userId: number, oldPassword: string, newPassword: string) {
-  const user = await prisma.md_users.findUnique({ where: { id: userId } });
+  const rows = await querySource<{ id: number; password_hash: string }>(
+    'SELECT id, password_hash FROM shivamgiri.md_users WHERE id = ? LIMIT 1',
+    [userId]
+  );
+  const user = rows[0];
   if (!user) throw new Error('User not found');
+
   const valid = await bcrypt.compare(oldPassword, user.password_hash);
   if (!valid) throw new Error('Current password is incorrect');
+
   const hash = await bcrypt.hash(newPassword, 12);
-  await prisma.md_users.update({ where: { id: userId }, data: { password_hash: hash } });
+  await querySource('UPDATE shivamgiri.md_users SET password_hash = ? WHERE id = ?', [hash, userId]);
 }
 
 export async function getMeService(userId: number) {
-  const user = await prisma.md_users.findUnique({
-    where: { id: userId },
-    include: { role: true, client: true },
-  });
+  const rows = await querySource<DBUser>(`
+    SELECT u.id, u.name, u.email, u.last_login,
+           r.name        AS role_name,
+           r.display_name AS role_display_name,
+           u.client_id,
+           c.name        AS client_name
+    FROM shivamgiri.md_users u
+    JOIN shivamgiri.md_roles  r ON r.id = u.role_id
+    LEFT JOIN shivamgiri.md_clients c ON c.id = u.client_id
+    WHERE u.id = ?
+    LIMIT 1
+  `, [userId]);
+
+  const user = rows[0];
   if (!user) throw new Error('User not found');
+
   return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role.name,
-    roleDisplay: user.role.display_name,
-    clientId: user.client_id,
-    clientName: user.client?.name ?? null,
-    lastLogin: user.last_login,
+    id:          user.id,
+    name:        user.name,
+    email:       user.email,
+    role:        user.role_name,
+    roleDisplay: user.role_display_name,
+    clientId:    user.client_id,
+    clientName:  user.client_name ?? null,
+    lastLogin:   user.last_login,
   };
 }
 
 async function logLoginAttempt(userId: number | undefined, ip: string, userAgent: string, status: string) {
   if (!userId) return;
-  await prisma.md_login_logs.create({
-    data: { user_id: userId, ip_address: ip, user_agent: userAgent, status },
-  });
+  try {
+    await querySource(
+      'INSERT INTO shivamgiri.md_login_logs (user_id, ip_address, user_agent, status) VALUES (?, ?, ?, ?)',
+      [userId, ip, userAgent, status]
+    );
+  } catch { /* non-critical — never block login because of log failure */ }
 }

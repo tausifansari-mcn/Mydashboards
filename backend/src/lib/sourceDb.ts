@@ -10,7 +10,8 @@ export function getSourcePool(): mysql.Pool {
       password: process.env.DB_PASSWORD,
       port: Number(process.env.DB_PORT) || 3306,
       waitForConnections: true,
-      connectionLimit: 10,
+      connectionLimit: 5,
+      idleTimeout: 60000,
     });
   }
   return pool;

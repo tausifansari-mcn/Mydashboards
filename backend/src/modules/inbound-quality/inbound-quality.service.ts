@@ -432,10 +432,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
       SUM(CASE WHEN q.quality_percentage = 0                                    THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-        ELSE (
-          IF(q.call_answered_within_5_seconds  = 1, 0.5, 0) +
-          IF(q.customer_concern_acknowledged   = 1, 0.5, 0)
-        ) END
+        ELSE IF(q.call_answered_within_5_seconds = 1, 1, 0) END
       ) * 100, 1) AS opening_skill,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
@@ -583,7 +580,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
   const hold_procedure = Number(r.hold_procedure ?? 0);
   const resolution     = Number(r.resolution     ?? 0);
   const closing        = Number(r.closing        ?? 0);
-  const avg_score      = Number(r.cq_score ?? 0);
+  const avg_score      = Number(((opening_skill + soft_skill + hold_procedure + resolution + closing) / 5).toFixed(1));
 
   // ── Negative signal categorisation ──────────────────────────────────────────
   const negRows = await querySource<{ neg_cat: string; cnt: number }>(`
@@ -658,7 +655,7 @@ export async function getTopPerformers(filters: InboundQualityFilters): Promise<
       AND q.User IS NOT NULL
       AND TRIM(q.User) != ''
       ${clientFilter}
-    GROUP BY q.User
+    GROUP BY q.User, am.AgentName
     ORDER BY avg_score DESC
     LIMIT 5
   `, params);
@@ -946,11 +943,12 @@ export async function getTopPositiveSignals(filters: InboundQualityFilters): Pro
   const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
   const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
-  const rows = await querySource<{ keyword: string; customer_count: number; agent_count: number }>(`
+  const rows = await querySource<{ keyword: string; total_count: number }>(`
     SELECT
       kw.keyword,
-      SUM(CASE WHEN LOWER(q.top_positive_words)       LIKE CONCAT('%', kw.pattern, '%') THEN 1 ELSE 0 END) AS customer_count,
-      SUM(CASE WHEN LOWER(q.top_positive_words_agent) LIKE CONCAT('%', kw.pattern, '%') THEN 1 ELSE 0 END) AS agent_count
+      SUM(CASE WHEN LOWER(q.top_positive_words)       LIKE CONCAT('%', kw.pattern, '%')
+                 OR LOWER(q.top_positive_words_agent) LIKE CONCAT('%', kw.pattern, '%')
+               THEN 1 ELSE 0 END) AS total_count
     FROM db_audit.call_quality_assessment q
     CROSS JOIN (
       SELECT 'Thank You'     AS keyword, 'thank'      AS pattern UNION ALL
@@ -970,15 +968,15 @@ export async function getTopPositiveSignals(filters: InboundQualityFilters): Pro
       AND q.quality_percentage IS NOT NULL
       ${clientFilter}
     GROUP BY kw.keyword, kw.pattern
-    ORDER BY (customer_count + agent_count) DESC
+    ORDER BY total_count DESC
   `, params);
 
   return rows
     .map(r => ({
       keyword:        String(r.keyword),
-      customer_count: Number(r.customer_count),
-      agent_count:    Number(r.agent_count),
-      total:          Number(r.customer_count) + Number(r.agent_count),
+      customer_count: 0,
+      agent_count:    0,
+      total:          Number(r.total_count),
     }))
     .filter(r => r.total > 0)
     .sort((a, b) => b.total - a.total);
@@ -1132,7 +1130,6 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
     total:          Number(r.total ?? 0),
     opening_skill:  [
       p('call_answered_within_5_seconds'),
-      p('customer_concern_acknowledged'),
     ],
     soft_skill:     [
       p('professionalism_maintained'),
@@ -1159,6 +1156,272 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
       p('further_assistance_offered'),
       p('proper_call_closure'),
     ],
+  };
+}
+
+// ─── CLAP CASE expression (reused across drill queries) ─────────────────────
+const CLAP_CASE_INBOUND = `
+  CASE
+    WHEN q.scenario IN ('Query','General Query','General Queries','Feedback','Unclear','Short Call/Blank Call','Repeat','Customer Profile','Brand','Marketing','Content','Collaboration Request') THEN 'Customer'
+    WHEN q.scenario IN ('Return/Exchange','Return Request','Return & Exchange','Wrong product','Product Issue','Pricing','Refund Status','Refund issue','Refund Request','Tech issue','Policies and FAQs','Sale Done') THEN 'Product'
+    WHEN q.scenario IN ('Delivery Issue','Post Order','Order Status','Reverse Pickup Issue','Pending payment','Payment issues','Wallet issue') THEN 'Logistic'
+    WHEN q.scenario IN ('Needs Improvement','Hold Procedure','Transfer','') THEN 'Agent'
+    WHEN q.scenario = 'Complaint' THEN
+      CASE
+        WHEN q.scenario1 IS NULL OR q.scenario1 = '' THEN 'Product'
+        WHEN q.scenario1 LIKE '%Dispatch%' OR q.scenario1 LIKE '%Delivery%' OR q.scenario1 LIKE '%RTO%' OR q.scenario1 = 'Delivery Fail'
+          OR q.scenario1 LIKE '%Late dispatch%' OR q.scenario1 LIKE '%No communication%' OR q.scenario1 LIKE '%Fake remark%'
+          OR q.scenario1 LIKE '%Extra Charge%' OR q.scenario1 LIKE '%Misbehave%' OR q.scenario1 LIKE '%Delivery Boy%'
+          OR q.scenario1 LIKE '%Delivery Delay%' OR q.scenario1 LIKE '%POD%' OR q.scenario1 LIKE '%Courier%' THEN 'Logistic'
+        WHEN q.scenario1 LIKE '%Fraud%' THEN 'Agent'
+        ELSE 'Product'
+      END
+    ELSE 'Agent'
+  END`;
+
+export interface ClapDrillResponse {
+  claps: { clap: string; count: number }[];
+  scenarios: { scenario: string; count: number; pct: number }[];
+  subScenarios: { subScenario: string; count: number; pct: number }[];
+  leads: { leadId: string; agentId: string; agentName: string; callDate: string; scenario: string; scenario1: string }[];
+  words: string[];
+}
+
+/**
+ * Hierarchical CLAP drill for any keyword/signal type.
+ *
+ * @param type  'pos' = positive keywords, 'neg' = negative signals,
+ *              'social' = social/court threats, 'scam' = potential scams
+ * @param pattern  LIKE pattern (required for pos/neg, ignored for social/scam)
+ * @param clap  filter by CLAP category (null = just return clap counts)
+ * @param scenario  filter by scenario (null = return scenarios for clap)
+ * @param subScenario  filter by sub-scenario (null = return sub-scenarios for scenario)
+ */
+export async function getClapKeywordDrill(
+  filters: InboundQualityFilters,
+  type: 'pos' | 'neg' | 'social' | 'scam',
+  pattern: string,
+  clap?: string,
+  scenario?: string,
+  subScenario?: string,
+): Promise<ClapDrillResponse> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const baseParams: (string | number)[] = [startDate, endDate];
+  if (clientId) baseParams.push(clientId);
+
+  // Build WHERE clause based on type
+  let typeClause: string;
+  let typeParams: (string | number)[] = [];
+  if (type === 'pos') {
+    if (pattern) {
+      const parts = pattern.split('|').map(p => p.trim()).filter(Boolean);
+      if (parts.length === 1) {
+        const like = `%${parts[0].toLowerCase()}%`;
+        typeClause = `(LOWER(q.top_positive_words) LIKE ? OR LOWER(q.top_positive_words_agent) LIKE ?)`;
+        typeParams = [like, like];
+      } else {
+        const clauses = parts.map(() => `(LOWER(q.top_positive_words) LIKE ? OR LOWER(q.top_positive_words_agent) LIKE ?)`);
+        typeClause = `(${clauses.join(' OR ')})`;
+        typeParams = parts.flatMap(p => { const like = `%${p.toLowerCase()}%`; return [like, like]; });
+      }
+    } else {
+      typeClause = `(COALESCE(TRIM(q.top_positive_words),'') != '' OR COALESCE(TRIM(q.top_positive_words_agent),'') != '')`;
+    }
+  } else if (type === 'neg') {
+    if (pattern) {
+      const like = `%${pattern.toLowerCase()}%`;
+      typeClause = `LOWER(q.top_negative_words) LIKE ?`;
+      typeParams = [like];
+    } else {
+      typeClause = `COALESCE(TRIM(q.top_negative_words),'') != ''`;
+    }
+  } else if (type === 'social') {
+    typeClause = `(q.sensetive_word IS NOT NULL AND TRIM(q.sensetive_word) != ''
+      AND (LOWER(q.sensetive_word) LIKE '%social%' OR LOWER(q.sensetive_word) LIKE '%court%'
+        OR LOWER(q.sensetive_word) LIKE '%consumer%' OR LOWER(q.sensetive_word) LIKE '%legal%'
+        OR LOWER(q.sensetive_word) LIKE '%fir%' OR LOWER(q.sensetive_word) LIKE '%threat%'))`;
+  } else {
+    typeClause = `(LOWER(TRIM(q.financial_fraud)) = 'yes' OR LOWER(q.top_negative_words) LIKE '%scam%' OR LOWER(q.top_negative_words) LIKE '%fraud%' OR LOWER(q.top_negative_words) LIKE '%cheat%' OR LOWER(q.top_negative_words) LIKE '%fake%' OR LOWER(q.top_negative_words) LIKE '%loot%')`;
+  }
+
+  const clapFilter = clap ? ` AND ${CLAP_CASE_INBOUND} = ?` : '';
+  const scenarioFilter = scenario ? ` AND q.scenario = ?` : '';
+  const subScenarioFilter = subScenario ? ` AND COALESCE(NULLIF(TRIM(q.scenario1),''),'—') = ?` : '';
+
+  // Build params for drill levels
+  const drillParams = [...baseParams, ...typeParams];
+  if (clap) drillParams.push(clap);
+  if (scenario) drillParams.push(scenario);
+  if (subScenario) drillParams.push(subScenario);
+
+  const where = `CallDate BETWEEN ? AND ? AND quality_percentage IS NOT NULL ${clientFilter} AND ${typeClause}`;
+  const fullWhere = where + clapFilter + scenarioFilter + subScenarioFilter;
+
+  const baseParamsForWhere = [...baseParams, ...typeParams];
+
+  // Always return clap-level counts (unless a specific clap is already chosen)
+  const claps = await querySource<{ clap: string; count: number }>(
+    `SELECT ${CLAP_CASE_INBOUND} AS clap, COUNT(*) AS count
+     FROM db_audit.call_quality_assessment q
+     WHERE ${where}
+     GROUP BY clap ORDER BY count DESC`,
+    baseParamsForWhere,
+  );
+
+  let scenarios: { scenario: string; count: number; pct: number }[] = [];
+  let subScenarios: { subScenario: string; count: number; pct: number }[] = [];
+  let leads: { leadId: string; agentId: string; agentName: string; callDate: string; scenario: string; scenario1: string }[] = [];
+  let words: string[] = [];
+
+  if (clap) {
+    // Level 2: Return scenario breakdown for this CLAP
+    const rawScenarios = await querySource<{ scenario: string; count: number }>(
+      `SELECT COALESCE(NULLIF(TRIM(q.scenario),''),'Unknown') AS scenario, COUNT(*) AS count
+       FROM db_audit.call_quality_assessment q
+       WHERE ${where} AND ${CLAP_CASE_INBOUND} = ?
+       GROUP BY q.scenario ORDER BY count DESC LIMIT 20`,
+      [...baseParamsForWhere, clap],
+    );
+    const totalScenarios = rawScenarios.reduce((s, r) => s + Number(r.count), 0) || 1;
+    scenarios = rawScenarios.map(r => ({ scenario: String(r.scenario), count: Number(r.count), pct: Math.round(Number(r.count) / totalScenarios * 100) }));
+  }
+
+  if (clap && scenario) {
+    // Level 3: Return sub-scenario breakdown
+    const rawSubs = await querySource<{ subScenario: string; count: number }>(
+      `SELECT COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS subScenario, COUNT(*) AS count
+       FROM db_audit.call_quality_assessment q
+       WHERE ${where} AND ${CLAP_CASE_INBOUND} = ? AND q.scenario = ?
+       GROUP BY q.scenario1 ORDER BY count DESC LIMIT 15`,
+      [...baseParamsForWhere, clap, scenario],
+    );
+    const totalSubs = rawSubs.reduce((s, r) => s + Number(r.count), 0) || 1;
+    subScenarios = rawSubs.map(r => ({ subScenario: String(r.subScenario), count: Number(r.count), pct: Math.round(Number(r.count) / totalSubs * 100) }));
+  }
+
+  if (clap && scenario && subScenario) {
+    // Level 4: Return leads with agent name
+    leads = await querySource<{ leadId: string; agentId: string; agentName: string; callDate: string; scenario: string; scenario1: string }>(
+      `SELECT q.lead_id AS leadId, COALESCE(NULLIF(TRIM(q.User),''),'Unknown') AS agentId,
+              COALESCE(am.AgentName, q.User) AS agentName,
+              DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS callDate,
+              COALESCE(NULLIF(TRIM(q.scenario),''),'Unknown') AS scenario,
+              COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS scenario1
+       FROM db_audit.call_quality_assessment q
+       LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+       WHERE ${where} AND ${CLAP_CASE_INBOUND} = ? AND q.scenario = ? AND COALESCE(NULLIF(TRIM(q.scenario1),''),'—') = ?
+       ORDER BY q.CallDate DESC
+       LIMIT 200`,
+      [...baseParamsForWhere, clap, scenario, subScenario],
+    );
+  }
+
+  // Collect matched words (at any drill level)
+  let wordRows: { w: string }[] = [];
+  if (type === 'scam') {
+    const [negRows, fraudRows] = await Promise.all([
+      querySource<{ w: string }>(
+        `SELECT DISTINCT top_negative_words AS w FROM db_audit.call_quality_assessment q WHERE ${where} ${clap ? clapFilter : ''} ${scenario ? scenarioFilter : ''} AND top_negative_words IS NOT NULL AND TRIM(top_negative_words) != '' LIMIT 20`,
+        [...baseParamsForWhere, ...(clap ? [clap] : []), ...(scenario ? [scenario] : [])],
+      ),
+      querySource<{ w: string }>(
+        `SELECT DISTINCT financial_fraud AS w FROM db_audit.call_quality_assessment q WHERE ${where} ${clap ? clapFilter : ''} ${scenario ? scenarioFilter : ''} AND financial_fraud IS NOT NULL AND TRIM(financial_fraud) != '' LIMIT 10`,
+        [...baseParamsForWhere, ...(clap ? [clap] : []), ...(scenario ? [scenario] : [])],
+      ),
+    ]);
+    wordRows = [...negRows, ...fraudRows];
+  } else {
+    const wordField = type === 'pos' ? 'top_positive_words' : type === 'neg' ? 'top_negative_words' : 'sensetive_word';
+    wordRows = await querySource<{ w: string }>(
+      `SELECT DISTINCT ${wordField} AS w
+       FROM db_audit.call_quality_assessment q
+       WHERE ${where} ${clap ? clapFilter : ''} ${scenario ? scenarioFilter : ''} AND ${wordField} IS NOT NULL AND TRIM(${wordField}) != ''
+       LIMIT 20`,
+      [...baseParamsForWhere, ...(clap ? [clap] : []), ...(scenario ? [scenario] : [])],
+    );
+  }
+  words = [...new Set(wordRows.map(r => String(r.w)).flatMap(w => w.split(',').map(s => s.trim())).filter(Boolean))].slice(0, 30);
+
+  return {
+    claps: claps.map(r => ({ clap: String(r.clap), count: Number(r.count) })),
+    scenarios,
+    subScenarios,
+    leads: leads.map(r => ({ leadId: String(r.leadId), agentId: String(r.agentId), agentName: r.agentName || String(r.agentId), callDate: String(r.callDate), scenario: String(r.scenario), scenario1: String(r.scenario1) })),
+    words,
+  };
+}
+
+// ─── CLAP Word Analysis (Customer/Logistic/Agent/Product ± words) ──────────
+export interface ClapWordAnalysisResponse {
+  claps: {
+    clap: string;
+    positive: { word: string; count: number }[];
+    negative: { word: string; count: number }[];
+  }[];
+}
+
+function aggregateWords(rows: { words: string; cnt: number }[]): { word: string; count: number }[] {
+  const freq: Record<string, number> = {};
+  for (const r of rows) {
+    if (!r.words) continue;
+    r.words.split(',').map(w => w.trim().toLowerCase()).filter(Boolean).forEach(w => { freq[w] = (freq[w] ?? 0) + Number(r.cnt); });
+  }
+  return Object.entries(freq)
+    .map(([word, count]) => ({ word, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 20);
+}
+
+export async function getClapWords(filters: InboundQualityFilters): Promise<ClapWordAnalysisResponse> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const base = [startDate, endDate];
+  if (clientId) base.push(clientId);
+
+  // For each CLAP, get positive and negative word combinations
+  // Customer: top_positive_words / top_negative_words
+  // Agent: top_positive_words_agent / top_negative_words_agent
+  // Logistic & Product: same as Customer columns but filtered by CLAP
+  const CLAP_LABELS = ['Customer', 'Logistic', 'Agent', 'Product'] as const;
+  type ClapName = typeof CLAP_LABELS[number];
+
+  const clapQueries: { clap: ClapName; posField: string; negField: string }[] = [
+    { clap: 'Customer', posField: 'top_positive_words', negField: 'top_negative_words' },
+    { clap: 'Logistic', posField: 'top_positive_words', negField: 'top_negative_words' },
+    { clap: 'Agent',    posField: 'top_positive_words_agent', negField: 'top_negative_words_agent' },
+    { clap: 'Product',  posField: 'top_positive_words', negField: 'top_negative_words' },
+  ];
+
+  const results = await Promise.all(
+    clapQueries.map(q =>
+      Promise.all([
+        querySource<{ words: string; cnt: number }>(
+          `SELECT ${q.posField} AS words, COUNT(*) AS cnt
+           FROM db_audit.call_quality_assessment q
+           WHERE CallDate BETWEEN ? AND ? AND quality_percentage IS NOT NULL ${clientFilter}
+             AND ${CLAP_CASE_INBOUND} = ? AND ${q.posField} IS NOT NULL AND TRIM(${q.posField}) != ''
+           GROUP BY ${q.posField} ORDER BY cnt DESC LIMIT 30`,
+          [...base, q.clap],
+        ),
+        querySource<{ words: string; cnt: number }>(
+          `SELECT ${q.negField} AS words, COUNT(*) AS cnt
+           FROM db_audit.call_quality_assessment q
+           WHERE CallDate BETWEEN ? AND ? AND quality_percentage IS NOT NULL ${clientFilter}
+             AND ${CLAP_CASE_INBOUND} = ? AND ${q.negField} IS NOT NULL AND TRIM(${q.negField}) != ''
+           GROUP BY ${q.negField} ORDER BY cnt DESC LIMIT 30`,
+          [...base, q.clap],
+        ),
+      ])
+    )
+  );
+
+  return {
+    claps: results.map(([posRows, negRows], i) => ({
+      clap: clapQueries[i].clap,
+      positive: aggregateWords(posRows),
+      negative: aggregateWords(negRows),
+    })),
   };
 }
 
@@ -1804,7 +2067,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
       LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
         AND q.User IS NOT NULL AND TRIM(q.User) != '' ${clientFilter}
-      GROUP BY q.User ORDER BY fatal_count DESC, fatal_pct DESC LIMIT 5
+      GROUP BY q.User, am.AgentName ORDER BY fatal_count DESC, fatal_pct DESC LIMIT 5
     `, params),
 
     querySource<{
@@ -1872,7 +2135,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
       LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
         AND q.User IS NOT NULL AND TRIM(q.User) != '' ${clientFilter}
-      GROUP BY q.User ORDER BY fatal_count DESC, fatal_pct DESC
+      GROUP BY q.User, am.AgentName ORDER BY fatal_count DESC, fatal_pct DESC
     `, params),
   ]);
 
@@ -2094,7 +2357,7 @@ export async function getDetailAnalysis(filters: InboundQualityFilters): Promise
 // ─── Shared score SQL fragments ───────────────────────────────────────────────
 const _OPENING = `ROUND(AVG(
   CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-  ELSE COALESCE(q.customer_concern_acknowledged,0) END
+  ELSE COALESCE(q.call_answered_within_5_seconds,0) END
 )*100,1)`;
 
 const _SOFT = `ROUND(AVG(
@@ -2175,7 +2438,7 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
       AND q.quality_percentage IS NOT NULL
       AND q.User IS NOT NULL AND TRIM(q.User) != ''
       ${extra}
-    GROUP BY q.User, q.Campaign
+    GROUP BY q.User, q.Campaign, am.AgentName
     ORDER BY q.User ASC
   `, params);
 
@@ -2192,6 +2455,106 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
     resolution:     Number(r.resolution     ?? 0),
     closing:        Number(r.closing        ?? 0),
   }));
+}
+
+// ─── Agent Guidance ───────────────────────────────────────────────────────────
+
+const GUIDANCE_PARAMS = [
+  { col: 'call_answered_within_5_seconds',     label: 'Call Answered Within 5s',     cat: 'Opening Skill' },
+  { col: 'customer_concern_acknowledged',      label: 'Customer Concern Acknowledged', cat: 'Opening Skill' },
+  { col: 'professionalism_maintained',         label: 'Professionalism Maintained',   cat: 'Soft Skill' },
+  { col: 'assurance_or_appreciation_provided', label: 'Assurance / Appreciation',     cat: 'Soft Skill' },
+  { col: 'pronunciation_and_clarity',          label: 'Pronunciation & Clarity',      cat: 'Soft Skill' },
+  { col: 'enthusiasm_and_no_fumbling',         label: 'Enthusiasm & No Fumbling',     cat: 'Soft Skill' },
+  { col: 'active_listening',                   label: 'Active Listening',             cat: 'Soft Skill' },
+  { col: 'politeness_and_no_sarcasm',          label: 'Politeness & No Sarcasm',      cat: 'Soft Skill' },
+  { col: 'proper_grammar',                     label: 'Proper Grammar',               cat: 'Soft Skill' },
+  { col: 'accurate_issue_probing',             label: 'Accurate Issue Probing',       cat: 'Soft Skill' },
+  { col: 'proper_hold_procedure',              label: 'Proper Hold Procedure',        cat: 'Hold Procedure' },
+  { col: 'proper_transfer_and_language',       label: 'Proper Transfer & Language',   cat: 'Hold Procedure' },
+  { col: 'dead_air_under_10_seconds',          label: 'Dead Air Under 10s',           cat: 'Hold Procedure' },
+  { col: 'case_escalated_correctly',           label: 'Case Escalated Correctly',     cat: 'Resolution' },
+  { col: 'address_recorded_completely',        label: 'Address Recorded Completely',  cat: 'Resolution' },
+  { col: 'correct_and_complete_information',   label: 'Correct & Complete Info',      cat: 'Resolution' },
+  { col: 'upselling_or_offers_suggested',      label: 'Upselling / Offers Suggested', cat: 'Resolution' },
+  { col: 'further_assistance_offered',         label: 'Further Assistance Offered',   cat: 'Closing' },
+  { col: 'proper_call_closure',                label: 'Proper Call Closure',          cat: 'Closing' },
+] as const;
+
+export interface AgentGuidanceParam {
+  column: string; label: string; pct: number; team_avg: number; category: string;
+}
+export interface AgentGuidanceAgent {
+  agent_id: string; agent_name: string; audit_count: number; cq_score: number;
+  params: AgentGuidanceParam[];
+}
+export interface AgentGuidanceResult {
+  agents: AgentGuidanceAgent[];
+  team_params: { column: string; label: string; avg: number; category: string }[];
+}
+
+export async function getAgentGuidance(filters: InboundQualityFilters): Promise<AgentGuidanceResult> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? 'AND q.ClientId = ?' : '';
+  const baseParams: (string | number)[] = clientId
+    ? [startDate, endDate, clientId]
+    : [startDate, endDate];
+
+  const paramSelect = GUIDANCE_PARAMS.map(p =>
+    `ROUND(100.0 * SUM(CASE WHEN COALESCE(q.${p.col},0) = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS ${p.col}`
+  ).join(',\n      ');
+
+  const [teamRows, agentRows] = await Promise.all([
+    querySource<Record<string, unknown>>(`
+      SELECT ${paramSelect}
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+        ${clientFilter}
+    `, baseParams),
+    querySource<Record<string, unknown>>(`
+      SELECT
+        q.User AS agent_id,
+        COALESCE(am.AgentName, q.User) AS agent_name,
+        COUNT(*) AS audit_count,
+        ROUND(AVG(q.quality_percentage), 1) AS cq_score,
+        ${paramSelect}
+      FROM db_audit.call_quality_assessment q
+      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+        AND q.User IS NOT NULL AND TRIM(q.User) != ''
+        ${clientFilter}
+      GROUP BY q.User, am.AgentName
+      HAVING COUNT(*) >= 3
+      ORDER BY cq_score ASC
+      LIMIT 5
+    `, baseParams),
+  ]);
+
+  const teamRow = teamRows[0] ?? {};
+  const teamAvg: Record<string, number> = {};
+  for (const p of GUIDANCE_PARAMS) teamAvg[p.col] = Number(teamRow[p.col] ?? 0);
+
+  const agents: AgentGuidanceAgent[] = agentRows.map(r => ({
+    agent_id:    String(r.agent_id),
+    agent_name:  String(r.agent_name),
+    audit_count: Number(r.audit_count),
+    cq_score:    Number(r.cq_score ?? 0),
+    params: GUIDANCE_PARAMS.map(p => ({
+      column:   p.col,
+      label:    p.label,
+      pct:      Number(r[p.col] ?? 0),
+      team_avg: teamAvg[p.col],
+      category: p.cat,
+    })),
+  }));
+
+  const team_params = GUIDANCE_PARAMS.map(p => ({
+    column: p.col, label: p.label, avg: teamAvg[p.col], category: p.cat,
+  })).sort((a, b) => a.avg - b.avg);
+
+  return { agents, team_params };
 }
 
 // ─── Day Wise Quality Performance ─────────────────────────────────────────────
@@ -2686,7 +3049,7 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters): 
     FROM db_audit.call_quality_assessment q
     LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? ${extra}
-    GROUP BY q.User
+    GROUP BY q.User, am.AgentName
     ORDER BY cq_score DESC
   `, params);
 
@@ -2880,6 +3243,271 @@ export async function insertAgentMaster(data: {
   `, [data.masId, data.agentName, data.lob]);
 }
 
+// ─── TNI Detection Analysis ───────────────────────────────────────────────────
+
+export interface TNIAgentRow {
+  agent_id:          string;
+  audit_count:       number;
+  soft_skills:       number;
+  process_knowledge: number;
+  communication:     number;
+  tni_score:         number;
+}
+
+export interface TNIWeekRow {
+  agent_id:          string;
+  week_label:        string;
+  soft_skills:       number;
+  process_knowledge: number;
+  communication:     number;
+}
+
+export interface TNISummary {
+  active_agents:          number;
+  total_audits:           number;
+  avg_soft_skills:        number;
+  avg_process_knowledge:  number;
+  avg_communication:      number;
+}
+
+export interface TNIResult {
+  summary: TNISummary;
+  agents:  TNIAgentRow[];
+  weeks:   TNIWeekRow[];
+}
+
+const _TNI_SS = `ROUND(AVG(
+    (COALESCE(q.customer_concern_acknowledged,0) +
+     COALESCE(q.professionalism_maintained,0) +
+     COALESCE(q.assurance_or_appreciation_provided,0) +
+     COALESCE(q.express_empathy,0) +
+     COALESCE(q.enthusiasm_and_no_fumbling,0) +
+     COALESCE(q.active_listening,0) +
+     COALESCE(q.politeness_and_no_sarcasm,0) +
+     COALESCE(q.proper_call_closure,0)
+    ) / 8.0 * 100
+  ), 1)`;
+
+const _TNI_PK = `ROUND(AVG(
+    (COALESCE(q.accurate_issue_probing,0) +
+     COALESCE(q.proper_hold_procedure,0) +
+     COALESCE(q.proper_transfer_and_language,0) +
+     COALESCE(q.address_recorded_completely,0) +
+     COALESCE(q.correct_and_complete_information,0)
+    ) / 5.0 * 100
+  ), 1)`;
+
+const _TNI_CS = `ROUND(AVG(
+    (COALESCE(q.pronunciation_and_clarity,0) +
+     COALESCE(q.proper_grammar,0)
+    ) / 2.0 * 100
+  ), 1)`;
+
+export async function getTNIAnalysis(filters: InboundQualityFilters): Promise<TNIResult> {
+  const { startDate, endDate, clientId } = filters;
+  const params: (string | number)[] = [startDate, endDate];
+  const extra = clientId ? ' AND q.ClientId = ?' : '';
+  if (clientId) params.push(clientId);
+
+  const agentRows = await querySource<{
+    agent_id: string; audit_count: number;
+    soft_skills: number | null; process_knowledge: number | null; communication: number | null;
+  }>(`
+    SELECT
+      COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown') AS agent_id,
+      COUNT(*)                                       AS audit_count,
+      ${_TNI_SS}                                     AS soft_skills,
+      ${_TNI_PK}                                     AS process_knowledge,
+      ${_TNI_CS}                                     AS communication
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${extra}
+    GROUP BY q.User
+    ORDER BY soft_skills ASC
+  `, params);
+
+  const weekRows = await querySource<{
+    agent_id: string; week_label: string;
+    soft_skills: number | null; process_knowledge: number | null; communication: number | null;
+  }>(`
+    SELECT
+      COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown') AS agent_id,
+      CASE
+        WHEN DAYOFMONTH(q.CallDate) BETWEEN 1  AND 7  THEN 'Week-1'
+        WHEN DAYOFMONTH(q.CallDate) BETWEEN 8  AND 14 THEN 'Week-2'
+        WHEN DAYOFMONTH(q.CallDate) BETWEEN 15 AND 21 THEN 'Week-3'
+        ELSE 'Week-4'
+      END                                            AS week_label,
+      ${_TNI_SS}                                     AS soft_skills,
+      ${_TNI_PK}                                     AS process_knowledge,
+      ${_TNI_CS}                                     AS communication
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${extra}
+    GROUP BY q.User, week_label
+    ORDER BY q.User ASC, MIN(q.CallDate) ASC
+  `, params);
+
+  const agents = agentRows.map(r => {
+    const ss   = Number(r.soft_skills       ?? 0);
+    const pk   = Number(r.process_knowledge ?? 0);
+    const comm = Number(r.communication     ?? 0);
+    return {
+      agent_id:          String(r.agent_id),
+      audit_count:       Number(r.audit_count),
+      soft_skills:       ss,
+      process_knowledge: pk,
+      communication:     comm,
+      tni_score:         Math.round((ss * 8 + pk * 5 + comm * 2) / 15 * 10) / 10,
+    };
+  });
+
+  const n = agents.length || 1;
+  return {
+    summary: {
+      active_agents:         agents.length,
+      total_audits:          agents.reduce((s, a) => s + a.audit_count, 0),
+      avg_soft_skills:       Math.round(agents.reduce((s, a) => s + a.soft_skills,       0) / n * 10) / 10,
+      avg_process_knowledge: Math.round(agents.reduce((s, a) => s + a.process_knowledge, 0) / n * 10) / 10,
+      avg_communication:     Math.round(agents.reduce((s, a) => s + a.communication,     0) / n * 10) / 10,
+    },
+    agents,
+    weeks: weekRows.map(r => ({
+      agent_id:          String(r.agent_id),
+      week_label:        String(r.week_label),
+      soft_skills:       Number(r.soft_skills       ?? 0),
+      process_knowledge: Number(r.process_knowledge ?? 0),
+      communication:     Number(r.communication     ?? 0),
+    })),
+  };
+}
+
+// ─── TNI Agent Parameter Drill ────────────────────────────────────────────────
+
+export interface TNIAgentParamRow {
+  customer_concern_acknowledged:      number;
+  professionalism_maintained:         number;
+  assurance_or_appreciation_provided: number;
+  express_empathy:                    number;
+  enthusiasm_and_no_fumbling:         number;
+  active_listening:                   number;
+  politeness_and_no_sarcasm:          number;
+  proper_call_closure:                number;
+  accurate_issue_probing:             number;
+  proper_hold_procedure:              number;
+  proper_transfer_and_language:       number;
+  address_recorded_completely:        number;
+  correct_and_complete_information:   number;
+  pronunciation_and_clarity:          number;
+  proper_grammar:                     number;
+}
+
+export async function getTNIAgentParams(
+  filters: InboundQualityFilters & { agentId: string }
+): Promise<TNIAgentParamRow> {
+  const { startDate, endDate, clientId, agentId } = filters;
+  const params: (string | number)[] = [startDate, endDate, agentId];
+  const extra = clientId ? ' AND q.ClientId = ?' : '';
+  if (clientId) params.push(clientId);
+
+  const [row] = await querySource<Record<string, number | null>>(`
+    SELECT
+      ROUND(AVG(COALESCE(q.customer_concern_acknowledged,0))      * 100, 1) AS customer_concern_acknowledged,
+      ROUND(AVG(COALESCE(q.professionalism_maintained,0))         * 100, 1) AS professionalism_maintained,
+      ROUND(AVG(COALESCE(q.assurance_or_appreciation_provided,0)) * 100, 1) AS assurance_or_appreciation_provided,
+      ROUND(AVG(COALESCE(q.express_empathy,0))                    * 100, 1) AS express_empathy,
+      ROUND(AVG(COALESCE(q.enthusiasm_and_no_fumbling,0))         * 100, 1) AS enthusiasm_and_no_fumbling,
+      ROUND(AVG(COALESCE(q.active_listening,0))                   * 100, 1) AS active_listening,
+      ROUND(AVG(COALESCE(q.politeness_and_no_sarcasm,0))          * 100, 1) AS politeness_and_no_sarcasm,
+      ROUND(AVG(COALESCE(q.proper_call_closure,0))                * 100, 1) AS proper_call_closure,
+      ROUND(AVG(COALESCE(q.accurate_issue_probing,0))             * 100, 1) AS accurate_issue_probing,
+      ROUND(AVG(COALESCE(q.proper_hold_procedure,0))              * 100, 1) AS proper_hold_procedure,
+      ROUND(AVG(COALESCE(q.proper_transfer_and_language,0))       * 100, 1) AS proper_transfer_and_language,
+      ROUND(AVG(COALESCE(q.address_recorded_completely,0))        * 100, 1) AS address_recorded_completely,
+      ROUND(AVG(COALESCE(q.correct_and_complete_information,0))   * 100, 1) AS correct_and_complete_information,
+      ROUND(AVG(COALESCE(q.pronunciation_and_clarity,0))          * 100, 1) AS pronunciation_and_clarity,
+      ROUND(AVG(COALESCE(q.proper_grammar,0))                     * 100, 1) AS proper_grammar
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND TRIM(q.User) = ?
+      AND q.quality_percentage IS NOT NULL
+      ${extra}
+  `, params);
+
+  const n = (k: string) => Number(row?.[k] ?? 0);
+  return {
+    customer_concern_acknowledged:      n('customer_concern_acknowledged'),
+    professionalism_maintained:         n('professionalism_maintained'),
+    assurance_or_appreciation_provided: n('assurance_or_appreciation_provided'),
+    express_empathy:                    n('express_empathy'),
+    enthusiasm_and_no_fumbling:         n('enthusiasm_and_no_fumbling'),
+    active_listening:                   n('active_listening'),
+    politeness_and_no_sarcasm:          n('politeness_and_no_sarcasm'),
+    proper_call_closure:                n('proper_call_closure'),
+    accurate_issue_probing:             n('accurate_issue_probing'),
+    proper_hold_procedure:              n('proper_hold_procedure'),
+    proper_transfer_and_language:       n('proper_transfer_and_language'),
+    address_recorded_completely:        n('address_recorded_completely'),
+    correct_and_complete_information:   n('correct_and_complete_information'),
+    pronunciation_and_clarity:          n('pronunciation_and_clarity'),
+    proper_grammar:                     n('proper_grammar'),
+  };
+}
+
+// ─── TNI Manager Comments ─────────────────────────────────────────────────────
+
+export interface TNICommentRow {
+  agent_id:    string;
+  client_id:   string;
+  comment:     string;
+  updated_by:  string;
+  updated_at:  string;
+}
+
+async function ensureTNICommentsTable(): Promise<void> {
+  await querySource(`
+    CREATE TABLE IF NOT EXISTS db_audit.tni_manager_comments (
+      id         INT AUTO_INCREMENT PRIMARY KEY,
+      agent_id   VARCHAR(50)  NOT NULL,
+      client_id  VARCHAR(50)  NOT NULL DEFAULT '',
+      comment    TEXT         DEFAULT '',
+      updated_by VARCHAR(100) DEFAULT '',
+      updated_at TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_agent_client (agent_id, client_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+}
+
+export async function getTNIComments(clientId?: string): Promise<TNICommentRow[]> {
+  await ensureTNICommentsTable();
+  const extra = clientId ? ' WHERE client_id = ?' : '';
+  const params = clientId ? [clientId] : [];
+  const rows = await querySource<{ agent_id: string; client_id: string; comment: string; updated_by: string; updated_at: Date }>(`
+    SELECT agent_id, client_id, comment, updated_by, updated_at
+    FROM db_audit.tni_manager_comments${extra}
+  `, params);
+  return rows.map(r => ({
+    agent_id:   String(r.agent_id),
+    client_id:  String(r.client_id),
+    comment:    String(r.comment ?? ''),
+    updated_by: String(r.updated_by ?? ''),
+    updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : '',
+  }));
+}
+
+export async function upsertTNIComment(
+  agentId: string, clientId: string, comment: string, updatedBy: string
+): Promise<void> {
+  await ensureTNICommentsTable();
+  await querySource(`
+    INSERT INTO db_audit.tni_manager_comments (agent_id, client_id, comment, updated_by)
+    VALUES (?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE comment = VALUES(comment), updated_by = VALUES(updated_by), updated_at = CURRENT_TIMESTAMP
+  `, [agentId, clientId, comment, updatedBy]);
+}
+
 // ─── Fatal Calls List ─────────────────────────────────────────────────────────
 export interface FatalCallItem {
   lead_id:        string;
@@ -2889,6 +3517,7 @@ export interface FatalCallItem {
   scenario1:      string;
   failed_params:  string[];
   negative_words: string;
+  score?:         number;
 }
 
 const FATAL_PARAM_LABELS: Record<string, string> = {
@@ -2912,6 +3541,43 @@ const FATAL_PARAM_LABELS: Record<string, string> = {
   further_assistance_offered:         'Further Assistance Offered',
   proper_call_closure:                'Proper Call Closure',
 };
+
+export async function getAgentCalls(filters: InboundQualityFilters & { agentId: string }): Promise<FatalCallItem[]> {
+  const { startDate, endDate, clientId, agentId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  const rows = await querySource<{
+    lead_id: string; agent_id: string; call_date: string;
+    scenario: string; scenario1: string; score: number;
+  }>(`
+    SELECT
+      COALESCE(q.lead_id, '')                                       AS lead_id,
+      COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown')                 AS agent_id,
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                     AS call_date,
+      COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')            AS scenario,
+      COALESCE(NULLIF(TRIM(q.scenario1), ''), '—')                  AS scenario1,
+      ROUND(q.quality_percentage, 1)                                AS score
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      AND TRIM(q.User) = ?
+      ${clientFilter}
+    ORDER BY q.CallDate DESC
+    LIMIT 300
+  `, [...params, agentId]);
+
+  return rows.map(r => ({
+    lead_id:        String(r.lead_id),
+    agent_id:       String(r.agent_id),
+    call_date:      String(r.call_date),
+    scenario:       String(r.scenario),
+    scenario1:      String(r.scenario1),
+    score:          Number(r.score),
+    failed_params:  [],
+    negative_words: '',
+  }));
+}
 
 export async function getFatalCallsList(filters: InboundQualityFilters): Promise<FatalCallItem[]> {
   const { startDate, endDate, clientId } = filters;
@@ -2976,4 +3642,188 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
       negative_words: String(r.negative_words),
     };
   });
+}
+
+// ── CLAP Customer Product Analysis ─────────────────────────────────────────
+
+const PRODUCT_KEYWORDS: [string, string][] = [
+  ['ceo man',          'CEO Man Perfume'],
+  ['date woman',       'DATE Woman Perfume'],
+  ['skai',             'SKAI Aquatic Perfume'],
+  ['klub',             'KLUB Man Perfume'],
+  ['g.o.a.t',          'G.O.A.T. Man Perfume'],
+  ['hot mess',         'HOT Mess Perfume'],
+  ['night fever',      'Night Fever Perfume'],
+  ['dynamite',         'Dynamite Perfume'],
+  ['oud white',        'OUD WHITE Perfume'],
+  ['white oud',        'WHITE Oud Perfume'],
+  ['honey oud',        'HONEY Oud Perfume'],
+  ['dark oud',         'DARK Oud Perfume'],
+  ['narco',            'Narco Perfume'],
+  ['senorita',         'SENORITA Woman Perfume'],
+  ['glam woman',       'GLAM Woman Perfume'],
+  ['ghost',            'Ghost Perfume'],
+  ['impact man',       'IMPACT Man Perfume'],
+  ['blush parfum',     'Blush Parfum'],
+  ['beast',            'Beast Perfume'],
+  ['ocean man',        'OCEAN Man Perfume'],
+  ['blu man',          'BLU Man Perfume'],
+  ['growbrow',         'Growbrow'],
+  ['deo pack',         'Deo Pack'],
+  ['niacinamide',      'Niacinamide Face Wash'],
+  ['sunscreen',        'Sunscreen SPF 50'],
+  ['rose woman',       'ROSE Woman Perfume'],
+  ['mood collection',  'Mood Collection Gift Set'],
+  ['luxury perfume',   'Luxury Perfume Gift Set'],
+  ['discovery gift',   'Discovery Gift Set'],
+];
+
+function buildProductCaseInbound(): string {
+  const whens = PRODUCT_KEYWORDS
+    .map(([kw, name]) => `WHEN LOWER(q.Transcribe_Text) LIKE '%${kw}%' THEN '${name}'`)
+    .join('\n        ');
+  return `CASE\n        ${whens}\n        ELSE NULL\n      END`;
+}
+
+function wordListFromRaw(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const freq: Record<string, number> = {};
+  raw.split('|').forEach(phrase => {
+    phrase.split(',').map(w => w.trim().toLowerCase()).filter(w => w.length > 2).forEach(w => {
+      freq[w] = (freq[w] ?? 0) + 1;
+    });
+  });
+  return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([w]) => w);
+}
+
+export interface ClapScenarioCount { scenario: string; count: number; }
+export interface ClapCustomerProduct {
+  name: string;
+  total: number;
+  pos: number;
+  neg: number;
+  posWords: string[];
+  negWords: string[];
+  scenarioBreakdown: ClapScenarioCount[];
+}
+export interface ClapCustomerBranch {
+  clap: string;
+  total: number;
+  pos: number;
+  neg: number;
+  posWords: string[];
+  negWords: string[];
+  scenarioBreakdown: ClapScenarioCount[];
+  products: ClapCustomerProduct[];
+}
+export interface ClapCustomerAnalysis {
+  overall: { total: number; pos: number; neg: number };
+  branches: ClapCustomerBranch[];
+}
+
+export async function getClapCustomerAnalysis(filters: InboundQualityFilters): Promise<ClapCustomerAnalysis> {
+  const { startDate, endDate, clientId } = filters;
+  const cf = clientId ? ' AND q.ClientId = ?' : '';
+  const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+  const productCase = buildProductCaseInbound();
+
+  const [overallRows, branchRows, productRows, productScenRows, logisticScenRows] = await Promise.all([
+    // 1. Overall totals
+    querySource<{ total: number; pos: number; neg: number }>(`
+      SELECT COUNT(*) AS total,
+        SUM(CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END) AS pos,
+        SUM(CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END) AS neg
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+    `, base),
+
+    // 2. Per-branch totals — Agent uses agent-specific word columns
+    querySource<{ clap: string; total: number; pos: number; neg: number; pw: string; nw: string; apw: string; anw: string }>(`
+      SELECT ${CLAP_CASE_INBOUND} AS clap,
+        COUNT(*) AS total,
+        SUM(CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END) AS pos,
+        SUM(CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END) AS neg,
+        LEFT(GROUP_CONCAT(q.top_positive_words      SEPARATOR '|'), 3000) AS pw,
+        LEFT(GROUP_CONCAT(q.top_negative_words      SEPARATOR '|'), 3000) AS nw,
+        LEFT(GROUP_CONCAT(NULLIF(q.top_positive_words_agent,'') SEPARATOR '|'), 3000) AS apw,
+        LEFT(GROUP_CONCAT(NULLIF(q.top_negative_words_agent,'') SEPARATOR '|'), 3000) AS anw
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+        AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
+      GROUP BY clap ORDER BY total DESC
+    `, base),
+
+    // 3. Per-product totals (all three branches, product detected via Transcribe_Text)
+    querySource<{ clap: string; product: string; total: number; pos: number; neg: number; pw: string; nw: string }>(`
+      SELECT ${CLAP_CASE_INBOUND} AS clap,
+        ${productCase} AS product,
+        COUNT(*) AS total,
+        SUM(CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END) AS pos,
+        SUM(CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END) AS neg,
+        LEFT(GROUP_CONCAT(q.top_positive_words SEPARATOR '|'), 2000) AS pw,
+        LEFT(GROUP_CONCAT(q.top_negative_words SEPARATOR '|'), 2000) AS nw
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+        AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
+        AND q.Transcribe_Text IS NOT NULL AND q.Transcribe_Text != ''
+        AND ${productCase} IS NOT NULL
+      GROUP BY clap, product ORDER BY clap, total DESC
+    `, base),
+
+    // 4. Per-product per-scenario counts (for Product & Logistic drill)
+    querySource<{ clap: string; product: string; scenario: string; cnt: number }>(`
+      SELECT ${CLAP_CASE_INBOUND} AS clap,
+        ${productCase} AS product,
+        q.scenario,
+        COUNT(*) AS cnt
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+        AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
+        AND q.Transcribe_Text IS NOT NULL AND q.Transcribe_Text != ''
+        AND ${productCase} IS NOT NULL
+      GROUP BY clap, product, q.scenario ORDER BY clap, product, cnt DESC
+    `, base),
+
+    // 5. Logistic overall scenario breakdown (all calls, not filtered by product)
+    querySource<{ scenario: string; cnt: number }>(`
+      SELECT q.scenario, COUNT(*) AS cnt
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+        AND ${CLAP_CASE_INBOUND} = 'Logistic'
+      GROUP BY q.scenario ORDER BY cnt DESC
+    `, base),
+  ]);
+
+  const overall = overallRows[0] ?? { total: 0, pos: 0, neg: 0 };
+
+  const branches: ClapCustomerBranch[] = branchRows.map(br => {
+    const clap = String(br.clap);
+    const isAgent = clap === 'Agent';
+    return {
+      clap,
+      total: Number(br.total),
+      pos:   Number(br.pos),
+      neg:   Number(br.neg),
+      posWords: wordListFromRaw(isAgent ? (br.apw as unknown as string) : (br.pw as unknown as string)),
+      negWords: wordListFromRaw(isAgent ? (br.anw as unknown as string) : (br.nw as unknown as string)),
+      scenarioBreakdown: clap === 'Logistic'
+        ? logisticScenRows.map(r => ({ scenario: String(r.scenario), count: Number(r.cnt) }))
+        : [],
+      products: productRows
+        .filter(pr => pr.clap === clap && pr.product)
+        .map(pr => ({
+          name:     String(pr.product),
+          total:    Number(pr.total),
+          pos:      Number(pr.pos),
+          neg:      Number(pr.neg),
+          posWords: wordListFromRaw(pr.pw as unknown as string),
+          negWords: wordListFromRaw(pr.nw as unknown as string),
+          scenarioBreakdown: productScenRows
+            .filter(s => s.clap === clap && s.product === pr.product)
+            .map(s => ({ scenario: String(s.scenario), count: Number(s.cnt) })),
+        })),
+    };
+  });
+
+  return { overall: { total: Number(overall.total), pos: Number(overall.pos), neg: Number(overall.neg) }, branches };
 }

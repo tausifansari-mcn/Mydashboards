@@ -90,6 +90,17 @@ export async function getAgentNPS(req: Request, res: Response) {
   }
 }
 
+export async function getClapAnalysis(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getClapAnalysis(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
 export async function getMissingAgents(req: Request, res: Response) {
   try {
     const filters = parseDateRange(req);
@@ -107,6 +118,17 @@ export async function insertAgentMaster(req: Request, res: Response) {
     if (!agentId || !agentName) { res.status(400).json({ message: 'agentId and agentName required' }); return; }
     await svc.insertAgentMaster({ masId: agentId, agentName, lob: lob ?? 'Outbound' });
     res.json({ success: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getMagicalScript(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getMagicalScript(filters);
+    res.json({ data });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ message: msg });
