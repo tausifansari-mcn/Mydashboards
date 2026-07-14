@@ -15,10 +15,10 @@ import api from '@/lib/axios';
 const BLUE      = '#1565C0';
 const BLUE_DARK = '#0D47A1';
 
-const mainLinks = [
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Launcher' },
-  { to: '/sales',     icon: Package,         label: 'Sales' },
-  { to: '/quality',   icon: BarChart3,       label: 'AI Quality' },
+const BASE_LINKS = [
+  { to: '/dashboard', icon: LayoutDashboard, labelAdmin: 'Launcher', labelClient: 'Home', hideForClient: true },
+  { to: '/sales',     icon: Package,         labelAdmin: 'Sales',    labelClient: 'Sales',    requireSlug: 'sales' },
+  { to: '/quality',   icon: BarChart3,       labelAdmin: 'AI Quality', labelClient: 'AI Quality' },
 ];
 
 const ALL_INBOUND_PROJECTS = [
@@ -46,11 +46,19 @@ const accountLinks = [
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
   const { sidebarExpanded, toggleSidebar } = useUIStore();
-  const { canAccessInboundSlug } = useProcessStore();
+  const { canAccessInboundSlug, dashboardSlugs, isSuperAdmin: isAdminProcess } = useProcessStore();
   const navigate = useNavigate();
   const isSuperAdmin = user?.role === 'super_admin';
 
   const inboundProjects = ALL_INBOUND_PROJECTS.filter((p) => canAccessInboundSlug(p.slug));
+
+  const mainLinks = BASE_LINKS
+    .filter((l) => {
+      if (!isSuperAdmin && (l as { hideForClient?: boolean }).hideForClient) return false;
+      if (l.requireSlug && !isSuperAdmin && !dashboardSlugs.includes(l.requireSlug)) return false;
+      return true;
+    })
+    .map((l) => ({ to: l.to, icon: l.icon, label: isSuperAdmin ? l.labelAdmin : l.labelClient }));
 
   const handleLogout = async () => {
     try { await api.post('/auth/logout'); } catch { /* ignore */ }
@@ -105,9 +113,10 @@ export default function Sidebar() {
           <SidebarExpandableItem
             icon={Phone}
             label="Inbound"
-            parentTo="/inbound"
+            parentTo={!isSuperAdmin && inboundProjects.length === 1 ? inboundProjects[0].to : '/inbound'}
             subItems={inboundProjects}
             sidebarExpanded={sidebarExpanded}
+            singleProject={!isSuperAdmin && inboundProjects.length === 1}
           />
         </SidebarSection>
 
@@ -128,9 +137,13 @@ export default function Sidebar() {
       {sidebarExpanded && user && (
         <div className="px-3 py-3 flex-shrink-0" style={{ borderTop: '1px solid rgba(255,255,255,0.1)', backgroundColor: 'rgba(0,0,0,0.2)' }}>
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
-              <span className="text-[11px] font-bold text-white">{user.name?.charAt(0).toUpperCase()}</span>
-            </div>
+            {user.avatar_url ? (
+              <img src={user.avatar_url} alt={user.name} className="w-7 h-7 rounded-full object-cover shrink-0 border border-white/20" />
+            ) : (
+              <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
+                <span className="text-[11px] font-bold text-white">{user.name?.charAt(0).toUpperCase()}</span>
+              </div>
+            )}
             <div className="min-w-0">
               <p className="text-xs font-semibold text-white truncate">{user.name}</p>
               <p className="text-[10px] truncate" style={{ color: 'rgba(255,255,255,0.5)' }}>{user.email}</p>
@@ -240,21 +253,51 @@ function SidebarExpandableItem({
   parentTo,
   subItems,
   sidebarExpanded,
+  singleProject = false,
 }: {
   icon: React.ElementType;
   label: string;
   parentTo: string;
   subItems: Array<{ to: string; icon: string; label: string }>;
   sidebarExpanded: boolean;
+  singleProject?: boolean;
 }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const isParentActive = location.pathname.startsWith(parentTo);
+  const isParentActive = location.pathname.startsWith('/inbound');
   const [open, setOpen] = useState(isParentActive);
 
   useEffect(() => {
     if (isParentActive) setOpen(true);
   }, [location.pathname, isParentActive]);
+
+  // Single-project users: render a plain nav link, no dropdown
+  if (singleProject) {
+    return (
+      <NavLink
+        to={parentTo}
+        className={({ isActive }) => cn(
+          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150',
+          !sidebarExpanded && 'justify-center'
+        )}
+        style={({ isActive }) => ({
+          backgroundColor: isActive ? 'rgba(255,255,255,0.18)' : 'transparent',
+          color: '#ffffff',
+        })}
+        onMouseEnter={(e) => { const el = e.currentTarget as HTMLAnchorElement; if (!el.style.backgroundColor.includes('0.18')) el.style.backgroundColor = 'rgba(255,255,255,0.12)'; }}
+        onMouseLeave={(e) => { const el = e.currentTarget as HTMLAnchorElement; if (!el.style.backgroundColor.includes('0.18')) el.style.backgroundColor = 'transparent'; }}
+      >
+        <Icon className="h-4 w-4 flex-shrink-0" />
+        <AnimatePresence>
+          {sidebarExpanded && (
+            <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="whitespace-nowrap font-medium">
+              {subItems[0]?.label ?? label}
+            </motion.span>
+          )}
+        </AnimatePresence>
+      </NavLink>
+    );
+  }
 
   if (!sidebarExpanded) {
     return (
@@ -305,7 +348,7 @@ function SidebarExpandableItem({
           >
             <div className="ml-3 mt-0.5 pl-2 space-y-0.5 py-1" style={{ borderLeft: '2px solid rgba(255,255,255,0.2)' }}>
               <NavLink
-                to={parentTo}
+                to="/inbound"
                 end
                 className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-all"
                 style={({ isActive }) => ({

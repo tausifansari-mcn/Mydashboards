@@ -3077,6 +3077,8 @@ export interface RawDataRow {
   quality_percentage: number;
   top_negative_words: string;
   top_positive_words: string;
+  top_negative_words_agent: string;
+  top_positive_words_agent: string;
   Transcribe_Text: string;
   call_answered_within_5_seconds: string;
   customer_concern_acknowledged: string;
@@ -3117,6 +3119,8 @@ export async function getRawData(filters: InboundQualityFilters): Promise<RawDat
       COALESCE(q.quality_percentage, 0)                           AS quality_percentage,
       COALESCE(q.top_negative_words, '')                          AS top_negative_words,
       COALESCE(q.top_positive_words, '')                          AS top_positive_words,
+      COALESCE(q.top_negative_words_agent, '')                    AS top_negative_words_agent,
+      COALESCE(q.top_positive_words_agent, '')                    AS top_positive_words_agent,
       COALESCE(q.Transcribe_Text, '')                             AS Transcribe_Text,
       COALESCE(q.call_answered_within_5_seconds, '')              AS call_answered_within_5_seconds,
       COALESCE(q.customer_concern_acknowledged, '')               AS customer_concern_acknowledged,
@@ -3156,6 +3160,8 @@ export async function getRawData(filters: InboundQualityFilters): Promise<RawDat
     quality_percentage:                 Number(r.quality_percentage),
     top_negative_words:                 String(r.top_negative_words),
     top_positive_words:                 String(r.top_positive_words),
+    top_negative_words_agent:           String(r.top_negative_words_agent),
+    top_positive_words_agent:           String(r.top_positive_words_agent),
     Transcribe_Text:                    String(r.Transcribe_Text),
     call_answered_within_5_seconds:     String(r.call_answered_within_5_seconds),
     customer_concern_acknowledged:      String(r.customer_concern_acknowledged),
@@ -3186,6 +3192,14 @@ export interface AgentMasterRow {
   masId:     string;
   agentName: string;
   lob:       string;
+}
+
+export async function updateAgentName(masId: string, agentName: string): Promise<void> {
+  await querySource(`
+    INSERT INTO shivamgiri.AgentsMaster (MasId, AgentName, Lob, CreatedAt)
+    VALUES (?, ?, '', NOW())
+    ON DUPLICATE KEY UPDATE AgentName = VALUES(AgentName)
+  `, [masId, agentName]);
 }
 
 export async function getAgentMaster(): Promise<AgentMasterRow[]> {
@@ -3696,7 +3710,22 @@ function wordListFromRaw(raw: string | null | undefined): string[] {
   return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([w]) => w);
 }
 
-export interface ClapScenarioCount { scenario: string; count: number; }
+// Agent phrase columns store full phrases per call (not comma-separated words)
+function agentPhraseListFromRaw(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const SKIP = new Set(['none','n/a','not applicable','not available','null','']);
+  const freq: Record<string, number> = {};
+  raw.split('|').forEach(p => {
+    const phrase = p.trim();
+    if (!phrase || SKIP.has(phrase.toLowerCase())) return;
+    const key = phrase.toLowerCase();
+    freq[key] = (freq[key] ?? 0) + 1;
+  });
+  return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([p]) => p);
+}
+
+export interface ClapSubScen { sub: string; count: number; }
+export interface ClapScenWithSubs { scenario: string; count: number; subs: ClapSubScen[]; }
 export interface ClapCustomerProduct {
   name: string;
   total: number;
@@ -3704,7 +3733,7 @@ export interface ClapCustomerProduct {
   neg: number;
   posWords: string[];
   negWords: string[];
-  scenarioBreakdown: ClapScenarioCount[];
+  scenarioBreakdown: ClapScenWithSubs[];
 }
 export interface ClapCustomerBranch {
   clap: string;
@@ -3713,12 +3742,36 @@ export interface ClapCustomerBranch {
   neg: number;
   posWords: string[];
   negWords: string[];
-  scenarioBreakdown: ClapScenarioCount[];
+  scenarioBreakdown: ClapScenWithSubs[];
   products: ClapCustomerProduct[];
+  agentAllTotal?: number;
+  agentAllPos?: number;
+  agentAllNeg?: number;
+  agentAllPosWords?: string[];
+  agentAllNegWords?: string[];
 }
 export interface ClapCustomerAnalysis {
   overall: { total: number; pos: number; neg: number };
   branches: ClapCustomerBranch[];
+}
+
+function groupScenWithSubs(rows: { scenario: string; sub_scenario: string; cnt: number }[]): ClapScenWithSubs[] {
+  const map = new Map<string, { count: number; subs: Map<string, number> }>();
+  for (const r of rows) {
+    const scen = String(r.scenario);
+    const sub = String(r.sub_scenario ?? '');
+    if (!map.has(scen)) map.set(scen, { count: 0, subs: new Map() });
+    const entry = map.get(scen)!;
+    entry.count += Number(r.cnt);
+    if (sub && sub !== '—') entry.subs.set(sub, (entry.subs.get(sub) ?? 0) + Number(r.cnt));
+  }
+  return Array.from(map.entries())
+    .sort((a, b) => b[1].count - a[1].count)
+    .map(([scenario, { count, subs }]) => ({
+      scenario,
+      count,
+      subs: Array.from(subs.entries()).sort((a, b) => b[1] - a[1]).map(([sub, count]) => ({ sub, count })),
+    }));
 }
 
 export async function getClapCustomerAnalysis(filters: InboundQualityFilters): Promise<ClapCustomerAnalysis> {
@@ -3727,7 +3780,7 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
   const productCase = buildProductCaseInbound();
 
-  const [overallRows, branchRows, productRows, productScenRows, logisticScenRows] = await Promise.all([
+  const [overallRows, branchRows, productRows, productScenRows, branchScenRows, agentAllRows] = await Promise.all([
     // 1. Overall totals
     querySource<{ total: number; pos: number; neg: number }>(`
       SELECT COUNT(*) AS total,
@@ -3741,12 +3794,20 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
     querySource<{ clap: string; total: number; pos: number; neg: number; pw: string; nw: string; apw: string; anw: string }>(`
       SELECT ${CLAP_CASE_INBOUND} AS clap,
         COUNT(*) AS total,
-        SUM(CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END) AS pos,
-        SUM(CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END) AS neg,
+        SUM(CASE
+          WHEN (${CLAP_CASE_INBOUND}) = 'Agent'
+            THEN CASE WHEN q.top_positive_words_agent IS NOT NULL AND q.top_positive_words_agent != '' THEN 1 ELSE 0 END
+          ELSE CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END
+        END) AS pos,
+        SUM(CASE
+          WHEN (${CLAP_CASE_INBOUND}) = 'Agent'
+            THEN CASE WHEN q.top_negative_words_agent IS NOT NULL AND q.top_negative_words_agent != '' THEN 1 ELSE 0 END
+          ELSE CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END
+        END) AS neg,
         LEFT(GROUP_CONCAT(q.top_positive_words      SEPARATOR '|'), 3000) AS pw,
         LEFT(GROUP_CONCAT(q.top_negative_words      SEPARATOR '|'), 3000) AS nw,
-        LEFT(GROUP_CONCAT(NULLIF(q.top_positive_words_agent,'') SEPARATOR '|'), 3000) AS apw,
-        LEFT(GROUP_CONCAT(NULLIF(q.top_negative_words_agent,'') SEPARATOR '|'), 3000) AS anw
+        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_positive_words_agent),'') SEPARATOR '|'), 8000) AS apw,
+        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_negative_words_agent),'') SEPARATOR '|'), 8000) AS anw
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
         AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
@@ -3770,31 +3831,53 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
       GROUP BY clap, product ORDER BY clap, total DESC
     `, base),
 
-    // 4. Per-product per-scenario counts (for Product & Logistic drill)
-    querySource<{ clap: string; product: string; scenario: string; cnt: number }>(`
-      SELECT ${CLAP_CASE_INBOUND} AS clap,
-        ${productCase} AS product,
-        q.scenario,
-        COUNT(*) AS cnt
-      FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
-        AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
-        AND q.Transcribe_Text IS NOT NULL AND q.Transcribe_Text != ''
-        AND ${productCase} IS NOT NULL
-      GROUP BY clap, product, q.scenario ORDER BY clap, product, cnt DESC
+    // 4. Per-product per-scenario+sub counts (subquery avoids GROUP BY alias issue)
+    querySource<{ clap: string; product: string; scenario: string; sub_scenario: string; cnt: number }>(`
+      SELECT t.clap, t.product, t.scenario, t.sub_scenario, COUNT(*) AS cnt
+      FROM (
+        SELECT (${CLAP_CASE_INBOUND}) AS clap,
+          (${productCase}) AS product,
+          q.scenario,
+          COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
+        FROM db_audit.call_quality_assessment q
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+          AND q.Transcribe_Text IS NOT NULL AND q.Transcribe_Text != ''
+      ) AS t
+      WHERE t.clap IN ('Logistic','Agent','Product') AND t.product IS NOT NULL
+      GROUP BY t.clap, t.product, t.scenario, t.sub_scenario
+      ORDER BY t.clap, t.product, cnt DESC
     `, base),
 
-    // 5. Logistic overall scenario breakdown (all calls, not filtered by product)
-    querySource<{ scenario: string; cnt: number }>(`
-      SELECT q.scenario, COUNT(*) AS cnt
+    // 5. Logistic + Agent scenario+sub breakdown (subquery for reliability)
+    querySource<{ clap: string; scenario: string; sub_scenario: string; cnt: number }>(`
+      SELECT t.clap, t.scenario, t.sub_scenario, COUNT(*) AS cnt
+      FROM (
+        SELECT (${CLAP_CASE_INBOUND}) AS clap,
+          q.scenario,
+          COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
+        FROM db_audit.call_quality_assessment q
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+      ) AS t
+      WHERE t.clap IN ('Logistic','Agent')
+      GROUP BY t.clap, t.scenario, t.sub_scenario
+      ORDER BY t.clap, cnt DESC
+    `, base),
+
+    // 6. All-calls agent phrase summary (top_positive/negative_words_agent across every audit)
+    querySource<{ total: number; pos: number; neg: number; apw: string; anw: string }>(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN q.top_positive_words_agent IS NOT NULL AND TRIM(q.top_positive_words_agent) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS pos,
+        SUM(CASE WHEN q.top_negative_words_agent IS NOT NULL AND TRIM(q.top_negative_words_agent) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS neg,
+        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_positive_words_agent),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 12000) AS apw,
+        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_negative_words_agent),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 12000) AS anw
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
-        AND ${CLAP_CASE_INBOUND} = 'Logistic'
-      GROUP BY q.scenario ORDER BY cnt DESC
     `, base),
   ]);
 
   const overall = overallRows[0] ?? { total: 0, pos: 0, neg: 0 };
+  const agentAll = agentAllRows[0] ?? { total: 0, pos: 0, neg: 0, apw: '', anw: '' };
 
   const branches: ClapCustomerBranch[] = branchRows.map(br => {
     const clap = String(br.clap);
@@ -3804,13 +3887,20 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
       total: Number(br.total),
       pos:   Number(br.pos),
       neg:   Number(br.neg),
-      posWords: wordListFromRaw(isAgent ? (br.apw as unknown as string) : (br.pw as unknown as string)),
-      negWords: wordListFromRaw(isAgent ? (br.anw as unknown as string) : (br.nw as unknown as string)),
-      scenarioBreakdown: clap === 'Logistic'
-        ? logisticScenRows.map(r => ({ scenario: String(r.scenario), count: Number(r.cnt) }))
-        : [],
+      posWords: isAgent ? agentPhraseListFromRaw(br.apw as unknown as string) : wordListFromRaw(br.pw as unknown as string),
+      negWords: isAgent ? agentPhraseListFromRaw(br.anw as unknown as string) : wordListFromRaw(br.nw as unknown as string),
+      ...(isAgent ? {
+        agentAllTotal:    Number(agentAll.total),
+        agentAllPos:      Number(agentAll.pos),
+        agentAllNeg:      Number(agentAll.neg),
+        agentAllPosWords: agentPhraseListFromRaw(agentAll.apw as unknown as string),
+        agentAllNegWords: agentPhraseListFromRaw(agentAll.anw as unknown as string),
+      } : {}),
+      scenarioBreakdown: groupScenWithSubs(
+        branchScenRows.filter(r => String(r.clap) === clap)
+      ),
       products: productRows
-        .filter(pr => pr.clap === clap && pr.product)
+        .filter(pr => String(pr.clap) === clap && pr.product)
         .map(pr => ({
           name:     String(pr.product),
           total:    Number(pr.total),
@@ -3818,12 +3908,445 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
           neg:      Number(pr.neg),
           posWords: wordListFromRaw(pr.pw as unknown as string),
           negWords: wordListFromRaw(pr.nw as unknown as string),
-          scenarioBreakdown: productScenRows
-            .filter(s => s.clap === clap && s.product === pr.product)
-            .map(s => ({ scenario: String(s.scenario), count: Number(s.cnt) })),
+          scenarioBreakdown: groupScenWithSubs(
+            productScenRows.filter(s => String(s.clap) === clap && String(s.product) === String(pr.product))
+          ),
         })),
     };
   });
 
   return { overall: { total: Number(overall.total), pos: Number(overall.pos), neg: Number(overall.neg) }, branches };
+}
+
+// ─── CLAP 360° Intelligence ────────────────────────────────────────────────────
+
+export interface ClapQaParam {
+  param: string;
+  label: string;
+  category: string;
+  passRate: number;
+}
+
+export interface ClapIntelligenceResult {
+  executive: {
+    totalCalls: number;
+    avgQA: number;
+    positivePct: number;
+    negativePct: number;
+    processHealthScore: number;
+    clapBreakdown: { clap: string; count: number; pct: number }[];
+  };
+  qaParams: ClapQaParam[];
+  customer: {
+    total: number;
+    scenarios: { scenario: string; count: number; pct: number }[];
+    posWords: string[];
+    negWords: string[];
+  };
+  logistics: {
+    total: number;
+    scenarios: ClapScenWithSubs[];
+  };
+  agent: {
+    total: number;
+    topAgents: { agent: string; calls: number; avgScore: number }[];
+    bottomAgents: { agent: string; calls: number; avgScore: number }[];
+    posWords: string[];
+    negWords: string[];
+  };
+  product: {
+    total: number;
+    scenarios: ClapScenWithSubs[];
+    products: {
+      name: string;
+      count: number;
+      pct: number;
+      scenarioBreakdown: ClapScenWithSubs[];
+    }[];
+  };
+  trend: { date: string; calls: number; avgQA: number; posCount: number; negCount: number }[];
+  repeatCalls: { repeatCallers: number; totalCallers: number; repeatCallCount: number };
+  agentClapBreakdown: {
+    byRule: { rule: string; count: number }[];
+    calls: { leadId: string; date: string; agentName: string; scenario: string; scenario1: string; score: number; rule: string }[];
+  };
+}
+
+export async function getClapIntelligence(filters: InboundQualityFilters): Promise<ClapIntelligenceResult> {
+  const { startDate, endDate, clientId } = filters;
+  const cf = clientId ? ' AND q.ClientId = ?' : '';
+  const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  const INTEL_PARAMS: { col: string; label: string; cat: string }[] = [
+    ...(GUIDANCE_PARAMS as unknown as { col: string; label: string; cat: string }[]),
+    { col: 'express_empathy', label: 'Express Empathy', cat: 'Soft Skill' },
+  ];
+
+  const paramSelect = INTEL_PARAMS.map(p =>
+    `SUM(CASE WHEN COALESCE(q.${p.col},0) = 1 THEN 1 ELSE 0 END) AS ${p.col}_pass`
+  ).join(',\n      ');
+
+  const productCase = buildProductCaseInbound();
+
+  const [
+    overallRows,
+    clapRows,
+    qaParamRows,
+    custScenRows,
+    custWordRows,
+    logisticScenRows,
+    agentTopRows,
+    agentBottomRows,
+    agentWordRows,
+    productScenRows,
+    productNameRows,
+    trendRows,
+    repeatRows,
+    agentClapCallRows,
+  ] = await Promise.all([
+
+    // 1. Overall KPI
+    querySource<{ total: number; avgQA: number; posCount: number; negCount: number }>(`
+      SELECT COUNT(*) AS total,
+        ROUND(AVG(q.quality_percentage), 1) AS avgQA,
+        SUM(CASE WHEN q.top_positive_words IS NOT NULL AND TRIM(q.top_positive_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS posCount,
+        SUM(CASE WHEN q.top_negative_words IS NOT NULL AND TRIM(q.top_negative_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS negCount
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+    `, base),
+
+    // 2. CLAP breakdown
+    querySource<{ clap: string; count: number }>(`
+      SELECT t.clap, COUNT(*) AS count
+      FROM (
+        SELECT (${CLAP_CASE_INBOUND}) AS clap
+        FROM db_audit.call_quality_assessment q
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+      ) t
+      GROUP BY t.clap
+      ORDER BY count DESC
+    `, base),
+
+    // 3. QA Parameters compliance
+    querySource<Record<string, number>>(`
+      SELECT COUNT(*) AS total, ${paramSelect}
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+    `, base),
+
+    // 4. Customer scenarios
+    querySource<{ scenario: string; cnt: number }>(`
+      SELECT t.scenario, COUNT(*) AS cnt
+      FROM (
+        SELECT (${CLAP_CASE_INBOUND}) AS clap, q.scenario
+        FROM db_audit.call_quality_assessment q
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+      ) t
+      WHERE t.clap = 'Customer'
+      GROUP BY t.scenario
+      ORDER BY cnt DESC
+      LIMIT 15
+    `, base),
+
+    // 5. Customer words
+    querySource<{ pw: string; nw: string }>(`
+      SELECT
+        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_positive_words),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 8000) AS pw,
+        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_negative_words),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 8000) AS nw
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+        AND (${CLAP_CASE_INBOUND}) = 'Customer'
+    `, base),
+
+    // 6. Logistics sub-scenarios
+    querySource<{ scenario: string; sub_scenario: string; cnt: number }>(`
+      SELECT t.scenario, t.sub_scenario, COUNT(*) AS cnt
+      FROM (
+        SELECT (${CLAP_CASE_INBOUND}) AS clap,
+          q.scenario,
+          COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
+        FROM db_audit.call_quality_assessment q
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+      ) t
+      WHERE t.clap = 'Logistic'
+      GROUP BY t.scenario, t.sub_scenario
+      ORDER BY cnt DESC
+    `, base),
+
+    // 7. Top agents (highest QA score)
+    querySource<{ agent: string; calls: number; avgScore: number }>(`
+      SELECT
+        COALESCE(am.AgentName, q.User) AS agent,
+        COUNT(*) AS calls,
+        ROUND(AVG(q.quality_percentage), 1) AS avgScore
+      FROM db_audit.call_quality_assessment q
+      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+        AND q.User IS NOT NULL AND TRIM(q.User) != ''
+      GROUP BY q.User, am.AgentName
+      HAVING COUNT(*) >= 2
+      ORDER BY avgScore DESC
+      LIMIT 5
+    `, base),
+
+    // 8. Bottom agents (lowest QA score)
+    querySource<{ agent: string; calls: number; avgScore: number }>(`
+      SELECT
+        COALESCE(am.AgentName, q.User) AS agent,
+        COUNT(*) AS calls,
+        ROUND(AVG(q.quality_percentage), 1) AS avgScore
+      FROM db_audit.call_quality_assessment q
+      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+        AND q.User IS NOT NULL AND TRIM(q.User) != ''
+      GROUP BY q.User, am.AgentName
+      HAVING COUNT(*) >= 2
+      ORDER BY avgScore ASC
+      LIMIT 5
+    `, base),
+
+    // 9. Agent phrases (all calls, not filtered by CLAP)
+    querySource<{ apw: string; anw: string }>(`
+      SELECT
+        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_positive_words_agent),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 8000) AS apw,
+        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_negative_words_agent),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 8000) AS anw
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+    `, base),
+
+    // 10. Product sub-scenarios
+    querySource<{ scenario: string; sub_scenario: string; cnt: number }>(`
+      SELECT t.scenario, t.sub_scenario, COUNT(*) AS cnt
+      FROM (
+        SELECT (${CLAP_CASE_INBOUND}) AS clap,
+          q.scenario,
+          COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
+        FROM db_audit.call_quality_assessment q
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+      ) t
+      WHERE t.clap = 'Product'
+      GROUP BY t.scenario, t.sub_scenario
+      ORDER BY cnt DESC
+    `, base),
+
+    // 11. Product names with scenario/sub-scenario breakdown
+    querySource<{ name: string; scenario: string; sub_scenario: string; cnt: number }>(`
+      SELECT t.product AS name, t.scenario, t.sub_scenario, COUNT(*) AS cnt
+      FROM (
+        SELECT (${CLAP_CASE_INBOUND}) AS clap,
+          (${productCase}) AS product,
+          q.scenario,
+          COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
+        FROM db_audit.call_quality_assessment q
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+          AND q.Transcribe_Text IS NOT NULL AND TRIM(q.Transcribe_Text) != ''
+      ) t
+      WHERE t.clap = 'Product' AND t.product IS NOT NULL
+      GROUP BY t.product, t.scenario, t.sub_scenario
+      ORDER BY t.product, cnt DESC
+    `, base),
+
+    // 12. Daily trend
+    querySource<{ date: string; calls: number; posCount: number; negCount: number; avgQA: number }>(`
+      SELECT
+        DATE_FORMAT(q.CallDate, '%Y-%m-%d') AS date,
+        COUNT(*) AS calls,
+        SUM(CASE WHEN q.top_positive_words IS NOT NULL AND TRIM(q.top_positive_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS posCount,
+        SUM(CASE WHEN q.top_negative_words IS NOT NULL AND TRIM(q.top_negative_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS negCount,
+        ROUND(AVG(q.quality_percentage), 1) AS avgQA
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+      GROUP BY date
+      ORDER BY date ASC
+    `, base),
+
+    // 12. Repeat callers
+    querySource<{ repeatCallers: number; totalCallers: number; repeatCallCount: number }>(`
+      SELECT
+        SUM(CASE WHEN rc.cnt > 1 THEN 1 ELSE 0 END) AS repeatCallers,
+        COUNT(*) AS totalCallers,
+        SUM(CASE WHEN rc.cnt > 1 THEN rc.cnt - 1 ELSE 0 END) AS repeatCallCount
+      FROM (
+        SELECT q.MobileNo, COUNT(*) AS cnt
+        FROM db_audit.call_quality_assessment q
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+          AND q.MobileNo IS NOT NULL AND TRIM(q.MobileNo) != ''
+        GROUP BY q.MobileNo
+      ) rc
+    `, base),
+
+    // 14. Agent CLAP call-level detail (why each call was classified as Agent)
+    querySource<{ lead_id: string; call_date: string; agent_name: string; scenario: string; scenario1: string; score: number; rule: string }>(`
+      SELECT
+        COALESCE(q.lead_id, '') AS lead_id,
+        DATE_FORMAT(q.CallDate, '%Y-%m-%d') AS call_date,
+        COALESCE(am.AgentName, q.User) AS agent_name,
+        COALESCE(NULLIF(TRIM(q.scenario),''), '—')  AS scenario,
+        COALESCE(NULLIF(TRIM(q.scenario1),''), '—') AS scenario1,
+        COALESCE(q.quality_percentage, 0) AS score,
+        CASE
+          WHEN TRIM(q.scenario) IN ('Needs Improvement','Hold Procedure','Transfer','')
+            THEN 'Explicit Agent Scenario'
+          WHEN TRIM(q.scenario) = 'Complaint' AND q.scenario1 LIKE '%Fraud%'
+            THEN 'Fraud Complaint'
+          ELSE 'Catch-all (Unrecognized Scenario)'
+        END AS rule
+      FROM db_audit.call_quality_assessment q
+      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+        AND (${CLAP_CASE_INBOUND}) = 'Agent'
+      ORDER BY q.CallDate DESC
+      LIMIT 200
+    `, base),
+  ]);
+
+  const ov = overallRows[0] ?? { total: 0, avgQA: 0, posCount: 0, negCount: 0 };
+  const total = Number(ov.total);
+  const avgQA = Number(ov.avgQA ?? 0);
+  const posCount = Number(ov.posCount);
+  const negCount = Number(ov.negCount);
+  const positivePct = total > 0 ? Math.round(posCount / total * 1000) / 10 : 0;
+  const negativePct = total > 0 ? Math.round(negCount / total * 1000) / 10 : 0;
+
+  const clapTotalCount = clapRows.reduce((s, r) => s + Number(r.count), 0) || 1;
+  const clapBreakdown = clapRows.map(r => ({
+    clap: String(r.clap),
+    count: Number(r.count),
+    pct: Math.round(Number(r.count) / clapTotalCount * 1000) / 10,
+  }));
+
+  const qaParamRow = qaParamRows[0] ?? {};
+  const qaTotal = total || 1;
+  const qaParams: ClapQaParam[] = INTEL_PARAMS.map(p => ({
+    param: p.col,
+    label: p.label,
+    category: p.cat,
+    passRate: Math.round(Number(qaParamRow[`${p.col}_pass`] ?? 0) / qaTotal * 1000) / 10,
+  }));
+  const processHealthScore = Math.round(
+    qaParams.reduce((s, p) => s + p.passRate, 0) / (qaParams.length || 1)
+  );
+
+  const custTotal = Number(clapBreakdown.find(r => r.clap === 'Customer')?.count ?? 0);
+  const custScenTotal = custScenRows.reduce((s, r) => s + Number(r.cnt), 0) || 1;
+  const custWordRow = custWordRows[0] ?? { pw: '', nw: '' };
+
+  const logisticTotal = Number(clapBreakdown.find(r => r.clap === 'Logistic')?.count ?? 0);
+  const agentTotal = Number(clapBreakdown.find(r => r.clap === 'Agent')?.count ?? 0);
+  const productTotal = Number(clapBreakdown.find(r => r.clap === 'Product')?.count ?? 0);
+
+  const agentWordRow = agentWordRows[0] ?? { apw: '', anw: '' };
+  const repRow = repeatRows[0] ?? { repeatCallers: 0, totalCallers: 1, repeatCallCount: 0 };
+
+  return {
+    executive: {
+      totalCalls: total,
+      avgQA,
+      positivePct,
+      negativePct,
+      processHealthScore,
+      clapBreakdown,
+    },
+    qaParams,
+    customer: {
+      total: custTotal,
+      scenarios: custScenRows.map(r => ({
+        scenario: String(r.scenario),
+        count: Number(r.cnt),
+        pct: Math.round(Number(r.cnt) / custScenTotal * 1000) / 10,
+      })),
+      posWords: wordListFromRaw(String(custWordRow.pw ?? '')),
+      negWords: wordListFromRaw(String(custWordRow.nw ?? '')),
+    },
+    logistics: {
+      total: logisticTotal,
+      scenarios: groupScenWithSubs(logisticScenRows),
+    },
+    agent: {
+      total: agentTotal,
+      topAgents: agentTopRows.map(r => ({
+        agent: String(r.agent),
+        calls: Number(r.calls),
+        avgScore: Number(r.avgScore ?? 0),
+      })),
+      bottomAgents: agentBottomRows.map(r => ({
+        agent: String(r.agent),
+        calls: Number(r.calls),
+        avgScore: Number(r.avgScore ?? 0),
+      })),
+      posWords: agentPhraseListFromRaw(String(agentWordRow.apw ?? '')),
+      negWords: agentPhraseListFromRaw(String(agentWordRow.anw ?? '')),
+    },
+    product: {
+      total: productTotal,
+      scenarios: groupScenWithSubs(productScenRows),
+      products: (() => {
+        // Group rows by product name, then build scenario → sub-scenario tree per product
+        const map = new Map<string, { count: number; scenMap: Map<string, { count: number; subs: Map<string, number> }> }>();
+        for (const r of productNameRows) {
+          const name = String(r.name);
+          const scen = String(r.scenario ?? 'Unknown');
+          const sub  = String(r.sub_scenario ?? '—');
+          const cnt  = Number(r.cnt);
+          if (!map.has(name)) map.set(name, { count: 0, scenMap: new Map() });
+          const prod = map.get(name)!;
+          prod.count += cnt;
+          if (!prod.scenMap.has(scen)) prod.scenMap.set(scen, { count: 0, subs: new Map() });
+          const sc = prod.scenMap.get(scen)!;
+          sc.count += cnt;
+          if (sub && sub !== '—') sc.subs.set(sub, (sc.subs.get(sub) ?? 0) + cnt);
+        }
+        const list = Array.from(map.entries())
+          .sort((a, b) => b[1].count - a[1].count)
+          .map(([name, { count, scenMap }]) => ({
+            name,
+            count,
+            pct: 0,
+            scenarioBreakdown: Array.from(scenMap.entries())
+              .sort((a, b) => b[1].count - a[1].count)
+              .map(([scenario, { count: sc, subs }]) => ({
+                scenario,
+                count: sc,
+                subs: Array.from(subs.entries()).sort((a, b) => b[1] - a[1]).map(([sub, c]) => ({ sub, count: c })),
+              })),
+          }));
+        const prodTotal = list.reduce((s, p) => s + p.count, 0) || 1;
+        list.forEach(p => { p.pct = Math.round(p.count / prodTotal * 1000) / 10; });
+        return list;
+      })(),
+    },
+    trend: trendRows.map(r => ({
+      date: String(r.date),
+      calls: Number(r.calls),
+      avgQA: Number(r.avgQA ?? 0),
+      posCount: Number(r.posCount),
+      negCount: Number(r.negCount),
+    })),
+    repeatCalls: {
+      repeatCallers: Number(repRow.repeatCallers ?? 0),
+      totalCallers: Number(repRow.totalCallers ?? 0),
+      repeatCallCount: Number(repRow.repeatCallCount ?? 0),
+    },
+    agentClapBreakdown: (() => {
+      const ruleMap = new Map<string, number>();
+      for (const r of agentClapCallRows) {
+        const rule = String(r.rule);
+        ruleMap.set(rule, (ruleMap.get(rule) ?? 0) + 1);
+      }
+      return {
+        byRule: Array.from(ruleMap.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([rule, count]) => ({ rule, count })),
+        calls: agentClapCallRows.map(r => ({
+          leadId:    String(r.lead_id),
+          date:      String(r.call_date),
+          agentName: String(r.agent_name),
+          scenario:  String(r.scenario),
+          scenario1: String(r.scenario1),
+          score:     Number(r.score),
+          rule:      String(r.rule),
+        })),
+      };
+    })(),
+  };
 }

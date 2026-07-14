@@ -9,9 +9,10 @@ import {
 import {
   ChevronLeft, ChevronDown, Phone, ClipboardCheck, TrendingUp, Star,
   ThumbsUp, ThumbsDown, Minus, AlertTriangle, Trophy, Target,
-  ShieldAlert, AlertOctagon, Download, Maximize2, Minimize2, X, Info, Loader2, Loader,
+  ShieldAlert, AlertOctagon, Download, Maximize2, Minimize2, X, Info, Loader2, Loader, Pencil, Check,
 } from 'lucide-react';
 import api from '@/lib/axios';
+import Clap360Intelligence from './Clap360Intelligence';
 
 function toLocalDT(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -195,7 +196,7 @@ function downloadCSV(rows: Record<string, unknown>[], filename: string) {
         ? `"${s.replace(/"/g, '""')}"` : s;
     }).join(',')
   ).join('\n');
-  const blob = new Blob([`${header}\n${body}`], { type: 'text/csv' });
+  const blob = new Blob(['﻿' + `${header}\n${body}`], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
@@ -1395,8 +1396,80 @@ function ExportBtn({ onClick, title = 'Export CSV' }: { onClick: () => void; tit
 }
 
 // ─── Agent Name Tag ───────────────────────────────────────────────────────────
-function AgentNameTag({ masId, agentMap, className = '' }: { masId: string; agentMap: Map<string, string>; className?: string }) {
-  return <span className={className}>{agentMap.get(masId) || masId}</span>;
+function AgentNameTag({ masId, agentMap, className = '', onSave }: {
+  masId:    string;
+  agentMap: Map<string, string>;
+  className?: string;
+  onSave?:  (masId: string, name: string) => Promise<void>;
+}) {
+  const name = agentMap.get(masId);
+  const [hovered, setHovered] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [inputVal, setInputVal] = useState('');
+  const [saving, setSaving]   = useState(false);
+
+  const startEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setInputVal(name || '');
+    setEditing(true);
+  };
+
+  const handleSave = async (e: React.MouseEvent | React.KeyboardEvent) => {
+    e.stopPropagation();
+    if (!inputVal.trim() || !onSave) return;
+    setSaving(true);
+    try {
+      await onSave(masId, inputVal.trim());
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <span className={`inline-flex items-center gap-1 ${className}`} onClick={e => e.stopPropagation()}>
+        <input
+          autoFocus
+          value={inputVal}
+          onChange={e => setInputVal(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleSave(e); if (e.key === 'Escape') setEditing(false); }}
+          className="w-36 border border-blue-400 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+        <button onClick={handleSave} disabled={saving}
+          className="flex items-center justify-center w-5 h-5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+          {saving ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
+        </button>
+        <button onClick={e => { e.stopPropagation(); setEditing(false); }}
+          className="flex items-center justify-center w-5 h-5 rounded bg-slate-200 text-slate-500 hover:bg-slate-300">
+          <X size={10} />
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`inline-flex flex-col leading-tight ${className}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <span className="flex items-center gap-1.5">
+        <span className="font-semibold text-slate-800">{name || masId}</span>
+        {onSave && (
+          <button
+            onClick={startEdit}
+            title="Edit agent name"
+            style={{ opacity: hovered ? 1 : 0.35, transition: 'opacity 0.15s' }}
+            className="flex items-center justify-center w-4 h-4 rounded text-white bg-blue-500 hover:bg-blue-600 shrink-0"
+          >
+            <Pencil size={9} />
+          </button>
+        )}
+      </span>
+      {name && <span className="text-[10px] text-slate-400 font-mono">{masId}</span>}
+    </span>
+  );
 }
 
 const SCENARIO_COLORS = ['#3B82F6','#22C55E','#F59E0B','#A855F7','#EF4444','#14B8A6','#F97316','#EC4899'];
@@ -1478,6 +1551,7 @@ const SLIDES = [
   { label: 'Repeat Analysis',     color: 'teal'    },
   { label: 'Process Analysis',    color: 'amber'   },
   { label: 'TNI Detection',       color: 'emerald' },
+  { label: 'CLAP 360°',           color: 'blue'    },
 ] as const;
 
 export default function InboundQualityDashboard() {
@@ -1556,24 +1630,35 @@ export default function InboundQualityDashboard() {
   const [agentMap, setAgentMap] = useState<Map<string, string>>(new Map());
 
   const resolveAgent = (masId: string) => agentMap.get(masId) || masId;
+
+  const saveAgentName = async (masId: string, name: string) => {
+    await api.patch(`/inbound-quality/agent-master/${encodeURIComponent(masId)}`, { agentName: name });
+    setAgentMap(prev => new Map(prev).set(masId, name));
+  };
+
   const agentTag = (masId: string, cls?: string) => (
-    <AgentNameTag masId={masId} agentMap={agentMap} className={cls} />
+    <AgentNameTag masId={masId} agentMap={agentMap} className={cls} onSave={saveAgentName} />
   );
 
   // ── CLAP Customer Product Analysis ──────────────────────────────────────
+  type ClapScenWithSubs = { scenario: string; count: number; subs: { sub: string; count: number }[] };
+  type ClapProduct = { name: string; total: number; pos: number; neg: number; posWords: string[]; negWords: string[]; scenarioBreakdown: ClapScenWithSubs[] };
   const [clapCustomer, setClapCustomer] = useState<{
     overall: { total: number; pos: number; neg: number };
     branches: {
       clap: string; total: number; pos: number; neg: number;
       posWords: string[]; negWords: string[];
-      scenarioBreakdown: { scenario: string; count: number }[];
-      products: { name: string; total: number; pos: number; neg: number; posWords: string[]; negWords: string[]; scenarioBreakdown: { scenario: string; count: number }[] }[];
+      scenarioBreakdown: ClapScenWithSubs[];
+      products: ClapProduct[];
+      agentAllTotal?: number; agentAllPos?: number; agentAllNeg?: number;
+      agentAllPosWords?: string[]; agentAllNegWords?: string[];
     }[];
   } | null>(null);
   const [clapCustomerLoading, setClapCustomerLoading] = useState(false);
   const [clapCustomerExpanded, setClapCustomerExpanded] = useState(false);
   const [clapActiveBranch, setClapActiveBranch] = useState<string | null>(null);
   const [clapActiveProduct, setClapActiveProduct] = useState<string | null>(null);
+  const [clapActiveScenario, setClapActiveScenario] = useState<string | null>(null);
 
   // ── Deep analysis state ──────────────────────────────────────────────────
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
@@ -2003,6 +2088,7 @@ export default function InboundQualityDashboard() {
     setClapCustomerExpanded(false);
     setClapActiveBranch(null);
     setClapActiveProduct(null);
+    setClapActiveScenario(null);
     api.get<{ data: typeof clapCustomer }>(`/inbound-quality/clap-customer-analysis?clientId=${clientId}&startDate=${sd}&endDate=${ed}`)
       .then(r => setClapCustomer(r.data?.data ?? null))
       .catch(() => setClapCustomer(null))
@@ -2078,7 +2164,7 @@ export default function InboundQualityDashboard() {
                   }).join(',')
                 ).join('\n');
                 const csv = `${header}\n${body}`;
-                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 const clientLabel = clientId || 'ALL';
@@ -4714,11 +4800,26 @@ export default function InboundQualityDashboard() {
 
                     {/* ── Customer Tree ── */}
                     {(() => {
-                      const BRANCH_META: Record<string, { icon: string; accent: string }> = {
-                        Logistic: { icon: '🚚', accent: '#F59E0B' },
-                        Agent:    { icon: '🎧', accent: '#E11D48' },
-                        Product:  { icon: '📦', accent: '#10B981' },
+                      const BRANCH_META: Record<string, { icon: string; accent: string; label: string }> = {
+                        Logistic: { icon: '🚚', accent: '#F59E0B', label: 'Logistic & Ops' },
+                        Agent:    { icon: '🎧', accent: '#E11D48', label: 'Agent' },
+                        Product:  { icon: '📦', accent: '#10B981', label: 'Product' },
                       };
+                      const SCEN_COLOR: Record<string, string> = {
+                        Complaint: '#DC2626', 'Delivery Issue': '#DC2626', 'Return/Exchange': '#DC2626',
+                        'Return Request': '#DC2626', 'Return & Exchange': '#DC2626', 'Reverse Pickup Issue': '#DC2626',
+                        'Payment issues': '#DC2626', 'Refund issue': '#DC2626', 'Refund Request': '#DC2626',
+                        'Refund Status': '#DC2626', 'Wallet issue': '#DC2626', 'Tech issue': '#DC2626',
+                        'Wrong product': '#DC2626', 'Product Issue': '#DC2626', 'Pricing': '#D97706',
+                        'Needs Improvement': '#DC2626', 'Hold Procedure': '#D97706',
+                        Query: '#0369A1', 'General Query': '#0369A1', 'General Queries': '#0369A1',
+                        'Order Status': '#0369A1', 'Post Order': '#0369A1', 'Pending payment': '#0369A1',
+                        'Policies and FAQs': '#0369A1', 'Customer Profile': '#0369A1',
+                        Transfer: '#7C3AED', 'Sale Done': '#059669', 'Pending Payment': '#0369A1',
+                      };
+                      const scenColor = (s: string) => SCEN_COLOR[s] ?? (
+                        ['issue','complaint','fail','wrong','return','refund','reverse','fraud','improve'].some(k => s.toLowerCase().includes(k)) ? '#DC2626' : '#64748B'
+                      );
                       const ov = clapCustomer?.overall;
                       const ovTotal = ov?.total ?? 0;
                       const ovPos   = ov?.pos ?? 0;
@@ -4777,7 +4878,7 @@ export default function InboundQualityDashboard() {
                                 const isAct = clapActiveBranch === branch;
                                 return (
                                   <div key={branch}
-                                    onClick={() => { setClapActiveBranch(isAct ? null : branch); setClapActiveProduct(null); }}
+                                    onClick={() => { setClapActiveBranch(isAct ? null : branch); setClapActiveProduct(null); setClapActiveScenario(null); }}
                                     className="cursor-pointer rounded-xl shadow-md border-2 px-5 py-3 text-center select-none"
                                     style={{
                                       minWidth: 120, background: isAct ? m.accent : 'white',
@@ -4785,7 +4886,7 @@ export default function InboundQualityDashboard() {
                                       transition: 'all 0.2s ease',
                                     }}>
                                     <div className="text-xl mb-0.5">{m.icon}</div>
-                                    <div className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: isAct ? '#fff' : m.accent }}>{branch}</div>
+                                    <div className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: isAct ? '#fff' : m.accent }}>{m.label}</div>
                                     <div className="text-lg font-black tabular-nums" style={{ color: isAct ? '#fff' : '#0F172A' }}>{bT.toLocaleString()}</div>
                                     <div className="flex gap-2 justify-center mt-1">
                                       <span className="text-[9px] font-bold" style={{ color: isAct ? '#bbf7d0' : '#16A34A' }}>✅{bP}</span>
@@ -4808,50 +4909,98 @@ export default function InboundQualityDashboard() {
 
                             /* ── AGENT branch ── */
                             if (clapActiveBranch === 'Agent') {
+                              const agScens = bd?.scenarioBreakdown ?? [];
+                              const agTotal = agScens.reduce((s, r) => s + r.count, 0);
+                              const posWords = bd?.agentAllPosWords ?? bd?.posWords ?? [];
+                              const negWords = bd?.agentAllNegWords ?? bd?.negWords ?? [];
+                              const posCount = bd?.agentAllPos ?? bd?.pos ?? 0;
+                              const negCount = bd?.agentAllNeg ?? bd?.neg ?? 0;
+                              const allTotal = bd?.agentAllTotal ?? bd?.total ?? 0;
                               return (
                                 <div className="rounded-xl overflow-hidden border shadow-sm mb-4" style={{ borderColor: `${m.accent}40` }}>
                                   <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
                                     <span>{m.icon}</span>
-                                    <span className="text-[11px] font-black uppercase tracking-widest text-white">Agent — Language Analysis</span>
-                                    <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>Agent-specific positive &amp; negative phrases</span>
+                                    <span className="text-[11px] font-black uppercase tracking-widest text-white">Agent — Language &amp; Scenario Analysis</span>
+                                    <span className="ml-auto text-[9px] text-white/60 font-semibold">{allTotal} total audits analysed</span>
                                   </div>
-                                  <div className="bg-white p-4 grid grid-cols-2 gap-4">
-                                    {/* Positive phrases */}
-                                    <div className="rounded-xl overflow-hidden border border-emerald-200">
-                                      <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#064E3B,#059669)' }}>
-                                        <span className="text-white text-sm">😊</span>
-                                        <span className="text-[10px] font-black uppercase tracking-widest text-white">Positive Phrases</span>
-                                        <span className="ml-auto text-[9px] text-white/60">{bd?.pos ?? 0} calls</span>
+                                  <div className="bg-white p-4 space-y-4">
+                                    {/* Phrase clouds — sourced from ALL audits */}
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="rounded-xl overflow-hidden border border-emerald-200">
+                                        <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#064E3B,#059669)' }}>
+                                          <span className="text-white text-sm">😊</span>
+                                          <span className="text-[10px] font-black uppercase tracking-widest text-white">Positive Agent Phrases</span>
+                                          <span className="ml-auto text-[9px] text-white/60 font-semibold">{posCount} calls</span>
+                                        </div>
+                                        <div className="p-3">
+                                          {posWords.length === 0
+                                            ? <p className="text-[10px] text-slate-400 italic">No positive agent phrases recorded</p>
+                                            : <div className="flex flex-wrap gap-2">
+                                                {posWords.map(w => (
+                                                  <span key={w} className="text-[10px] font-semibold px-2.5 py-1 rounded-lg" style={{ background:'#06974A12', border:'1px solid #06974A30', color:'#059669', textTransform:'capitalize' }}>{w}</span>
+                                                ))}
+                                              </div>
+                                          }
+                                        </div>
                                       </div>
-                                      <div className="p-3">
-                                        {(bd?.posWords ?? []).length === 0
-                                          ? <p className="text-[10px] text-slate-400 italic">No positive agent phrases found</p>
-                                          : <div className="flex flex-wrap gap-1.5">
-                                              {(bd?.posWords ?? []).map(w => (
-                                                <span key={w} className="text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize" style={{ background:'#06974A12', border:'1px solid #06974A30', color:'#059669' }}>{w}</span>
-                                              ))}
-                                            </div>
-                                        }
+                                      <div className="rounded-xl overflow-hidden border border-red-200">
+                                        <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#7F1D1D,#DC2626)' }}>
+                                          <span className="text-white text-sm">😠</span>
+                                          <span className="text-[10px] font-black uppercase tracking-widest text-white">Negative Agent Phrases</span>
+                                          <span className="ml-auto text-[9px] text-white/60 font-semibold">{negCount} calls</span>
+                                        </div>
+                                        <div className="p-3">
+                                          {negWords.length === 0
+                                            ? <p className="text-[10px] text-slate-400 italic">No negative agent phrases recorded</p>
+                                            : <div className="flex flex-wrap gap-2">
+                                                {negWords.map(w => (
+                                                  <span key={w} className="text-[10px] font-semibold px-2.5 py-1 rounded-lg" style={{ background:'#DC262612', border:'1px solid #DC262630', color:'#DC2626', textTransform:'capitalize' }}>{w}</span>
+                                                ))}
+                                              </div>
+                                          }
+                                        </div>
                                       </div>
                                     </div>
-                                    {/* Negative phrases */}
-                                    <div className="rounded-xl overflow-hidden border border-red-200">
-                                      <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#7F1D1D,#DC2626)' }}>
-                                        <span className="text-white text-sm">😠</span>
-                                        <span className="text-[10px] font-black uppercase tracking-widest text-white">Negative Phrases</span>
-                                        <span className="ml-auto text-[9px] text-white/60">{bd?.neg ?? 0} calls</span>
+                                    {/* Scenario drill-down */}
+                                    {agScens.length > 0 && (
+                                      <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Scenarios — click to expand sub-scenarios</p>
+                                        <div className="space-y-1.5">
+                                          {agScens.map(s => {
+                                            const clr = scenColor(s.scenario);
+                                            const pct = agTotal > 0 ? Math.round(s.count / agTotal * 100) : 0;
+                                            const isOpen = clapActiveScenario === `Agent:${s.scenario}`;
+                                            return (
+                                              <div key={s.scenario} className="rounded-lg overflow-hidden border" style={{ borderColor: `${clr}30` }}>
+                                                <div
+                                                  onClick={() => setClapActiveScenario(isOpen ? null : `Agent:${s.scenario}`)}
+                                                  className="flex items-center gap-3 px-3 py-2 cursor-pointer"
+                                                  style={{ background: isOpen ? `${clr}10` : 'white' }}
+                                                >
+                                                  <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: clr }} />
+                                                  <span className="text-[10px] font-bold flex-1 truncate" style={{ color: clr }}>{s.scenario}</span>
+                                                  <div className="w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden mx-2">
+                                                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: clr }} />
+                                                  </div>
+                                                  <span className="text-[10px] font-black tabular-nums w-8 text-right" style={{ color: clr }}>{s.count}</span>
+                                                  <span className="text-[9px] text-slate-400 ml-1">{isOpen ? '▲' : '▼'}</span>
+                                                </div>
+                                                {isOpen && s.subs.length > 0 && (
+                                                  <div className="px-6 pb-2 pt-1 space-y-1" style={{ background: `${clr}06` }}>
+                                                    {s.subs.map(sub => (
+                                                      <div key={sub.sub} className="flex items-center justify-between gap-2">
+                                                        <span className="text-[9px] text-slate-600 flex-1 truncate">↳ {sub.sub}</span>
+                                                        <span className="text-[9px] font-black tabular-nums" style={{ color: clr }}>{sub.count}</span>
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
                                       </div>
-                                      <div className="p-3">
-                                        {(bd?.negWords ?? []).length === 0
-                                          ? <p className="text-[10px] text-slate-400 italic">No negative agent phrases found</p>
-                                          : <div className="flex flex-wrap gap-1.5">
-                                              {(bd?.negWords ?? []).map(w => (
-                                                <span key={w} className="text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize" style={{ background:'#DC262612', border:'1px solid #DC262630', color:'#DC2626' }}>{w}</span>
-                                              ))}
-                                            </div>
-                                        }
-                                      </div>
-                                    </div>
+                                    )}
                                   </div>
                                 </div>
                               );
@@ -4861,47 +5010,64 @@ export default function InboundQualityDashboard() {
                             if (clapActiveBranch === 'Logistic') {
                               const scenBreakdown = bd?.scenarioBreakdown ?? [];
                               const logTotal = scenBreakdown.reduce((s, r) => s + r.count, 0);
-                              const SCEN_COLOR: Record<string, string> = {
-                                Complaint: '#DC2626', Query: '#0369A1', Request: '#D97706', 'Sale Done': '#059669', Repeat: '#7C3AED',
-                              };
                               const products = bd?.products ?? [];
                               return (
                                 <div className="rounded-xl overflow-hidden border shadow-sm mb-4" style={{ borderColor: `${m.accent}40` }}>
                                   <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
                                     <span>{m.icon}</span>
-                                    <span className="text-[11px] font-black uppercase tracking-widest text-white">Logistic — Scenario &amp; Product Breakdown</span>
+                                    <span className="text-[11px] font-black uppercase tracking-widest text-white">Logistic &amp; Operations — Deep Analysis</span>
                                     <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{bd?.total ?? 0} total calls</span>
                                   </div>
                                   <div className="bg-white p-4 space-y-4">
-                                    {/* Scenario bars */}
+                                    {/* Scenario drill-down */}
                                     <div>
-                                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Call Scenarios</p>
-                                      <div className="space-y-2">
+                                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Logistic Scenarios — click to expand sub-scenarios</p>
+                                      <div className="space-y-1.5">
                                         {scenBreakdown.map(s => {
+                                          const clr = scenColor(s.scenario);
                                           const pct = logTotal > 0 ? Math.round(s.count / logTotal * 100) : 0;
-                                          const clr = SCEN_COLOR[s.scenario] ?? '#64748B';
+                                          const isNeg = ['#DC2626','#EF4444'].includes(clr) || ['issue','complaint','fail','wrong','return','refund','reverse','fraud'].some(k => s.scenario.toLowerCase().includes(k));
+                                          const isOpen = clapActiveScenario === `Log:${s.scenario}`;
                                           return (
-                                            <div key={s.scenario} className="flex items-center gap-3">
-                                              <span className="text-[10px] font-bold w-28 truncate shrink-0" style={{ color: clr }}>{s.scenario}</span>
-                                              <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-                                                <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: clr }} />
+                                            <div key={s.scenario} className="rounded-lg overflow-hidden border" style={{ borderColor: `${clr}30` }}>
+                                              <div
+                                                onClick={() => setClapActiveScenario(isOpen ? null : `Log:${s.scenario}`)}
+                                                className="flex items-center gap-3 px-3 py-2 cursor-pointer"
+                                                style={{ background: isOpen ? `${clr}10` : 'white' }}
+                                              >
+                                                <span className="text-[10px] shrink-0">{isNeg ? '⚠️' : 'ℹ️'}</span>
+                                                <span className="text-[10px] font-bold flex-1 truncate" style={{ color: clr }}>{s.scenario}</span>
+                                                <div className="w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden mx-2">
+                                                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: clr }} />
+                                                </div>
+                                                <span className="text-[10px] font-black tabular-nums w-8 text-right" style={{ color: clr }}>{s.count}</span>
+                                                <span className="text-[9px] text-slate-400 tabular-nums w-7 text-right">{pct}%</span>
+                                                {s.subs.length > 0 && <span className="text-[9px] text-slate-400 ml-1">{isOpen ? '▲' : '▼'}</span>}
                                               </div>
-                                              <span className="text-[10px] font-black tabular-nums w-8 text-right" style={{ color: clr }}>{pct}%</span>
-                                              <span className="text-[10px] text-slate-400 tabular-nums w-10 text-right">{s.count.toLocaleString()}</span>
+                                              {isOpen && s.subs.length > 0 && (
+                                                <div className="px-6 pb-2 pt-1 space-y-1" style={{ background: `${clr}06` }}>
+                                                  {s.subs.map(sub => (
+                                                    <div key={sub.sub} className="flex items-center justify-between gap-2">
+                                                      <span className="text-[9px] text-slate-600 flex-1 truncate">↳ {sub.sub}</span>
+                                                      <span className="text-[9px] font-black tabular-nums" style={{ color: clr }}>{sub.count}</span>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
                                             </div>
                                           );
                                         })}
                                       </div>
                                     </div>
-                                    {/* Product mentions */}
+                                    {/* Products mentioned in logistic calls */}
                                     {products.length > 0 && (
                                       <div>
-                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Products Mentioned</p>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Products Mentioned in Logistic Calls</p>
                                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                           {products.map(prod => {
                                             const isOpen = clapActiveProduct === prod.name;
                                             const topScen = prod.scenarioBreakdown[0];
-                                            const topClr = SCEN_COLOR[topScen?.scenario ?? ''] ?? '#64748B';
+                                            const topClr = scenColor(topScen?.scenario ?? '');
                                             return (
                                               <div key={prod.name}
                                                 onClick={() => setClapActiveProduct(isOpen ? null : prod.name)}
@@ -4913,9 +5079,17 @@ export default function InboundQualityDashboard() {
                                                 {isOpen && prod.scenarioBreakdown.length > 0 && (
                                                   <div className="mt-2 space-y-1 border-t border-slate-100 pt-2">
                                                     {prod.scenarioBreakdown.map(s => (
-                                                      <div key={s.scenario} className="flex justify-between items-center">
-                                                        <span className="text-[9px] font-semibold truncate" style={{ color: SCEN_COLOR[s.scenario] ?? '#64748B' }}>{s.scenario}</span>
-                                                        <span className="text-[9px] font-black tabular-nums ml-1" style={{ color: SCEN_COLOR[s.scenario] ?? '#64748B' }}>{s.count}</span>
+                                                      <div key={s.scenario}>
+                                                        <div className="flex justify-between items-center">
+                                                          <span className="text-[9px] font-semibold truncate" style={{ color: scenColor(s.scenario) }}>{s.scenario}</span>
+                                                          <span className="text-[9px] font-black tabular-nums ml-1" style={{ color: scenColor(s.scenario) }}>{s.count}</span>
+                                                        </div>
+                                                        {s.subs.slice(0, 2).map(sub => (
+                                                          <div key={sub.sub} className="flex justify-between pl-3">
+                                                            <span className="text-[8px] text-slate-400 truncate">↳ {sub.sub}</span>
+                                                            <span className="text-[8px] text-slate-400 ml-1">{sub.count}</span>
+                                                          </div>
+                                                        ))}
                                                       </div>
                                                     ))}
                                                   </div>
@@ -4933,15 +5107,12 @@ export default function InboundQualityDashboard() {
 
                             /* ── PRODUCT branch ── */
                             const products = bd?.products ?? [];
-                            const SCEN_COLOR2: Record<string, string> = {
-                              Complaint: '#DC2626', Query: '#0369A1', Request: '#D97706', 'Sale Done': '#059669', Repeat: '#7C3AED',
-                            };
                             return (
                               <div className="rounded-xl overflow-hidden border shadow-sm mb-4" style={{ borderColor: `${m.accent}40` }}>
                                 <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
                                   <span>{m.icon}</span>
-                                  <span className="text-[11px] font-black uppercase tracking-widest text-white">Product — Customer Sentiment</span>
-                                  <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{products.length} products · click to see scenarios</span>
+                                  <span className="text-[11px] font-black uppercase tracking-widest text-white">Product — Customer Sentiment &amp; Scenario</span>
+                                  <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{products.length} products · click to analyse</span>
                                 </div>
                                 {products.length === 0 ? (
                                   <div className="bg-white p-6 text-center text-sm text-slate-400">No product mentions found in transcripts.</div>
@@ -4963,7 +5134,7 @@ export default function InboundQualityDashboard() {
                                                   <div className="h-full rounded-full bg-emerald-500" style={{ width: `${posPct}%` }} />
                                                 </div>
                                                 <span className="text-[9px] text-emerald-600 font-bold">{posPct}% pos</span>
-                                                {topScen && <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: `${SCEN_COLOR2[topScen.scenario] ?? '#64748B'}18`, color: SCEN_COLOR2[topScen.scenario] ?? '#64748B' }}>{topScen.scenario}</span>}
+                                                {topScen && <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: `${scenColor(topScen.scenario)}18`, color: scenColor(topScen.scenario) }}>{topScen.scenario}</span>}
                                               </div>
                                             </div>
                                             <div className="flex items-center gap-3 shrink-0">
@@ -4978,30 +5149,49 @@ export default function InboundQualityDashboard() {
                                               <span className="text-[9px] text-slate-400">{isOpen ? '▲' : '▼'}</span>
                                             </div>
                                           </div>
-                                          {/* Expanded — scenario breakdown + pos/neg words */}
+                                          {/* Expanded — scenario drill + pos/neg words */}
                                           {isOpen && (
                                             <div className="px-4 pb-4 pt-1 space-y-3" style={{ background: `${m.accent}06` }}>
-                                              {/* Scenario breakdown */}
+                                              {/* Scenario breakdown with sub-scenario drill */}
                                               {prod.scenarioBreakdown.length > 0 && (
                                                 <div>
-                                                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Scenario Breakdown</p>
-                                                  <div className="flex flex-wrap gap-2">
+                                                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Scenario Breakdown — click to see sub-scenarios</p>
+                                                  <div className="space-y-1.5">
                                                     {prod.scenarioBreakdown.map(s => {
-                                                      const clr = SCEN_COLOR2[s.scenario] ?? '#64748B';
+                                                      const clr = scenColor(s.scenario);
                                                       const pct = prod.total > 0 ? Math.round(s.count / prod.total * 100) : 0;
+                                                      const key = `Prod:${prod.name}:${s.scenario}`;
+                                                      const isScenOpen = clapActiveScenario === key;
                                                       return (
-                                                        <div key={s.scenario} className="flex items-center gap-2 px-3 py-2 rounded-xl border" style={{ background: `${clr}0D`, borderColor: `${clr}30` }}>
-                                                          <div className="w-2 h-2 rounded-full shrink-0" style={{ background: clr }} />
-                                                          <span className="text-[10px] font-bold" style={{ color: clr }}>{s.scenario}</span>
-                                                          <span className="text-[11px] font-black tabular-nums" style={{ color: clr }}>{s.count}</span>
-                                                          <span className="text-[9px] text-slate-400">({pct}%)</span>
+                                                        <div key={s.scenario} className="rounded-lg overflow-hidden border" style={{ borderColor: `${clr}30` }}>
+                                                          <div
+                                                            onClick={() => setClapActiveScenario(isScenOpen ? null : key)}
+                                                            className="flex items-center gap-2 px-3 py-2 cursor-pointer"
+                                                            style={{ background: isScenOpen ? `${clr}10` : 'white' }}
+                                                          >
+                                                            <div className="w-2 h-2 rounded-full shrink-0" style={{ background: clr }} />
+                                                            <span className="text-[10px] font-bold flex-1" style={{ color: clr }}>{s.scenario}</span>
+                                                            <span className="text-[11px] font-black tabular-nums" style={{ color: clr }}>{s.count}</span>
+                                                            <span className="text-[9px] text-slate-400 ml-1">({pct}%)</span>
+                                                            {s.subs.length > 0 && <span className="text-[9px] text-slate-400 ml-1">{isScenOpen ? '▲' : '▼'}</span>}
+                                                          </div>
+                                                          {isScenOpen && s.subs.length > 0 && (
+                                                            <div className="px-6 pb-2 pt-1 space-y-1" style={{ background: `${clr}06` }}>
+                                                              {s.subs.map(sub => (
+                                                                <div key={sub.sub} className="flex items-center justify-between gap-2">
+                                                                  <span className="text-[9px] text-slate-600 flex-1 truncate">↳ {sub.sub}</span>
+                                                                  <span className="text-[9px] font-black tabular-nums" style={{ color: clr }}>{sub.count}</span>
+                                                                </div>
+                                                              ))}
+                                                            </div>
+                                                          )}
                                                         </div>
                                                       );
                                                     })}
                                                   </div>
                                                 </div>
                                               )}
-                                              {/* Pos/neg words */}
+                                              {/* Customer phrase signals */}
                                               <div className="grid grid-cols-2 gap-3">
                                                 <div className="rounded-xl overflow-hidden border border-emerald-200">
                                                   <div className="px-3 py-2 flex items-center gap-1.5" style={{ background: 'linear-gradient(135deg,#064E3B,#059669)' }}>
@@ -6687,6 +6877,15 @@ export default function InboundQualityDashboard() {
             </>
           );
         })()}
+
+        {/* ── CLAP 360° Intelligence slide ──────────────────────────────────── */}
+        {activeSlide === 6 && (
+          <Clap360Intelligence
+            clientId={clientId}
+            startDate={startDate.replace('T', ' ')}
+            endDate={endDate.replace('T', ' ')}
+          />
+        )}
 
       </div>
 

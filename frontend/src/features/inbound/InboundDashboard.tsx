@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback, useRef, createContext, useContext } from 'react';
+import { useEffect, useState, useCallback, useRef, createContext, useContext, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -400,7 +401,8 @@ function DrillModal({ title, accent = COLOR_BLUE, onClose, loading, onExport, ch
 
 export default function InboundDashboard() {
   const now = new Date();
-  const { canAccessInboundSlug } = useProcessStore();
+  const { canAccessInboundSlug, isSuperAdmin, loaded: processLoaded } = useProcessStore();
+  const navigate = useNavigate();
 
   // ── State ──
   const [projects,           setProjects]           = useState<ProjectRow[]>([]);
@@ -424,6 +426,12 @@ export default function InboundDashboard() {
   const [drillRows,    setDrillRows]    = useState<ProjectDrillRow[]>([]);
   const [drillLoading, setDrillLoading] = useState(false);
   const [metricDrill,  setMetricDrill]  = useState<MetricDrillKey | null>(null);
+
+  // ── Agent-wise state ──
+  interface AgentRow { agent_id: string; agent_name: string; offered: number; answered: number; al: number; sl: number; acht: number; repeat_pct: number; fcr_pct: number | null; }
+  const [agentProject,  setAgentProject]  = useState('');
+  const [agentRows,     setAgentRows]     = useState<AgentRow[]>([]);
+  const [agentLoading,  setAgentLoading]  = useState(false);
 
   // ── Project drill-down ──
   const fetchProjectDrill = useCallback(async (p: ProjectRow) => {
@@ -522,6 +530,31 @@ export default function InboundDashboard() {
   // ── Access-filtered views ──
   const allowedProjects = projects.filter((p) => canAccessInboundSlug(p.key));
   const allowedMeta     = PROJECT_META.filter((m) => canAccessInboundSlug(m.key));
+
+  // If client user has exactly 1 inbound project, skip this overview and go straight to it
+  useEffect(() => {
+    if (processLoaded && !isSuperAdmin && allowedMeta.length === 1) {
+      navigate(`/inbound/${allowedMeta[0].key}`, { replace: true });
+    }
+  }, [processLoaded, isSuperAdmin, allowedMeta, navigate]);
+
+  // ── Agent-wise: auto-select first allowed project, fetch on change ──
+  const firstAllowedKey = useMemo(() => allowedMeta[0]?.key ?? '', [allowedMeta]);
+  useEffect(() => { if (!agentProject && firstAllowedKey) setAgentProject(firstAllowedKey); }, [firstAllowedKey, agentProject]);
+
+  const fetchAgentSummary = useCallback(async (projectKey: string) => {
+    if (!projectKey) return;
+    setAgentLoading(true);
+    setAgentRows([]);
+    try {
+      const qs = new URLSearchParams({ projectKey, startDate: filters.startDate.replace('T', ' '), endDate: filters.endDate.replace('T', ' ') });
+      const res = await api.get<{ success: boolean; data: AgentRow[] }>(`/inbound/agent-summary?${qs}`);
+      setAgentRows(res.data.data ?? []);
+    } catch { setAgentRows([]); }
+    finally { setAgentLoading(false); }
+  }, [filters]);
+
+  useEffect(() => { if (agentProject) fetchAgentSummary(agentProject); }, [agentProject, fetchAgentSummary]);
 
   // ── Summary KPIs ──
   const totalOffered  = allowedProjects.reduce((s, p) => s + p.offered,  0);
@@ -1104,7 +1137,7 @@ export default function InboundDashboard() {
                         <tr><td colSpan={6} className="py-8 text-center text-slate-600">No data available</td></tr>
                       ) : sorted.map((r, i) => (
                         <tr key={r.date} className={`border-b border-slate-100 hover:bg-slate-50 ${i%2===0?'':'bg-transparent'}`}>
-                          <td className="py-2 px-3 text-slate-600 font-medium">{fmtDate(r.date)}</td>
+                          <td className="py-2 px-3 text-slate-600 font-medium whitespace-nowrap">{fmtDate(r.date)}</td>
                           <td className="py-2 px-3 text-slate-800 font-semibold tabular-nums">{r.offered.toLocaleString()}</td>
                           <td className="py-2 px-3 text-slate-800 font-semibold tabular-nums">{r.answered.toLocaleString()}</td>
                           <td className="py-2 px-3 tabular-nums"><Badge value={r.al.toFixed(1)} suffix="%" color={alColor(r.al)} /></td>
@@ -1162,7 +1195,7 @@ export default function InboundDashboard() {
                         const deficit = TOTAL_REQUIRED - r.total_login;
                         return (
                           <tr key={r.date} className={`border-b border-slate-100 hover:bg-slate-50 ${i%2===0?'':'bg-transparent'}`}>
-                            <td className="py-2 px-3 text-slate-600 font-medium">{fmtDate(r.date)}</td>
+                            <td className="py-2 px-3 text-slate-600 font-medium whitespace-nowrap">{fmtDate(r.date)}</td>
                             <td className="py-2 px-3 text-slate-800 font-semibold tabular-nums">{TOTAL_MANDATE}</td>
                             <td className="py-2 px-3 text-slate-800 font-semibold tabular-nums">{TOTAL_REQUIRED}</td>
                             <td className="py-2 px-3 tabular-nums">
@@ -1206,6 +1239,131 @@ export default function InboundDashboard() {
             </>
           );
         })()}
+
+        {/* ── Agent-wise Performance Table ── */}
+        {allowedMeta.length > 0 && (
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+            <div className="flex items-center gap-2.5 px-5 py-3 border-b border-purple-700 bg-purple-600 flex-wrap">
+              <div className="w-1.5 h-4 rounded-full shrink-0 bg-white/60" />
+              <h3 className="text-xs font-semibold text-white uppercase tracking-widest flex-1">
+                👤 Agent-wise Performance
+              </h3>
+              {/* Project selector */}
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-white/75 font-medium">Project:</label>
+                <select
+                  value={agentProject}
+                  onChange={e => setAgentProject(e.target.value)}
+                  className="text-xs font-semibold rounded-lg px-2.5 py-1 border-0 focus:outline-none"
+                  style={{ background: 'rgba(255,255,255,0.2)', color: '#fff' }}
+                >
+                  {allowedMeta.map(m => (
+                    <option key={m.key} value={m.key} style={{ background: '#6b21a8', color: '#fff' }}>
+                      {m.icon} {m.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => fetchAgentSummary(agentProject)}
+                  disabled={agentLoading}
+                  title="Refresh agent data"
+                  className="p-1.5 rounded-lg text-white/75 hover:text-white hover:bg-white/20 transition-colors"
+                >
+                  <RefreshCw size={12} className={agentLoading ? 'animate-spin' : ''} />
+                </button>
+                {agentRows.length > 0 && (
+                  <button
+                    onClick={() => exportTableCSV(
+                      ['Agent ID', 'Agent Name', 'Offered', 'Answered', 'AL%', 'SL%', 'ACHT(s)', 'Repeat%', 'FCR%'],
+                      agentRows.map(a => [a.agent_id, a.agent_name, a.offered, a.answered, a.al.toFixed(1), a.sl.toFixed(1), a.acht, a.repeat_pct.toFixed(1), a.fcr_pct !== null ? a.fcr_pct.toFixed(1) : 'N/A']),
+                      `agent_performance_${agentProject}`
+                    )}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs text-white/75 hover:text-white hover:bg-white/20 transition-colors"
+                  >
+                    <FileDown size={12} /> CSV
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    {['Agent Name', 'Offered', 'Answered', 'AL%', 'SL%', 'ACHT', 'Repeat%', 'FCR%'].map(h => (
+                      <th key={h} className={`py-2 px-3 text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap ${h === 'Agent Name' ? 'text-left' : 'text-right'}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {agentLoading ? (
+                    <tr><td colSpan={8} className="py-10 text-center text-slate-500">
+                      <span className="flex items-center justify-center gap-2">
+                        <RefreshCw size={13} className="animate-spin text-purple-500" /> Loading agent data…
+                      </span>
+                    </td></tr>
+                  ) : agentRows.length === 0 ? (
+                    <tr><td colSpan={8} className="py-10 text-center text-slate-400">No agent data for this period</td></tr>
+                  ) : agentRows.map((a, i) => (
+                    <tr key={a.agent_id} className={`border-b border-slate-100 hover:bg-purple-50 transition-colors ${i % 2 === 0 ? '' : 'bg-slate-50/50'}`}>
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                            style={{ backgroundColor: `hsl(${(i * 47) % 360}, 65%, 52%)` }}>
+                            {(a.agent_name || '?').charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-slate-800 whitespace-nowrap">{a.agent_name}</p>
+                            <p className="text-[10px] text-slate-400 font-mono">{a.agent_id}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-semibold text-slate-700 tabular-nums">{a.offered.toLocaleString()}</td>
+                      <td className="py-2.5 px-3 text-right font-semibold text-slate-700 tabular-nums">{a.answered.toLocaleString()}</td>
+                      <td className="py-2.5 px-3 text-right">
+                        <Badge value={a.al.toFixed(1)} suffix="%" color={alColor(a.al)} />
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <Badge value={a.sl.toFixed(1)} suffix="%" color={slColor(a.sl)} />
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <Badge value={a.acht} suffix="s" color={achtColor(a.acht)} />
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <Badge value={a.repeat_pct.toFixed(1)} suffix="%" color={repeatColor(a.repeat_pct)} />
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        {a.fcr_pct !== null
+                          ? <Badge value={a.fcr_pct.toFixed(1)} suffix="%" color={fcrColor(a.fcr_pct)} />
+                          : <span className="text-slate-400 text-[11px]">N/A</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {!agentLoading && agentRows.length > 0 && (() => {
+                  const tot = agentRows.reduce((s, a) => ({ offered: s.offered + a.offered, answered: s.answered + a.answered, sl_num: s.sl_num + Math.round(a.sl * a.offered / 100), acht_w: s.acht_w + a.acht * a.offered }), { offered: 0, answered: 0, sl_num: 0, acht_w: 0 });
+                  const totAl   = tot.offered > 0 ? Math.round(tot.answered * 10000 / tot.offered) / 100 : 0;
+                  const totSl   = tot.offered > 0 ? Math.round(tot.sl_num   * 10000 / tot.offered) / 100 : 0;
+                  const totAcht = tot.offered > 0 ? Math.round(tot.acht_w / tot.offered) : 0;
+                  return (
+                    <tfoot>
+                      <tr className="border-t-2 border-purple-400/30 bg-purple-50 font-bold">
+                        <td className="py-2 px-3 text-purple-700 text-[11px] uppercase tracking-wider">Total ({agentRows.length} agents)</td>
+                        <td className="py-2 px-3 text-right text-slate-800 tabular-nums">{tot.offered.toLocaleString()}</td>
+                        <td className="py-2 px-3 text-right text-slate-800 tabular-nums">{tot.answered.toLocaleString()}</td>
+                        <td className="py-2 px-3 text-right"><Badge value={totAl.toFixed(1)} suffix="%" color={alColor(totAl)} /></td>
+                        <td className="py-2 px-3 text-right"><Badge value={totSl.toFixed(1)} suffix="%" color={slColor(totSl)} /></td>
+                        <td className="py-2 px-3 text-right"><Badge value={totAcht} suffix="s" color={achtColor(totAcht)} /></td>
+                        <td className="py-2 px-3 text-right text-slate-400">—</td>
+                        <td className="py-2 px-3 text-right text-slate-400">—</td>
+                      </tr>
+                    </tfoot>
+                  );
+                })()}
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="text-center text-[10px] text-slate-600 pb-4">

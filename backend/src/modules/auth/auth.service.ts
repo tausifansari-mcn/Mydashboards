@@ -13,12 +13,13 @@ interface DBUser {
   last_login: Date | null; created_at: Date;
   role_name: string; role_display_name: string;
   client_name: string | null;
+  avatar_url?: string | null;
 }
 
 export async function loginService(email: string, password: string, ip: string, userAgent: string) {
   const rows = await querySource<DBUser>(`
     SELECT u.id, u.name, u.email, u.password_hash, u.role_id, u.client_id,
-           u.is_active, u.last_login,
+           u.is_active, u.last_login, u.avatar_url,
            r.name        AS role_name,
            r.display_name AS role_display_name,
            c.name        AS client_name
@@ -66,6 +67,7 @@ export async function loginService(email: string, password: string, ip: string, 
       roleDisplay: user.role_display_name,
       clientId:    user.client_id,
       clientName:  user.client_name ?? null,
+      avatar_url:  user.avatar_url ?? null,
     },
   };
 }
@@ -134,7 +136,7 @@ export async function changePasswordService(userId: number, oldPassword: string,
 
 export async function getMeService(userId: number) {
   const rows = await querySource<DBUser>(`
-    SELECT u.id, u.name, u.email, u.last_login,
+    SELECT u.id, u.name, u.email, u.last_login, u.avatar_url,
            r.name        AS role_name,
            r.display_name AS role_display_name,
            u.client_id,
@@ -158,7 +160,12 @@ export async function getMeService(userId: number) {
     clientId:    user.client_id,
     clientName:  user.client_name ?? null,
     lastLogin:   user.last_login,
+    avatar_url:  user.avatar_url ?? null,
   };
+}
+
+export async function updateAvatarService(userId: number, avatarUrl: string | null) {
+  await querySource('UPDATE shivamgiri.md_users SET avatar_url = ? WHERE id = ?', [avatarUrl, userId]);
 }
 
 async function logLoginAttempt(userId: number | undefined, ip: string, userAgent: string, status: string) {

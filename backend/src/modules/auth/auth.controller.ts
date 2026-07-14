@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import * as authService from './auth.service';
+import { sendWelcomeEmail } from '../../lib/mailer';
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -83,5 +84,31 @@ export async function changePassword(req: Request, res: Response): Promise<void>
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Failed to change password';
     res.status(400).json({ message: msg });
+  }
+}
+
+export async function updateAvatar(req: Request, res: Response): Promise<void> {
+  try {
+    const { avatar_url } = z.object({ avatar_url: z.string().nullable() }).parse(req.body);
+    await authService.updateAvatarService(req.user!.id, avatar_url);
+    res.json({ message: 'Avatar updated', avatar_url });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to update avatar';
+    res.status(400).json({ message: msg });
+  }
+}
+
+export async function sendTestEmail(req: Request, res: Response): Promise<void> {
+  if (req.user?.role !== 'super_admin') {
+    res.status(403).json({ message: 'Access denied' });
+    return;
+  }
+  try {
+    const { to } = z.object({ to: z.string().email() }).parse(req.body);
+    await sendWelcomeEmail(to, 'Test Recipient', 'TEST-1234');
+    res.json({ message: `Test email sent to ${to}` });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to send email';
+    res.status(500).json({ message: msg });
   }
 }

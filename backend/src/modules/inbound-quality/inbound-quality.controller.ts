@@ -366,6 +366,21 @@ export async function getBandDetail(req: Request, res: Response) {
   }
 }
 
+export async function updateAgentMaster(req: Request, res: Response) {
+  try {
+    const masId = req.params.masId;
+    const { agentName } = req.body as { agentName: string };
+    if (!masId || !agentName?.trim()) {
+      res.status(400).json({ message: 'masId and agentName are required' });
+      return;
+    }
+    await svc.updateAgentName(masId, agentName.trim());
+    res.json({ message: 'Agent name updated' });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function getAgentMaster(_req: Request, res: Response) {
   try {
     const data = await svc.getAgentMaster();
@@ -503,6 +518,15 @@ export async function upsertTNIComment(req: Request, res: Response) {
 export async function getClapCustomerAnalysis(req: Request, res: Response) {
   try {
     const data = await svc.getClapCustomerAnalysis(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getClapIntelligence(req: Request, res: Response) {
+  try {
+    const data = await svc.getClapIntelligence(parseFilters(req));
     res.json({ data });
   } catch (err: unknown) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });

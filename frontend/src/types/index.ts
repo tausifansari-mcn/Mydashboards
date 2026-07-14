@@ -7,6 +7,7 @@ export interface User {
   clientId: number | null;
   clientName: string | null;
   lastLogin?: string;
+  avatar_url?: string | null;
 }
 
 export interface Client {

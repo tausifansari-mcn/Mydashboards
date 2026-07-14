@@ -11,6 +11,17 @@ function cacheSet(key: string, value: unknown, ttlMs = 120_000) {
   _cache.set(key, { value, exp: Date.now() + ttlMs });
 }
 
+// ─── Concurrency limiter: run tasks in batches to protect DB connection pool ──
+async function batchRun<T>(tasks: (() => Promise<T>)[], batchSize = 3): Promise<T[]> {
+  const results: T[] = [];
+  for (let i = 0; i < tasks.length; i += batchSize) {
+    const batch = tasks.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(t => t()));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 export interface InboundFilters {
   startDate: string; // 'YYYY-MM-DD'
   endDate: string;
@@ -363,8 +374,8 @@ export async function getProjectSummary(filters: InboundFilters, projectKey?: st
 
   const projectsToQuery = projectKey ? PROJECTS.filter(p => p.key === projectKey) : PROJECTS;
 
-  const results = await Promise.all(
-    projectsToQuery.map(async (p) => {
+  const results = await batchRun(
+    projectsToQuery.map((p) => async () => {
       let sql: string;
       let params: (string | number)[];
 
@@ -465,8 +476,8 @@ export async function getProjectTrend(filters: InboundFilters, projectKey?: stri
   if (cached) return cached;
   const projectsToQuery = projectKey ? PROJECTS.filter(p => p.key === projectKey) : PROJECTS;
 
-  const results = await Promise.all(
-    projectsToQuery.map(async (p) => {
+  const results = await batchRun(
+    projectsToQuery.map((p) => async () => {
       let sql: string;
       let params: (string | number)[];
 
@@ -488,15 +499,15 @@ export async function getProjectTrend(filters: InboundFilters, projectKey?: stri
           [startDate, endDate, p.fcrClientId]
         );
         for (const r of fcrRows) {
-          const d = r.date instanceof Date
-            ? `${r.date.getUTCFullYear()}-${String(r.date.getUTCMonth()+1).padStart(2,'0')}-${String(r.date.getUTCDate()).padStart(2,'0')}`
+          const d = (r.date as unknown) instanceof Date
+            ? `${(r.date as unknown as Date).getUTCFullYear()}-${String((r.date as unknown as Date).getUTCMonth()+1).padStart(2,'0')}-${String((r.date as unknown as Date).getUTCDate()).padStart(2,'0')}`
             : String(r.date).slice(0, 10);
           fcrMap.set(d, Number(r.fcr_pct) || 0);
         }
       }
 
       const trendRows = rows.map((r) => {
-        const rawDate = r.date;
+        const rawDate = r.date as unknown;
         const dateStr = rawDate instanceof Date
           ? `${rawDate.getUTCFullYear()}-${String(rawDate.getUTCMonth()+1).padStart(2,'0')}-${String(rawDate.getUTCDate()).padStart(2,'0')}`
           : String(rawDate).slice(0, 10);
@@ -563,4 +574,93 @@ export async function getConsolidatedToday(): Promise<ProjectDailyRow[]> {
   const pad = (n: number) => String(n).padStart(2, '0');
   const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   return getProjectSummary({ startDate: today, endDate: today });
+}
+
+// ─── getAgentSummary ──────────────────────────────────────────────────────────
+
+export interface AgentRow {
+  agent_id:   string;
+  agent_name: string;
+  offered:    number;
+  answered:   number;
+  al:         number;
+  sl:         number;
+  acht:       number;
+  repeat_pct: number;
+  fcr_pct:    number | null;
+}
+
+export async function getAgentSummary(projectKey: string, filters: InboundFilters): Promise<AgentRow[]> {
+  const p = PROJECTS.find(proj => proj.key === projectKey);
+  if (!p) return [];
+
+  const { startDate, endDate } = filters;
+  const inPlaceholders = p.campaigns.map(() => '?').join(',');
+
+  const sql = p.pattern === 'A'
+    ? `SELECT
+         AgentId   AS agent_id,
+         AgentName AS agent_name,
+         SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
+         SUM(CASE WHEN AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS answered,
+         SUM(CASE WHEN AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME'
+                   AND TIME_TO_SEC(QueueDuration) <= 20 THEN 1 ELSE 0 END) AS sl_num,
+         ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END), 0) AS acht,
+         COUNT(DISTINCT CASE WHEN DisconnBy != 'HOLDTIME' THEN PhoneNumber END) AS unique_phones
+       FROM dialer_db.${p.table}
+       WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+         AND CampaignName IN (${inPlaceholders})
+         AND AgentId != 'VDCL'
+       GROUP BY AgentId, AgentName
+       HAVING offered > 0
+       ORDER BY offered DESC`
+    : `SELECT
+         AgentId   AS agent_id,
+         AgentName AS agent_name,
+         COUNT(*)  AS offered,
+         SUM(CASE WHEN AgentId != 'VDCL' THEN 1 ELSE 0 END) AS answered,
+         SUM(CASE WHEN AgentId != 'VDCL' AND TIME_TO_SEC(QueueDuration) <= 30 THEN 1 ELSE 0 END) AS sl_num,
+         ROUND(AVG(CallDurationSecond), 0) AS acht,
+         COUNT(DISTINCT PhoneNumber) AS unique_phones
+       FROM dialer_db.${p.table}
+       WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+         AND CampaignName IN (${inPlaceholders})
+         AND AgentId != 'VDCL'
+       GROUP BY AgentId, AgentName
+       HAVING offered > 0
+       ORDER BY offered DESC`;
+
+  interface RawAgentRow {
+    agent_id: string; agent_name: string;
+    offered: number; answered: number; sl_num: number; acht: number; unique_phones: number;
+  }
+
+  const rows = await querySource<RawAgentRow>(sql, [startDate, endDate, ...p.campaigns]);
+
+  const fcrMap = new Map<string, number>();
+  if (p.hasFCR && p.fcrClientId) {
+    const fcrRows = await querySource<{ agent_id: string; fcr_pct: number }>(
+      `SELECT CAST(AgentId AS CHAR) AS agent_id,
+              ROUND(100 * SUM(CASE WHEN Field2='FCR' THEN 1 ELSE 0 END) / NULLIF(COUNT(Field2), 0), 2) AS fcr_pct
+       FROM dialer_db.data_master_in
+       WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+         AND ClientId = ? AND Field1 = 'Inbound'
+       GROUP BY AgentId`,
+      [startDate, endDate, p.fcrClientId]
+    );
+    for (const r of fcrRows) fcrMap.set(String(r.agent_id), Number(r.fcr_pct) || 0);
+  }
+
+  return rows.map(r => {
+    const offered      = Number(r.offered)       || 0;
+    const answered     = Number(r.answered)      || 0;
+    const sl_num       = Number(r.sl_num)        || 0;
+    const unique_phones = Number(r.unique_phones) || 0;
+    const acht         = Number(r.acht)          || 0;
+    const al           = offered > 0 ? Math.round(answered * 10000 / offered) / 100 : 0;
+    const sl           = offered > 0 ? Math.round(sl_num   * 10000 / offered) / 100 : 0;
+    const repeat_pct   = offered > 0 ? Math.round((offered - unique_phones) * 10000 / offered) / 100 : 0;
+    const fcr_pct      = p.hasFCR ? (fcrMap.get(String(r.agent_id)) ?? null) : null;
+    return { agent_id: String(r.agent_id), agent_name: r.agent_name || String(r.agent_id), offered, answered, al, sl, acht, repeat_pct, fcr_pct };
+  });
 }

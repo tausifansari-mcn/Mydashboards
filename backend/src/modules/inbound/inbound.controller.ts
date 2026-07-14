@@ -114,3 +114,19 @@ export async function getProjectTrend(req: Request, res: Response): Promise<void
     res.status(500).json({ success: false, message: 'Failed to fetch project trend' });
   }
 }
+
+export async function getAgentSummary(req: Request, res: Response): Promise<void> {
+  try {
+    const projectKey = req.query.projectKey as string;
+    if (!projectKey) {
+      res.status(400).json({ success: false, message: 'projectKey is required' });
+      return;
+    }
+    const { startDate, endDate } = parseDateRange(req);
+    const data = await svc.getAgentSummary(projectKey, { startDate, endDate });
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('inbound getAgentSummary error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch agent summary' });
+  }
+}

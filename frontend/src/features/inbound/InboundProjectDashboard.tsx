@@ -138,6 +138,76 @@ function SectionCard({
   );
 }
 
+// ─── Expandable Table wrapper (mirrors SectionCard but for tables) ────────────
+function ExpandableTable({
+  title, accent = '#1E293B', textColor = '#FFFFFF', onExport, children,
+}: {
+  title: string; accent?: string; textColor?: string;
+  onExport?: () => void; children: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const header = (close?: () => void) => (
+    <div className="flex items-center gap-2.5 px-5 py-3 border-b shrink-0" style={{ backgroundColor: accent, borderColor: accent }}>
+      <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: textColor + '99' }} />
+      <h3 className="text-xs font-semibold uppercase tracking-widest flex-1" style={{ color: textColor }}>{title}</h3>
+      <div className="flex items-center gap-1">
+        {onExport && (
+          <button onClick={onExport} title="Export CSV"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
+            style={{ color: textColor + '99' }}
+            onMouseEnter={e => { e.currentTarget.style.color = textColor; e.currentTarget.style.backgroundColor = textColor + '20'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = textColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
+            <FileDown size={13} /> Export CSV
+          </button>
+        )}
+        {close ? (
+          <button onClick={close} title="Close"
+            className="p-1.5 rounded-lg transition-colors"
+            style={{ color: textColor + '99' }}
+            onMouseEnter={e => { e.currentTarget.style.color = textColor; e.currentTarget.style.backgroundColor = textColor + '20'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = textColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
+            <X size={15} />
+          </button>
+        ) : (
+          <button onClick={() => setExpanded(true)} title="Expand fullscreen"
+            className="p-1.5 rounded-lg transition-colors"
+            style={{ color: textColor + '99' }}
+            onMouseEnter={e => { e.currentTarget.style.color = textColor; e.currentTarget.style.backgroundColor = textColor + '20'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = textColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
+            <Maximize2 size={13} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        {header()}
+        {children}
+      </div>
+
+      {expanded && createPortal(
+        <div
+          className="fixed inset-0 flex flex-col bg-black/80 backdrop-blur-sm p-4"
+          style={{ zIndex: 9999 }}
+          onClick={e => { if (e.target === e.currentTarget) setExpanded(false); }}
+        >
+          <div className="flex flex-col bg-white rounded-2xl overflow-hidden flex-1 min-h-0 shadow-2xl">
+            {header(() => setExpanded(false))}
+            <div className="flex-1 overflow-auto">
+              {children}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // ─── Static project metadata ──────────────────────────────────────────────────
 const PROJECT_META: Record<string, {
   name: string; icon: string; color: string; textOnColor: string; secondary: string;
@@ -232,6 +302,11 @@ export default function InboundProjectDashboard() {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
 
+  // Agent-wise state
+  interface AgentRow { agent_id: string; agent_name: string; offered: number; answered: number; al: number; sl: number; acht: number; repeat_pct: number; fcr_pct: number | null; }
+  const [agentRows, setAgentRows]     = useState<AgentRow[]>([]);
+  const [agentLoading, setAgentLoading] = useState(false);
+
   const buildDateRange = useCallback(() => {
     const today = todayStr();
     if (range === 'today') return { startDate: `${today} 00:00`, endDate: `${today} 23:59` };
@@ -245,7 +320,7 @@ export default function InboundProjectDashboard() {
     try {
       const { startDate, endDate } = buildDateRange();
       const today = todayStr();
-      const trendStart = `${today.slice(0, 7)}-01 00:00`; // 1st of current month
+      const trendStart = `${today.slice(0, 7)}-01 00:00`;
       const trendEnd   = `${today} 23:59`;
       const [sumRes, hourRes, trendRes] = await Promise.all([
         api.get(`/inbound/project/${projectKey}`, { params: { startDate, endDate } }),
@@ -256,6 +331,15 @@ export default function InboundProjectDashboard() {
       setHourly(hourRes.data.data || []);
       setTrend([...(trendRes.data.data?.rows || [])].reverse());
       setLastUpdated(new Date().toLocaleTimeString());
+
+      // Agent-wise fetch (non-blocking)
+      setAgentLoading(true);
+      try {
+        const qs = new URLSearchParams({ projectKey, startDate, endDate });
+        const agRes = await api.get<{ success: boolean; data: AgentRow[] }>(`/inbound/agent-summary?${qs}`);
+        setAgentRows(agRes.data.data ?? []);
+      } catch { setAgentRows([]); }
+      finally { setAgentLoading(false); }
     } catch (err) { console.error('Project fetch error:', err); }
     finally { setLoading(false); }
   }, [projectKey, buildDateRange, meta]);
@@ -505,20 +589,11 @@ export default function InboundProjectDashboard() {
       </SectionCard>
 
       {/* ── Date-wise Performance Table ── */}
-      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <div className="flex items-center gap-2.5 px-5 py-3 border-b" style={{ backgroundColor: meta.color, borderColor: meta.color }}>
-          <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: meta.textOnColor + '99' }} />
-          <h3 className="text-xs font-semibold uppercase tracking-widest flex-1" style={{ color: meta.textOnColor }}>
-            Date-wise Performance · {meta.name}
-          </h3>
-          <button onClick={exportPerf}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
-            style={{ color: meta.textOnColor + '99' }}
-            onMouseEnter={e => { e.currentTarget.style.color = meta.textOnColor; e.currentTarget.style.backgroundColor = meta.textOnColor + '20'; }}
-            onMouseLeave={e => { e.currentTarget.style.color = meta.textOnColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
-            <FileDown size={13} /> Export CSV
-          </button>
-        </div>
+      <ExpandableTable
+        title={`Date-wise Performance · ${meta.name}`}
+        accent={meta.color} textColor={meta.textOnColor}
+        onExport={exportPerf}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
@@ -546,23 +621,14 @@ export default function InboundProjectDashboard() {
             </tbody>
           </table>
         </div>
-      </div>
+      </ExpandableTable>
 
       {/* ── Manpower Details Table ── */}
-      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <div className="flex items-center gap-2.5 px-5 py-3 border-b" style={{ backgroundColor: meta.color, borderColor: meta.color }}>
-          <div className="w-1.5 h-4 rounded-full shrink-0" style={{ backgroundColor: meta.textOnColor + '99' }} />
-          <h3 className="text-xs font-semibold uppercase tracking-widest flex-1" style={{ color: meta.textOnColor }}>
-            👥 Manpower Details · {meta.name}
-          </h3>
-          <button onClick={exportManpower}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
-            style={{ color: meta.textOnColor + '99' }}
-            onMouseEnter={e => { e.currentTarget.style.color = meta.textOnColor; e.currentTarget.style.backgroundColor = meta.textOnColor + '20'; }}
-            onMouseLeave={e => { e.currentTarget.style.color = meta.textOnColor + '99'; e.currentTarget.style.backgroundColor = 'transparent'; }}>
-            <FileDown size={13} /> Export CSV
-          </button>
-        </div>
+      <ExpandableTable
+        title={`👥 Manpower Details · ${meta.name}`}
+        accent={meta.color} textColor={meta.textOnColor}
+        onExport={exportManpower}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
@@ -579,7 +645,7 @@ export default function InboundProjectDashboard() {
                 const deficit = meta.required - r.login_count;
                 return (
                   <tr key={r.date} className={`border-b border-slate-100 hover:bg-slate-50 ${i%2===0?'':'bg-transparent'}`}>
-                    <td className="py-2 px-3 text-slate-600 font-medium">{fmtDate(r.date)}</td>
+                    <td className="py-2 px-3 text-slate-600 font-medium whitespace-nowrap">{fmtDate(r.date)}</td>
                     <td className="py-2 px-3 text-slate-600 tabular-nums">{meta.mandate}</td>
                     <td className="py-2 px-3 text-slate-600 tabular-nums">{meta.required}</td>
                     <td className="py-2 px-3 tabular-nums">
@@ -599,7 +665,71 @@ export default function InboundProjectDashboard() {
             </tbody>
           </table>
         </div>
-      </div>
+      </ExpandableTable>
+
+      {/* ── Agent-wise Performance Table ── */}
+      <ExpandableTable
+        title={`🧑‍💼 Agent-wise Performance · ${meta.name}`}
+        accent="#6D28D9" textColor="#FFFFFF"
+        onExport={agentRows.length > 0 ? () => {
+          const headers = ['Agent ID','Agent Name','Offered','Answered','AL%','SL%','ACHT(s)','Repeat%',...(meta.hasFCR?['FCR%']:[])];
+          const rows = agentRows.map(r => [r.agent_id, r.agent_name, r.offered, r.answered, r.al.toFixed(1), r.sl.toFixed(1), r.acht, r.repeat_pct.toFixed(1), ...(meta.hasFCR?[r.fcr_pct!=null?r.fcr_pct.toFixed(1):'']:[])] );
+          exportCSV(headers, rows, `${meta.name}_agents`);
+        } : undefined}
+      >
+        {agentLoading ? (
+          <div className="py-10 text-center text-slate-500 text-sm flex items-center justify-center gap-2">
+            <Download size={14} className="animate-spin" /> Loading agent data…
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50">
+                  {['#','Agent Name','Offered','Answered','AL%','SL%','ACHT','Repeat%',...(meta.hasFCR?['FCR%']:[])].map(h => (
+                    <th key={h} className="py-2 px-3 text-left text-slate-500 font-semibold uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {agentRows.length === 0 ? (
+                  <tr><td colSpan={meta.hasFCR?9:8} className="py-8 text-center text-slate-500">No agent data for this period</td></tr>
+                ) : (
+                  <>
+                    {agentRows.map((r, i) => (
+                      <tr key={r.agent_id} className={`border-b border-slate-100 hover:bg-purple-50/40 ${i%2===0?'':'bg-transparent'}`}>
+                        <td className="py-2 px-3 text-slate-400 tabular-nums">{i+1}</td>
+                        <td className="py-2 px-3 text-slate-800 font-semibold whitespace-nowrap">{r.agent_name || r.agent_id}</td>
+                        <td className="py-2 px-3 text-slate-600 tabular-nums font-medium">{r.offered.toLocaleString()}</td>
+                        <td className="py-2 px-3 text-slate-600 tabular-nums">{r.answered.toLocaleString()}</td>
+                        <td className="py-2 px-3 tabular-nums"><span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ color: alColor(r.al), background: alColor(r.al)+'18' }}>{r.al.toFixed(1)}%</span></td>
+                        <td className="py-2 px-3 tabular-nums"><span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ color: slColor(r.sl), background: slColor(r.sl)+'18' }}>{r.sl.toFixed(1)}%</span></td>
+                        <td className="py-2 px-3 tabular-nums"><span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ color: achtColor(r.acht), background: achtColor(r.acht)+'18' }}>{r.acht}s</span></td>
+                        <td className="py-2 px-3 tabular-nums"><span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ color: repeatColor(r.repeat_pct), background: repeatColor(r.repeat_pct)+'18' }}>{r.repeat_pct.toFixed(1)}%</span></td>
+                        {meta.hasFCR && <td className="py-2 px-3 tabular-nums text-slate-600">{r.fcr_pct!=null?`${r.fcr_pct.toFixed(1)}%`:'—'}</td>}
+                      </tr>
+                    ))}
+                    {agentRows.length > 1 && (() => {
+                      const tot = agentRows.reduce((acc, r) => ({ off: acc.off + r.offered, ans: acc.ans + r.answered }), { off: 0, ans: 0 });
+                      const tAL = tot.off > 0 ? Math.round(tot.ans * 10000 / tot.off) / 100 : 0;
+                      return (
+                        <tr className="border-t-2 border-slate-300 bg-slate-50 font-bold">
+                          <td className="py-2 px-3 text-slate-500 text-[10px] uppercase">—</td>
+                          <td className="py-2 px-3 text-slate-700">Total ({agentRows.length} agents)</td>
+                          <td className="py-2 px-3 text-slate-700 tabular-nums">{tot.off.toLocaleString()}</td>
+                          <td className="py-2 px-3 text-slate-700 tabular-nums">{tot.ans.toLocaleString()}</td>
+                          <td className="py-2 px-3 tabular-nums"><span className="px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ color: alColor(tAL), background: alColor(tAL)+'18' }}>{tAL.toFixed(1)}%</span></td>
+                          <td colSpan={meta.hasFCR?4:3} className="py-2 px-3 text-slate-400 text-[11px]">—</td>
+                        </tr>
+                      );
+                    })()}
+                  </>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </ExpandableTable>
     </div>
     </div>
     </div>

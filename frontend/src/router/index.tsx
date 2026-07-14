@@ -14,9 +14,6 @@ const ProcessesPage           = lazy(() => import('@/features/admin/ProcessesPag
 const AccessPage              = lazy(() => import('@/features/admin/AccessPage'));
 const ProfilePage             = lazy(() => import('@/features/profile/ProfilePage'));
 const AuditPage               = lazy(() => import('@/features/audit/AuditPage'));
-const CallMasterDashboard         = lazy(() => import('@/features/call-master/CallMasterDashboard'));
-const OpeningIntelligenceDashboard    = lazy(() => import('@/features/call-master/OpeningIntelligenceDashboard'));
-const CustomerIntelligenceDashboard   = lazy(() => import('@/features/call-master/CustomerIntelligenceDashboard'));
 const SalesDashboard          = lazy(() => import('@/features/sales/SalesDashboard'));
 const AIQualityDashboard           = lazy(() => import('@/features/ai-quality/AIQualityDashboard'));
 const ProcessQualityDashboard      = lazy(() => import('@/features/ai-quality/ProcessQualityDashboard'));
@@ -42,9 +39,6 @@ const router = createBrowserRouter(
           element: <AppShell />,
           children: [
             { path: '/dashboard',           element: wrap(DashboardLauncher) },
-            { path: '/call-master',          element: wrap(CallMasterDashboard) },
-            { path: '/call-master/opening-intelligence',   element: wrap(OpeningIntelligenceDashboard) },
-            { path: '/call-master/customer-intelligence', element: wrap(CustomerIntelligenceDashboard) },
             { path: '/sales',               element: wrap(SalesDashboard) },
             { path: '/quality',                        element: wrap(AIQualityDashboard) },
             { path: '/quality/inbound/:clientId',      element: wrap(InboundQualityDashboard) },

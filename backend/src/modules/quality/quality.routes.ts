@@ -6,7 +6,7 @@ import * as ctrl from './quality.controller';
 
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent'));
+router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin'));
 
 router.get('/clients',            ctrl.getClients);
 router.get('/clients-summary',    ctrl.getClientsSummary);

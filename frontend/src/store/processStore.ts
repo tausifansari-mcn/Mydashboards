@@ -24,13 +24,12 @@ interface ProcessStore {
   processes: ProcessItem[];
   loaded: boolean;
   isSuperAdmin: boolean;
+  dashboardSlugs: string[];
   setProcesses: (p: ProcessItem[], isSuperAdmin: boolean) => void;
+  setDashboardSlugs: (slugs: string[]) => void;
   reset: () => void;
-  // Returns true if the user can access a given dialdesk_client_id for Inbound
   canAccessInboundClient: (clientId: number | string) => boolean;
-  // Returns true if the user can access a given dialdesk_client_id for Outbound
   canAccessOutboundClient: (clientId: number | string) => boolean;
-  // Returns true if the user can access an inbound project by slug key
   canAccessInboundSlug: (slug: string) => boolean;
 }
 
@@ -38,10 +37,13 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
   processes: [],
   loaded: false,
   isSuperAdmin: false,
+  dashboardSlugs: [],
 
   setProcesses: (processes, isSuperAdmin) => set({ processes, loaded: true, isSuperAdmin }),
 
-  reset: () => set({ processes: [], loaded: false, isSuperAdmin: false }),
+  setDashboardSlugs: (dashboardSlugs) => set({ dashboardSlugs }),
+
+  reset: () => set({ processes: [], loaded: false, isSuperAdmin: false, dashboardSlugs: [] }),
 
   canAccessInboundClient: (clientId) => {
     const { isSuperAdmin, processes, loaded } = get();

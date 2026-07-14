@@ -6,7 +6,7 @@ import * as ctrl from './inbound-quality.controller';
 
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent'));
+router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin'));
 
 router.get('/clients',        ctrl.getInboundClients);
 router.get('/kpis',           ctrl.getInboundProcessKPIs);
@@ -42,6 +42,7 @@ router.get('/repeat-analysis',          ctrl.getRepeatAnalysis);
 router.get('/agent-audit-band',         ctrl.getAgentAuditBandSummary);
 router.get('/band-detail',              ctrl.getBandDetail);
 router.get('/agent-master',             ctrl.getAgentMaster);
+router.patch('/agent-master/:masId',    ctrl.updateAgentMaster);
 router.get('/missing-agents',           ctrl.getMissingAgents);
 router.post('/agent-master',            ctrl.insertAgentMaster);
 router.get('/repeat-call-detail',       ctrl.getRepeatCallDetail);
@@ -54,5 +55,6 @@ router.get('/tni-agent-params',        ctrl.getTNIAgentParams);
 router.get('/tni-comments',            ctrl.getTNIComments);
 router.post('/tni-comments',           ctrl.upsertTNIComment);
 router.get('/clap-customer-analysis',  ctrl.getClapCustomerAnalysis);
+router.get('/clap-intelligence',       ctrl.getClapIntelligence);
 
 export default router;

@@ -18,5 +18,7 @@ router.post('/forgot-password', ctrl.forgotPassword);
 router.post('/reset-password', ctrl.resetPassword);
 router.get('/me', verifyToken, ctrl.getMe);
 router.patch('/change-password', verifyToken, ctrl.changePassword);
+router.patch('/avatar', verifyToken, ctrl.updateAvatar);
+router.post('/send-test-email', verifyToken, ctrl.sendTestEmail);
 
 export default router;

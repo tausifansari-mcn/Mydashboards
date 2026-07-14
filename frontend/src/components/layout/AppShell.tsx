@@ -9,15 +9,22 @@ import { useProcessStore } from '@/store/processStore';
 export default function AppShell() {
   const location = useLocation();
   const { user } = useAuthStore();
-  const { loaded, setProcesses } = useProcessStore();
+  const { loaded, setProcesses, setDashboardSlugs } = useProcessStore();
 
   useEffect(() => {
     if (user && !loaded) {
-      api.get('/processes/my')
-        .then((r) => setProcesses(r.data, user.role === 'super_admin'))
-        .catch(() => setProcesses([], user?.role === 'super_admin'));
+      Promise.all([
+        api.get('/processes/my'),
+        api.get<{ id: number; slug: string }[]>('/dashboards/my'),
+      ]).then(([procRes, dashRes]) => {
+        setProcesses(procRes.data, user.role === 'super_admin');
+        setDashboardSlugs(dashRes.data.map((d) => d.slug));
+      }).catch(() => {
+        setProcesses([], user?.role === 'super_admin');
+        setDashboardSlugs([]);
+      });
     }
-  }, [user, loaded, setProcesses]);
+  }, [user, loaded, setProcesses, setDashboardSlugs]);
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: '#C8CDD6' }}>
