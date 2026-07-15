@@ -295,12 +295,15 @@ export default function InboundProjectDashboard() {
     }
   }, [loaded, projectKey, canAccessInboundSlug, navigate]);
 
-  const [range, setRange]     = useState<'today'|'7d'|'30d'>('today');
+  const [range, setRange]       = useState<'today'|'7d'|'30d'|'custom'>('today');
+  const [customStart, setCustomStart] = useState(todayStr());
+  const [customEnd,   setCustomEnd]   = useState(todayStr());
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [hourly, setHourly]   = useState<HourlyRow[]>([]);
   const [trend, setTrend]     = useState<TrendRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
+  const [fallbackDate, setFallbackDate] = useState<string | null>(null);
 
   // Agent-wise state
   interface AgentRow { agent_id: string; agent_name: string; offered: number; answered: number; al: number; sl: number; acht: number; repeat_pct: number; fcr_pct: number | null; }
@@ -309,27 +312,57 @@ export default function InboundProjectDashboard() {
 
   const buildDateRange = useCallback(() => {
     const today = todayStr();
-    if (range === 'today') return { startDate: `${today} 00:00`, endDate: `${today} 23:59` };
+    if (range === 'today')  return { startDate: `${today} 00:00`,       endDate: `${today} 23:59` };
+    if (range === 'custom') return { startDate: `${customStart} 00:00`, endDate: `${customEnd} 23:59` };
     const days = range === '7d' ? 6 : 29;
     return { startDate: `${daysAgoStr(days)} 00:00`, endDate: `${today} 23:59` };
-  }, [range]);
+  }, [range, customStart, customEnd]);
 
   const fetchAll = useCallback(async () => {
     if (!projectKey || !meta) return;
     setLoading(true);
+    setFallbackDate(null);
     try {
       const { startDate, endDate } = buildDateRange();
       const today = todayStr();
-      const trendStart = `${today.slice(0, 7)}-01 00:00`;
-      const trendEnd   = `${today} 23:59`;
+      const yesterday = daysAgoStr(1);
+      const trendStart = range === 'custom' ? `${startDate.slice(0, 7)}-01 00:00` : `${today.slice(0, 7)}-01 00:00`;
+      const trendEnd   = range === 'custom' ? endDate : `${today} 23:59`;
       const [sumRes, hourRes, trendRes] = await Promise.all([
         api.get(`/inbound/project/${projectKey}`, { params: { startDate, endDate } }),
         api.get(`/inbound/project/${projectKey}/hourly`, { params: { date: today } }),
         api.get(`/inbound/project/${projectKey}/trend`, { params: { startDate: trendStart, endDate: trendEnd } }),
       ]);
-      setSummary(sumRes.data.data);
-      setHourly(hourRes.data.data || []);
-      setTrend([...(trendRes.data.data?.rows || [])].reverse());
+
+      const summaryData: ProjectSummary = sumRes.data.data;
+      const trendRows: TrendRow[] = [...(trendRes.data.data?.rows || [])].reverse();
+
+      // If today has no data, directly fetch yesterday's summary + hourly
+      if (range === 'today' && (summaryData?.offered ?? 0) === 0) {
+        try {
+          const [ySumRes, yHourRes] = await Promise.all([
+            api.get(`/inbound/project/${projectKey}`, { params: { startDate: `${yesterday} 00:00`, endDate: `${yesterday} 23:59` } }),
+            api.get(`/inbound/project/${projectKey}/hourly`, { params: { date: yesterday } }),
+          ]);
+          const yData: ProjectSummary = ySumRes.data.data;
+          if ((yData?.offered ?? 0) > 0) {
+            setFallbackDate(yesterday);
+            setSummary(yData);
+            setHourly(yHourRes.data.data || []);
+          } else {
+            setSummary(summaryData);
+            setHourly(hourRes.data.data || []);
+          }
+        } catch {
+          setSummary(summaryData);
+          setHourly(hourRes.data.data || []);
+        }
+      } else {
+        setSummary(summaryData);
+        setHourly(hourRes.data.data || []);
+      }
+
+      setTrend(trendRows);
       setLastUpdated(new Date().toLocaleTimeString());
 
       // Agent-wise fetch (non-blocking)
@@ -362,6 +395,7 @@ export default function InboundProjectDashboard() {
 
   const loginPct   = meta.mandate > 0 ? Math.min(100, Math.round((summary?.login_count ?? 0) * 100 / meta.mandate)) : 0;
   const hasData    = (summary?.offered ?? 0) > 0;
+  const noDataAtAll = !loading && summary && !hasData && !fallbackDate;
 
   // CSV exports
   const exportPerf = () => exportCSV(
@@ -400,16 +434,43 @@ export default function InboundProjectDashboard() {
         <div className="flex items-center gap-2 flex-wrap">
           {(['today','7d','30d'] as const).map(r => (
             <button key={r} onClick={() => setRange(r)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${range===r?'':'border border-slate-200 text-slate-500 hover:text-slate-900'}`}
-              style={range===r?{backgroundColor: meta.color, color: meta.textOnColor}:{}}>
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${range===r?'':'border border-white/30 hover:bg-white/10'}`}
+              style={range===r ? { backgroundColor: 'rgba(255,255,255,0.22)', color: meta.textOnColor, fontWeight: 700 } : { color: meta.textOnColor }}>
               {r==='today'?'Today':r==='7d'?'Last 7 Days':'Last 30 Days'}
             </button>
           ))}
+          {/* Custom date range */}
+          <button onClick={() => setRange('custom')}
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${range==='custom'?'':'border border-white/30 hover:bg-white/10'}`}
+            style={range==='custom' ? { backgroundColor: 'rgba(255,255,255,0.22)', color: meta.textOnColor, fontWeight: 700 } : { color: meta.textOnColor }}>
+            Custom
+          </button>
+          {range === 'custom' && (
+            <div className="flex items-center gap-1.5 bg-white/10 rounded-lg px-2 py-1 border border-white/20">
+              <input
+                type="date"
+                value={customStart}
+                max={customEnd}
+                onChange={e => setCustomStart(e.target.value)}
+                className="bg-transparent text-xs font-medium outline-none cursor-pointer"
+                style={{ color: meta.textOnColor, colorScheme: 'dark' }}
+              />
+              <span className="text-xs opacity-60" style={{ color: meta.textOnColor }}>→</span>
+              <input
+                type="date"
+                value={customEnd}
+                min={customStart}
+                max={todayStr()}
+                onChange={e => setCustomEnd(e.target.value)}
+                className="bg-transparent text-xs font-medium outline-none cursor-pointer"
+                style={{ color: meta.textOnColor, colorScheme: 'dark' }}
+              />
+            </div>
+          )}
           <button onClick={fetchAll}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs transition-colors"
+            className="flex items-center gap-1.5 rounded-lg border border-white/30 px-3 py-1.5 text-xs transition-colors hover:bg-white/10"
             style={{ color: meta.textOnColor }}
-            onMouseEnter={e => { e.currentTarget.style.backgroundColor = meta.textOnColor + '12'; }}
-            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}>
+          >
             <RefreshCw className={`h-3 w-3 ${loading?'animate-spin':''}`} />
             {lastUpdated || 'Refresh'}
           </button>
@@ -419,8 +480,17 @@ export default function InboundProjectDashboard() {
 
       <div className="p-6 space-y-6">
 
-      {/* No-data banner */}
-      {!loading && summary && !hasData && (
+      {/* Fallback notice — showing last available day's data instead of today */}
+      {!loading && fallbackDate && (
+        <div className="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm"
+          style={{ background: '#3B82F610', borderColor: '#3B82F630', color: '#1D4ED8' }}>
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          No data yet for today — showing latest available data from <strong className="ml-1">{fmtDate(fallbackDate)}</strong>.
+        </div>
+      )}
+
+      {/* No-data banner — only when no data exists at all */}
+      {noDataAtAll && (
         <div className="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm"
           style={{ background: '#F59E0B10', borderColor: '#F59E0B30', color: '#F59E0B' }}>
           <AlertCircle className="h-4 w-4 shrink-0" />
