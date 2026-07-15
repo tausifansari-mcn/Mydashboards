@@ -33,6 +33,11 @@ router.post('/upload-neemans-allocation', upload.single('file'), ctrl.uploadNeem
 router.get('/upload-logs',              ctrl.getUploadLogs);
 router.delete('/upload-log/:batchId',   ctrl.deleteUploadLog);
 router.get('/bellavita-dashboard',      ctrl.getBellavitaDashboard);
+router.get('/neemans-targets',          ctrl.getNeemansTargets);
+router.post('/neemans-targets',         requireRole('super_admin'), ctrl.setNeemansTarget);
 router.get('/neemans-dashboard',        ctrl.getNeemansDashboard);
+router.get('/neemans-agent-data',       ctrl.getNeemansAgentData);
+router.get('/neemans-sale-raw-export',  ctrl.getNeemansSaleRawExport);
+router.get('/neemans-cdr-export',       ctrl.getNeemansCdrExport);
 
 export default router;

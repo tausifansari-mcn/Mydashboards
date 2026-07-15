@@ -50,9 +50,47 @@ export async function initNeemansTables(): Promise<void> {
         inserted_at DATETIME DEFAULT NOW()
       )
     `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.neemans_month_targets (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        month VARCHAR(7) NOT NULL UNIQUE,
+        target DECIMAL(15,2) NOT NULL DEFAULT 0,
+        created_by INT,
+        updated_at DATETIME DEFAULT NOW() ON UPDATE NOW()
+      )
+    `);
+    // Seed existing Jun 2026 target if not already present
+    await pool.execute(`
+      INSERT IGNORE INTO db_masmis.neemans_month_targets (month, target) VALUES ('2026-06', 6774194)
+    `);
   } catch (err) {
     console.error('[sales] initNeemansTables warning:', (err as Error).message);
   }
+}
+
+// ─── Neemans Target CRUD ──────────────────────────────────────────────────────
+
+export async function getNeemansTarget(month: string): Promise<number> {
+  const [rows] = await getMasmisPool().execute(
+    'SELECT target FROM db_masmis.neemans_month_targets WHERE month = ?', [month],
+  );
+  const r = (rows as any[])[0];
+  return r ? Number(r.target) : 0;
+}
+
+export async function getAllNeemansTargets(): Promise<{ month: string; target: number }[]> {
+  const [rows] = await getMasmisPool().execute(
+    'SELECT month, target FROM db_masmis.neemans_month_targets ORDER BY month DESC',
+  );
+  return (rows as any[]).map(r => ({ month: r.month, target: Number(r.target) }));
+}
+
+export async function upsertNeemansTarget(month: string, target: number, userId: number): Promise<void> {
+  await getMasmisPool().execute(`
+    INSERT INTO db_masmis.neemans_month_targets (month, target, created_by)
+    VALUES (?, ?, ?)
+    ON DUPLICATE KEY UPDATE target = VALUES(target), created_by = VALUES(created_by), updated_at = NOW()
+  `, [month, target, userId]);
 }
 
 export interface SalesFilters {
@@ -815,12 +853,22 @@ export async function logUpload(
 }
 
 export async function getUploadLogs(tableName?: string): Promise<any[]> {
-  let sql = 'SELECT * FROM db_masmis.upload_log';
+  let sql = `
+    SELECT batch_id, table_name, file_name, row_count, uploaded_by,
+           DATE_FORMAT(uploaded_at, '%Y-%m-%dT%H:%i:%s') AS uploaded_at
+    FROM db_masmis.upload_log`;
   const params: string[] = [];
   if (tableName) { sql += ' WHERE table_name = ?'; params.push(tableName); }
   sql += ' ORDER BY uploaded_at DESC LIMIT 50';
   const [rows] = await getMasmisPool().execute(sql, params);
-  return rows as any[];
+  return (rows as any[]).map(r => ({
+    batchId:      r.batch_id,
+    tableName:    r.table_name,
+    fileName:     r.file_name,
+    rowsInserted: r.row_count,
+    uploadedBy:   r.uploaded_by,
+    uploadedAt:   r.uploaded_at,
+  }));
 }
 
 // ─── Bellavita Dashboard ───────────────────────────────────────────────────────
@@ -951,9 +999,7 @@ export async function getBellavitaDashboard(month: string): Promise<{
 
 // ─── Neemans Dashboard ────────────────────────────────────────────────────────
 
-const NEEMANS_MONTH_TARGETS: Record<string, number> = {
-  '2026-06': 6774194,
-};
+// Targets now stored in db_masmis.neemans_month_targets (managed via API)
 
 const SERIAL_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -980,79 +1026,33 @@ export async function getNeemansDashboard(yyyyMm: string) {
   const yr = parseInt(yyyy);
   const mo = parseInt(mm) - 1; // 0-indexed
 
-  const target     = NEEMANS_MONTH_TARGETS[yyyyMm] ?? 0;
-  const daysInMo   = new Date(yr, mo + 1, 0).getDate();
+  const target      = await getNeemansTarget(yyyyMm);
+  const daysInMo    = new Date(yr, mo + 1, 0).getDate();
   const dailyTarget = target / daysInMo;
 
   // Excel serial range for the selected month
   const startSerial = dateToSerial(yr, mo, 1);
   const endSerial   = dateToSerial(yr, mo, daysInMo);
 
-  const [
-    allocKpiRows,
-    saleKpiRows,
-    allocDateRows,
-    saleDateRows,
-    agentRows,
-    dateDetailRows,
-  ] = await Promise.all([
+  const calendarStart = `${yyyy}-${mm}-01`;
+  const calendarEnd   = `${yyyy}-${mm}-${String(daysInMo).padStart(2, '0')}`;
+
+  // 2 queries — agent data is handled by the separate /neemans-agent-data endpoint
+  const [allocDateRows, dateDetailRows] = await Promise.all([
+    // Allocation: workable + connected per day — sum in JS for KPI totals
     queryMasmis(`
       SELECT
+        CAST(date AS UNSIGNED) AS serial,
         COUNT(CASE WHEN calling_status IS NOT NULL AND calling_status NOT IN ('', '-') THEN 1 END) AS workable,
         COUNT(CASE WHEN calling_status = 'Connected' THEN 1 END) AS connected
       FROM db_masmis.neemans_allocation
       WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
         AND CAST(date AS UNSIGNED) > 0
-    `, [startSerial, endSerial]),
-
-    queryMasmis(`
-      SELECT
-        COUNT(*) AS total_orders,
-        COALESCE(SUM(amount), 0) AS revenue,
-        COUNT(CASE WHEN LOWER(payment_status) = 'paid' THEN 1 END) AS paid_orders,
-        COUNT(CASE WHEN LOWER(payment_status) = 'cod' THEN 1 END) AS cod_orders
-      FROM db_masmis.neemans_sale_raw
-      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
-        AND CAST(date AS UNSIGNED) > 0
-    `, [startSerial, endSerial]),
-
-    queryMasmis(`
-      SELECT CAST(date AS UNSIGNED) AS serial, COUNT(*) AS connected
-      FROM db_masmis.neemans_allocation
-      WHERE calling_status = 'Connected'
-        AND CAST(date AS UNSIGNED) BETWEEN ? AND ?
-        AND CAST(date AS UNSIGNED) > 0
       GROUP BY serial
       ORDER BY serial ASC
     `, [startSerial, endSerial]),
 
-    queryMasmis(`
-      SELECT CAST(date AS UNSIGNED) AS serial,
-        COUNT(*) AS sale_count,
-        COALESCE(SUM(amount), 0) AS revenue
-      FROM db_masmis.neemans_sale_raw
-      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
-        AND CAST(date AS UNSIGNED) > 0
-      GROUP BY serial
-      ORDER BY serial ASC
-    `, [startSerial, endSerial]),
-
-    queryMasmis(`
-      SELECT
-        COALESCE(NULLIF(TRIM(name), ''), 'Unknown') AS agent,
-        COUNT(*) AS sale_count,
-        COALESCE(SUM(amount), 0) AS revenue,
-        COUNT(CASE WHEN LOWER(payment_status) = 'cod'  THEN 1 END) AS cod_count,
-        COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'cod'  THEN amount ELSE 0 END), 0) AS cod_revenue,
-        COUNT(CASE WHEN LOWER(payment_status) = 'paid' THEN 1 END) AS paid_count,
-        COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'paid' THEN amount ELSE 0 END), 0) AS paid_revenue
-      FROM db_masmis.neemans_sale_raw
-      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
-        AND CAST(date AS UNSIGNED) > 0
-      GROUP BY agent
-      ORDER BY revenue DESC
-    `, [startSerial, endSerial]),
-
+    // Date detail: sale KPIs + COD/paid breakdown per day (one scan)
     queryMasmis(`
       SELECT
         CAST(date AS UNSIGNED) AS serial,
@@ -1070,14 +1070,20 @@ export async function getNeemansDashboard(yyyyMm: string) {
     `, [startSerial, endSerial]),
   ]);
 
-  const a = (allocKpiRows as any[])[0] ?? {};
-  const s = (saleKpiRows  as any[])[0] ?? {};
-  const workable    = Number(a.workable     ?? 0);
-  const connected   = Number(a.connected    ?? 0);
-  const totalOrders = Number(s.total_orders ?? 0);
-  const revenue     = Number(s.revenue      ?? 0);
-  const paidOrders  = Number(s.paid_orders  ?? 0);
-  const codOrders   = Number(s.cod_orders   ?? 0);
+  // Derive KPI totals by summing the per-day rows
+  let workable = 0, connected = 0;
+  for (const row of allocDateRows as any[]) {
+    workable  += Number(row.workable)  || 0;
+    connected += Number(row.connected) || 0;
+  }
+
+  let totalOrders = 0, revenue = 0, paidOrders = 0, codOrders = 0;
+  for (const row of dateDetailRows as any[]) {
+    totalOrders += Number(row.sale_count) || 0;
+    revenue     += Number(row.revenue)    || 0;
+    paidOrders  += Number(row.paid_count) || 0;
+    codOrders   += Number(row.cod_count)  || 0;
+  }
 
   const kpis = {
     workable, connected,
@@ -1091,16 +1097,16 @@ export async function getNeemansDashboard(yyyyMm: string) {
     codPct:         totalOrders > 0 ? round1(codOrders   / totalOrders * 100) : 0,
   };
 
-  // Merge date-wise data from both tables keyed by serial number
-  const dateMap = new Map<number, { connected: number; saleCount: number; revenue: number }>();
+  // Merge allocation + sale rows into one date map
+  const dateMap = new Map<number, { connected: number; workable: number; saleCount: number; revenue: number }>();
   for (const row of allocDateRows as any[]) {
     const ser = Number(row.serial);
-    dateMap.set(ser, { connected: Number(row.connected), saleCount: 0, revenue: 0 });
+    dateMap.set(ser, { workable: Number(row.workable) || 0, connected: Number(row.connected) || 0, saleCount: 0, revenue: 0 });
   }
-  for (const row of saleDateRows as any[]) {
+  for (const row of dateDetailRows as any[]) {
     const ser = Number(row.serial);
-    const e   = dateMap.get(ser) ?? { connected: 0, saleCount: 0, revenue: 0 };
-    dateMap.set(ser, { ...e, saleCount: Number(row.sale_count), revenue: Number(row.revenue) });
+    const e   = dateMap.get(ser) ?? { workable: 0, connected: 0, saleCount: 0, revenue: 0 };
+    dateMap.set(ser, { ...e, saleCount: Number(row.sale_count) || 0, revenue: Number(row.revenue) || 0 });
   }
 
   const sortedSerials = [...dateMap.keys()].sort((a, b) => a - b);
@@ -1123,16 +1129,6 @@ export async function getNeemansDashboard(yyyyMm: string) {
     };
   });
 
-  const agentTable = (agentRows as any[]).map(r => ({
-    agent:       String(r.agent),
-    saleCount:   Number(r.sale_count)   || 0,
-    revenue:     Math.round(Number(r.revenue)     || 0),
-    codCount:    Number(r.cod_count)    || 0,
-    codRevenue:  Math.round(Number(r.cod_revenue)  || 0),
-    paidCount:   Number(r.paid_count)   || 0,
-    paidRevenue: Math.round(Number(r.paid_revenue) || 0),
-  }));
-
   const dateTable = (dateDetailRows as any[]).map(r => ({
     date:        serialToLabel(Number(r.serial)),
     saleCount:   Number(r.sale_count)   || 0,
@@ -1143,7 +1139,179 @@ export async function getNeemansDashboard(yyyyMm: string) {
     paidRevenue: Math.round(Number(r.paid_revenue) || 0),
   }));
 
-  return { kpis, dateRows, agentTable, dateTable };
+  return { kpis, dateRows, dateTable };
+}
+
+// ─── Neemans Agent Data (date-range filtered, separate from main dashboard) ────
+
+export async function getNeemansAgentData(startDate: string, endDate: string) {
+  // Convert calendar dates to Excel serial numbers
+  const [sy, sm, sd] = startDate.split('-').map(Number);
+  const [ey, em, ed] = endDate.split('-').map(Number);
+  const startSerial = dateToSerial(sy, sm - 1, sd);
+  const endSerial   = dateToSerial(ey, em - 1, ed);
+
+  const [agentRows, cdrRows] = await Promise.all([
+    queryMasmis(`
+      SELECT
+        COALESCE(NULLIF(TRIM(name), ''), 'Unknown') AS agent,
+        COALESCE(NULLIF(TRIM(emp_id), ''), '')      AS emp_id,
+        COUNT(*)                                    AS sale_count,
+        COALESCE(SUM(amount), 0)                   AS revenue,
+        COUNT(CASE WHEN LOWER(payment_status) = 'cod'  THEN 1 END) AS cod_count,
+        COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'cod'  THEN amount ELSE 0 END), 0) AS cod_revenue,
+        COUNT(CASE WHEN LOWER(payment_status) = 'paid' THEN 1 END) AS paid_count,
+        COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'paid' THEN amount ELSE 0 END), 0) AS paid_revenue
+      FROM db_masmis.neemans_sale_raw
+      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
+        AND CAST(date AS UNSIGNED) > 0
+      GROUP BY agent, emp_id
+      ORDER BY revenue DESC
+    `, [startSerial, endSerial]),
+
+    querySource<{ masid: string; total_calls: number }>(`
+      SELECT Agent AS masid, COUNT(PhoneNumber) AS total_calls
+      FROM dialer_db.cdr_ob_249
+      WHERE CallDate BETWEEN ? AND ?
+        AND Agent IS NOT NULL AND Agent != ''
+      GROUP BY Agent
+    `, [startDate, endDate]),
+  ]);
+
+  const cdrMap = new Map<string, number>();
+  for (const row of cdrRows as any[]) {
+    const key = String(row.masid).toUpperCase().trim();
+    if (key) cdrMap.set(key, Number(row.total_calls) || 0);
+  }
+
+  return (agentRows as any[]).map(r => {
+    const masid      = String(r.emp_id).toUpperCase().trim();
+    const saleCount  = Number(r.sale_count) || 0;
+    const codCount   = Number(r.cod_count)  || 0;
+    const paidCount  = Number(r.paid_count) || 0;
+    return {
+      agent:       String(r.agent),
+      empId:       masid,
+      totalCalls:  cdrMap.get(masid) ?? 0,
+      saleCount,
+      revenue:     Math.round(Number(r.revenue)      || 0),
+      codCount,
+      codRevenue:  Math.round(Number(r.cod_revenue)  || 0),
+      paidCount,
+      paidRevenue: Math.round(Number(r.paid_revenue) || 0),
+      codPct:      saleCount > 0 ? round1(codCount  / saleCount * 100) : 0,
+      paidPct:     saleCount > 0 ? round1(paidCount / saleCount * 100) : 0,
+    };
+  });
+}
+
+// ─── Sale Raw export — all columns for a calendar date range ─────────────────
+
+export async function getNeemansSaleRawExport(startDate: string, endDate: string) {
+  const [sy, sm, sd] = startDate.split('-').map(Number);
+  const [ey, em, ed] = endDate.split('-').map(Number);
+  const startSerial = dateToSerial(sy, sm - 1, sd);
+  const endSerial   = dateToSerial(ey, em - 1, ed);
+
+  return queryMasmis(`
+    SELECT
+      DATE_ADD('1970-01-01', INTERVAL (CAST(date AS UNSIGNED) - 25569) DAY) AS sale_date,
+      week, emp_id, name, tl, lob, tenure,
+      order_id, customer_number, email_id, payment_status, amount,
+      discount_code, line_item_name, calling_lob, calling_status,
+      status, \`count\`, neemans_order_id, current_status, final_status,
+      line_item_qty, target, call_date_time, duration
+    FROM db_masmis.neemans_sale_raw
+    WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
+      AND CAST(date AS UNSIGNED) > 0
+    ORDER BY CAST(date AS UNSIGNED) ASC
+    LIMIT 200000
+  `, [startSerial, endSerial]);
+}
+
+// ─── CDR sub-scenario + priority lookup ──────────────────────────────────────
+
+const CDR_SCENARIO: Record<string, string> = {
+  SALE:'Sale Done', OP:'Order Placed', PTP:'PTP 24 HOURS',
+  CODIN:'COD Interested', CB:'Call back', CALLBK:'Call Back', BCALL:'Call Back',
+  BISSU:'CX facing Payment failure issu', CXJC:'Cx just checking the product',
+  CDBS:'Call drop before sale pitch', NAMP:'CX facing Payment failure issu',
+  CHEK:'Just checking Product', RMD:'Require More Discount', PRZ:'Price Issue',
+  DISMX:'Not Required Now', NRN:'Not Required Now', ALHAV:'Already having the product',
+  NR:'Not Required', OOS:'Out of Stock', NI:'Not Interested', OS:'Out Of Stock',
+  COM:'Complaint', CDWT:'Call Disconnected While Talkin',
+  APFW:'Already Placed from Website', APFOW:'Already placed from other Webs',
+  PI:'Price Issue', OUTOF:'Out Of Stock',
+  ALRS:'Already order from our site', ALRD:'Already order from our site', ALRA:'Already order from our site',
+  XFER:'Transfer', WCL:'Will Check Later', PC:'Price Costly',
+  NS:'Didnt like the Quality', INCAD:'Incomplete Address',
+  CXPM:'Cx did not use prepaid Method', PL:'Purchase Later',
+  TI:'Trust Issue', VM:'Voice Mail', B:'Busy',
+  POFO:'Placed Order From Other Source', OON:'Placed Order From Other Source',
+  LB:'Language Barrie', OWGMD:'Other Website Giving More Disc',
+  STOB:'Switch To Other Brand', SWITCH:'Switch To Other Brand',
+  WOS:'Purchase from Offline Store', CXQ:'Cx didnt like the Quality',
+  DC:'Call Diconnected', CD:'Call Disconnected By Customer',
+  NP:'No Pitch No Price', CSDL:'Call Disc after Sending Link',
+  FOLLOW:'Follow Up', DISC:'Cx Disconnected call', PU:'Call Picked Up',
+  CXD:'Cx Disconnected call', COD:'Need only Cash on Delievery',
+  NCOD:'Need only Cash on Delievery', CODN:'COD Not Available',
+  DNC:'Do Not Disturb', PNI:'Prepaid Not Interested',
+  ALRE:'CX ALREADY ORDER PRODUCT', INCALL:'Lead Being Call',
+  NA:'No Answer AutoDial', DAIR:'dead Air', DA:'dead Air',
+  DROP:'Agent Not Available', N:'No Answer', AB:'No Answer',
+  ADC:'Disconnected Number', ERI:'No Answer', DISPO:'No Answer',
+  PDROP:'Outbound Pre-Routing Drop', NC:'Not Connected', A:'Answering Machine',
+};
+
+const CDR_PRIORITY: Record<string, number> = {
+  SALE:1, OP:1, PTP:2, CODIN:3, CB:3, CALLBK:3, BCALL:3,
+  BISSU:4, CXJC:4, CDBS:4, NAMP:4, CHEK:5, RMD:5, PRZ:6,
+  DISMX:7, NRN:7, ALHAV:7, NR:7, OOS:7, NI:8, OS:8, COM:8,
+  CDWT:8, APFW:8, APFOW:8, PI:8, OUTOF:8,
+  ALRS:9, ALRD:9, ALRA:9, XFER:9, WCL:9,
+  PC:10, NS:10, INCAD:10, CXPM:10, PL:11, TI:11, VM:11, B:12,
+  POFO:12, OON:12, LB:12, OWGMD:12, STOB:13, SWITCH:13, WOS:13,
+  CXQ:14, DC:15, CD:15, NP:15, CSDL:15, FOLLOW:15,
+  DISC:16, PU:16, CXD:16, COD:16, NCOD:16, CODN:17, DNC:18,
+  PNI:18, ALRE:19, INCALL:20, NA:21, DAIR:22, DA:22, DROP:23,
+  N:24, AB:25, ADC:25, ERI:25, DISPO:25, PDROP:25, NC:25, A:26,
+};
+
+// ─── CDR export — formatted with computed columns ─────────────────────────────
+
+export async function getNeemansCdrExport(startDate: string, endDate: string) {
+  const rows = await querySource<Record<string, unknown>>(`
+    SELECT
+      Agent,
+      PhoneNumber                                                          AS \`Phone Number\`,
+      DATE(CallDate)                                                       AS \`Call Date\`,
+      CallStatus                                                           AS \`Call Code\`,
+      StartTime                                                            AS \`Start Time\`,
+      EndTime                                                              AS \`End Time\`,
+      LengthInSec                                                          AS \`Length (Sec)\`,
+      LengthInMin                                                          AS \`Length (Min)\`,
+      campaign_id                                                          AS \`Campaign\`,
+      term_reason                                                          AS \`Reason\`,
+      Agent                                                                AS \`Agent ID\`,
+      CASE WHEN Agent = 'VDAD' THEN 'Not Connected' ELSE 'Connected' END  AS \`Calling Status\`
+    FROM dialer_db.cdr_ob_249
+    WHERE CallDate BETWEEN ? AND ?
+      AND campaign_id IN ('NEEMANS', 'NEEM_OUT')
+    ORDER BY CallDate ASC
+    LIMIT 200000
+  `, [startDate, endDate]);
+
+  return (rows as any[]).map(r => {
+    const code = String(r['Call Code'] ?? '').toUpperCase().trim();
+    const name = CDR_SCENARIO[code] ?? String(r['Call Code'] ?? '');
+    return {
+      ...r,
+      'SUB SCENARIOS 1': name,
+      'SUB SCENARIOS 2': name,
+      'Priority': CDR_PRIORITY[code] ?? 99,
+    };
+  });
 }
 
 export async function deleteUploadBatch(batchId: string, tableName: string): Promise<{ deleted: number }> {

@@ -68,7 +68,7 @@ export function UploadLog({ endpoint, table, title }: Props) {
   const deleteLog = async (batchId: string) => {
     if (!confirm('Delete this upload log and revert its rows?')) return;
     try {
-      await api.delete(`/sales/upload-log/${batchId}`);
+      await api.delete(`/sales/upload-log/${batchId}`, { params: { table } });
       fetchLogs();
     } catch { alert('Failed to delete'); }
   };

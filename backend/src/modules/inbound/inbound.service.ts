@@ -58,6 +58,7 @@ interface ProjectConfig {
   required: number;
   hasFCR: boolean;
   fcrClientId?: number;
+  hourlyTimeField?: string; // column with actual call time when CallDate has no time component
 }
 
 const PROJECTS: ProjectConfig[] = [
@@ -72,6 +73,7 @@ const PROJECTS: ProjectConfig[] = [
     mandate: 8,
     required: 6,
     hasFCR: false,
+    hourlyTimeField: 'Time',
   },
   {
     key: 'bellavita',
@@ -84,6 +86,7 @@ const PROJECTS: ProjectConfig[] = [
     mandate: 14,
     required: 12,
     hasFCR: false,
+    hourlyTimeField: 'Time',
   },
   {
     key: 'clovia',
@@ -96,6 +99,7 @@ const PROJECTS: ProjectConfig[] = [
     mandate: 7,
     required: 6,
     hasFCR: false,
+    hourlyTimeField: 'Time',
   },
   {
     key: 'neemans',
@@ -109,6 +113,7 @@ const PROJECTS: ProjectConfig[] = [
     required: 10,
     hasFCR: true,
     fcrClientId: 475,
+    hourlyTimeField: 'Time',
   },
   {
     key: 'viega',
@@ -121,6 +126,7 @@ const PROJECTS: ProjectConfig[] = [
     mandate: 2,
     required: 2,
     hasFCR: false,
+    hourlyTimeField: 'Time',
   },
   {
     key: 'exicom',
@@ -133,6 +139,7 @@ const PROJECTS: ProjectConfig[] = [
     mandate: 5,
     required: 5,
     hasFCR: false,
+    hourlyTimeField: 'Time',
   },
   {
     key: 'dubangladesh',
@@ -145,6 +152,7 @@ const PROJECTS: ProjectConfig[] = [
     mandate: 3,
     required: 3,
     hasFCR: false,
+    hourlyTimeField: 'Time',
   },
 ];
 
@@ -283,9 +291,10 @@ export function getProjectsMeta() {
 
 function buildPatternAHourlyQuery(p: ProjectConfig): string {
   const inPlaceholders = p.campaigns.map(() => '?').join(',');
+  const hourExpr = p.hourlyTimeField ? `HOUR(${p.hourlyTimeField})` : 'HOUR(CallDate)';
   return `
     SELECT
-      HOUR(CallDate) AS hour,
+      ${hourExpr} AS hour,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
       SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
                OR   (AgentId = 'VDCL'  AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
@@ -294,23 +303,24 @@ function buildPatternAHourlyQuery(p: ProjectConfig): string {
     FROM dialer_db.${p.table}
     WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
       AND CampaignName IN (${inPlaceholders})
-    GROUP BY HOUR(CallDate)
+    GROUP BY ${hourExpr}
     ORDER BY hour ASC
   `;
 }
 
 function buildPatternBHourlyQuery(p: ProjectConfig): string {
   const inPlaceholders = p.campaigns.map(() => '?').join(',');
+  const hourExpr = p.hourlyTimeField ? `HOUR(${p.hourlyTimeField})` : 'HOUR(CallDate)';
   return `
     SELECT
-      HOUR(CallDate) AS hour,
+      ${hourExpr} AS hour,
       COUNT(*) AS offered,
       SUM(CASE WHEN AgentId != 'VDCL' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN AgentId != 'VDCL' AND TIME_TO_SEC(QueueDuration) <= 30 THEN 1 ELSE 0 END) AS sl_num
     FROM dialer_db.${p.table}
     WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
       AND CampaignName IN (${inPlaceholders})
-    GROUP BY HOUR(CallDate)
+    GROUP BY ${hourExpr}
     ORDER BY hour ASC
   `;
 }

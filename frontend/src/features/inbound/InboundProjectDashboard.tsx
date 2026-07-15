@@ -216,7 +216,7 @@ const PROJECT_META: Record<string, {
   gnc:          { name: 'GNC',          icon: '🛒', color: '#ED1C24', textOnColor: '#FFFFFF', secondary: '#1A1A1A', mandate: 8,  required: 6,  hasFCR: false },
   bellavita:    { name: 'Bellavita',    icon: '🌸', color: '#1A1A1A', textOnColor: '#FFFFFF', secondary: '#333333', mandate: 14, required: 12, hasFCR: false },
   clovia:       { name: 'Clovia',       icon: '👗', color: '#E91E63', textOnColor: '#FFFFFF', secondary: '#C2185B', mandate: 7,  required: 6,  hasFCR: false },
-  neemans:      { name: 'Neemans',      icon: '👟', color: '#8E44AD', textOnColor: '#FFFFFF', secondary: '#6C3483', mandate: 10, required: 10, hasFCR: true  },
+  neemans:      { name: 'Neemans',      icon: '👟', color: '#0D1445', textOnColor: '#FFFFFF', secondary: '#1a2070', mandate: 10, required: 10, hasFCR: true  },
   viega:        { name: 'Viega',        icon: '🚰', color: '#E74C3C', textOnColor: '#FFFFFF', secondary: '#B03A2E', mandate: 2,  required: 2,  hasFCR: false },
   exicom:       { name: 'Exicom',       icon: '⚡', color: '#3498DB', textOnColor: '#FFFFFF', secondary: '#2471A3', mandate: 5,  required: 5,  hasFCR: false },
   dubangladesh: { name: 'DU Bangladesh',icon: '🇧🇩', color: '#F39C12', textOnColor: '#FFFFFF', secondary: '#D68910', mandate: 3,  required: 3,  hasFCR: false },
@@ -269,15 +269,15 @@ function KPICard({ label, value, sub, color, icon: Icon }: {
   label: string; value: string; sub?: string; color: string; icon: React.ElementType;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ backgroundColor: color + '22' }}>
-          <Icon className="h-4 w-4" style={{ color }} />
+    <div className="rounded-xl border border-slate-200 bg-white p-2.5 flex flex-col gap-1">
+      <div className="flex items-center gap-1.5">
+        <div className="flex h-6 w-6 items-center justify-center rounded-md shrink-0" style={{ backgroundColor: color + '22' }}>
+          <Icon className="h-3 w-3" style={{ color }} />
         </div>
-        <span className="text-xs text-slate-400 uppercase tracking-wide">{label}</span>
+        <span className="text-[10px] text-slate-400 uppercase tracking-wide leading-tight">{label}</span>
       </div>
-      <p className="text-2xl font-bold text-slate-900">{value}</p>
-      {sub && <p className="text-xs text-slate-500">{sub}</p>}
+      <p className="text-lg font-bold text-slate-900 leading-tight">{value}</p>
+      {sub && <p className="text-[10px] text-slate-500 leading-tight">{sub}</p>}
     </div>
   );
 }
@@ -499,7 +499,7 @@ export default function InboundProjectDashboard() {
       )}
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         <KPICard label="Offered"  value={(summary?.offered??0).toLocaleString()}  sub="Total calls"       color={meta.color}                      icon={Phone}         />
         <KPICard label="Answered" value={(summary?.answered??0).toLocaleString()} sub="Answered by agents" color="#22C55E"                         icon={PhoneIncoming} />
         <KPICard label="AL%"      value={`${summary?.al??0}%`}                   sub="Target ≥ 95%"      color={alColor(summary?.al??0)}         icon={CheckCircle}   />

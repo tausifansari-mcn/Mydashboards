@@ -705,6 +705,33 @@ export async function deleteUploadLog(req: Request, res: Response) {
   }
 }
 
+// ─── Neemans Targets ──────────────────────────────────────────────────────────
+
+export async function getNeemansTargets(req: Request, res: Response) {
+  try {
+    const targets = await svc.getAllNeemansTargets();
+    res.json({ success: true, data: targets });
+  } catch (err) {
+    console.error('[neemans-targets] get error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch targets' });
+  }
+}
+
+export async function setNeemansTarget(req: Request, res: Response) {
+  try {
+    const { month, target } = req.body as { month: string; target: number };
+    if (!month || !target || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ success: false, message: 'month (YYYY-MM) and target required' });
+    }
+    const userId = (req as any).user?.id ?? 0;
+    await svc.upsertNeemansTarget(month, Number(target), userId);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[neemans-targets] set error:', err);
+    res.status(500).json({ success: false, message: 'Failed to save target' });
+  }
+}
+
 // ─── Neemans Dashboard ────────────────────────────────────────────────────────
 
 export async function getNeemansDashboard(req: Request, res: Response) {
@@ -718,6 +745,63 @@ export async function getNeemansDashboard(req: Request, res: Response) {
     console.error('[neemans-dashboard] error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch Neemans dashboard' });
   }
+}
+
+// ─── Neemans Agent Data ───────────────────────────────────────────────────────
+
+export async function getNeemansAgentData(req: Request, res: Response) {
+  try {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const y = now.getFullYear(), m = now.getMonth() + 1;
+    const lastDay = new Date(y, m, 0).getDate();
+    const defaultStart = `${y}-${pad(m)}-01`;
+    const defaultEnd   = `${y}-${pad(m)}-${pad(lastDay)}`;
+    const startDate = (req.query.startDate as string) || defaultStart;
+    const endDate   = (req.query.endDate   as string) || defaultEnd;
+    const data = await svc.getNeemansAgentData(startDate, endDate);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[neemans-agent-data] error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch agent data' });
+  }
+}
+
+// ─── Neemans Sale Raw Export ──────────────────────────────────────────────────
+
+export async function getNeemansSaleRawExport(req: Request, res: Response) {
+  try {
+    const { startDate, endDate } = requireDateRange(req);
+    const rows = await svc.getNeemansSaleRawExport(startDate, endDate);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('[neemans-sale-raw-export] error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch sale raw data' });
+  }
+}
+
+// ─── Neemans CDR Export ───────────────────────────────────────────────────────
+
+export async function getNeemansCdrExport(req: Request, res: Response) {
+  try {
+    const { startDate, endDate } = requireDateRange(req);
+    const rows = await svc.getNeemansCdrExport(startDate, endDate);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('[neemans-cdr-export] error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch CDR data' });
+  }
+}
+
+function requireDateRange(req: Request): { startDate: string; endDate: string } {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const y = now.getFullYear(), m = now.getMonth() + 1;
+  const lastDay = new Date(y, m, 0).getDate();
+  return {
+    startDate: (req.query.startDate as string) || `${y}-${pad(m)}-01`,
+    endDate:   (req.query.endDate   as string) || `${y}-${pad(m)}-${pad(lastDay)}`,
+  };
 }
 
 // ─── Bellavita Dashboard ──────────────────────────────────────────────────────
