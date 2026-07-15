@@ -8,7 +8,7 @@ import * as ctrl from './sales.controller';
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent'));
+router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin'));
 
 router.get('/kpis',          ctrl.getKPIs);
 router.get('/trend',         ctrl.getTrend);
@@ -27,8 +27,12 @@ router.post('/upload-gnc-allocation', upload.single('file'), ctrl.uploadGncAlloc
 router.post('/upload-bellavita-apr',  upload.single('file'), ctrl.uploadBellavitaApr);
 router.post('/upload-bellavita-chat', upload.single('file'), ctrl.uploadBellavitaChat);
 router.post('/upload-bellavita-cart', upload.single('file'), ctrl.uploadBellavitaCart);
+router.post('/upload-neemans-cart',       upload.single('file'), ctrl.uploadNeemansCart);
+router.post('/upload-neemans-sale-raw',   upload.single('file'), ctrl.uploadNeemansSaleRaw);
+router.post('/upload-neemans-allocation', upload.single('file'), ctrl.uploadNeemansAllocation);
 router.get('/upload-logs',              ctrl.getUploadLogs);
 router.delete('/upload-log/:batchId',   ctrl.deleteUploadLog);
 router.get('/bellavita-dashboard',      ctrl.getBellavitaDashboard);
+router.get('/neemans-dashboard',        ctrl.getNeemansDashboard);
 
 export default router;

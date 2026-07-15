@@ -3699,6 +3699,138 @@ function buildProductCaseInbound(): string {
   return `CASE\n        ${whens}\n        ELSE NULL\n      END`;
 }
 
+// ─── CLAP Transcript Keyword Lists ───────────────────────────────────────────
+const CLAP_KW = {
+  logisticPos: [
+    'out for delivery', 'delivered', 'shipment', 'expected delivery',
+    'on the way', 'dispatched', 'shipped', 'in transit', 'order placed',
+    'delivery ho gayi', 'parcel mila', 'order aaya', 'dispatch ho gaya',
+    'bhej diya', 'receive kar liya', 'deliver ho gaya', 'track kar rahe',
+    'order milega', 'tracking', 'order confirmed',
+  ],
+  logisticNeg: [
+    'not delivered', 'not received', 'delay', 'delayed', 'late delivery',
+    'cancel', 'cancelled', 'wrong address', 'damaged', 'delivery fail',
+    'pickup failed', 'reverse pickup', 'return not picked', 'fake remark',
+    'delivery nahin hua', 'deliver hua nahin', 'abhi tak nahi aaya',
+    'nahi pahuncha', 'bahut din', 'ghalat address', 'pickup nahi hua',
+    'return nahi hua', 'koi update nahin', 'order cancel', 'dispatch nahin',
+    'no update', 'no tracking', 'undelivered',
+  ],
+  agentPos: [
+    'thank you', 'thanks', 'thank you so much', 'very helpful', 'so helpful',
+    'great help', 'appreciate', 'appreciate your help', 'satisfied',
+    'happy with', 'problem solved', 'issue resolved', 'resolved',
+    'dhanyavaad', 'dhanyawad', 'shukriya', 'bahut shukriya',
+    'apse bat krke achha', 'helpful raha', 'santusht', 'cooperative',
+    'nishchint', 'samadhan', 'great service', 'excellent service',
+  ],
+  agentNeg: [
+    'supervisor', 'manager', 'escalate', 'complaint', 'rude', 'rudely',
+    'waste of time', 'not helpful', 'no help', 'worst service',
+    'bad service', 'dissatisfied', 'not satisfied', 'no solution',
+    'wrong information', 'incorrect information', 'mislead',
+    'supervisor chahiye', 'manager se baat', 'galat information',
+    'ghalat information', 'koi help nahin', 'solution nahi mila',
+    'baar baar call', 'jhooth bola', 'worst experience',
+  ],
+  productPos: [
+    'very good', 'good quality', 'nice product', 'love it', 'love the product',
+    'amazing product', 'excellent product', 'best product', 'recommend',
+    'pasand aaya', 'pasand', 'satisfied', 'happy with', 'pleased with',
+    'smell is good', 'fragrance is good', 'original', 'authentic',
+    'dobara order', 'order again', 'great product',
+  ],
+  productNeg: [
+    'not good', 'bad quality', 'poor quality', 'quality kharab', 'kharab',
+    'allergy', 'skin problem', 'skin reaction', 'rash', 'irritation',
+    'pathetic', 'worst', 'fake', 'duplicate', 'damaged', 'broken',
+    'wrong product', 'different product', 'not as expected', 'not as described',
+    'defective', 'not working', 'no smell', 'no fragrance', 'leaking',
+    'disappointed', 'waste of money', 'do not buy',
+  ],
+};
+
+// ─── DB-driven product name detection ────────────────────────────────────────
+
+const GENERIC_PRODUCT_KW = new Set([
+  'gift set', 'gift', 'combo', 'set', 'collection', 'pack', 'duo', 'trio',
+  'kit', 'for men', 'for women', 'for him', 'for her', 'body care', 'nail paint',
+]);
+
+function productNameToSearchKw(name: string): { keyword: string; label: string } | null {
+  const s = name
+    // Strip payment provider variants in parentheses
+    .replace(/\s*\(\s*(gpay|paytm|phonepe|wds|swiggy|zecpe|retail)\s*\)/gi, '')
+    // Strip size/quantity with or without dash
+    .replace(/\s*[-–]\s*\d+(\s*x\s*\d+)?\s*(ml|g|gm|kg|pcs|pc|l)\b.*/gi, '')
+    .replace(/\s+\d+(\s*x\s*\d+)?\s*(ml|g|gm|kg|pcs|pc|l)\b.*/gi, '')
+    // Strip pipe-separated sections
+    .replace(/\s*\|.*/g, '')
+    // Strip remaining parenthetical content
+    .replace(/\s*\([^)]*\)/g, '')
+    // Strip brand prefix
+    .replace(/^(bella vita|bellavita)\s+/gi, '')
+    // Clean encoding artefacts
+    .replace(/â€[^a-z]*/gi, '')
+    .replace(/[^a-zA-Z0-9%.\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!s || s.length < 2) return null;
+
+  // Take first 2 meaningful words as keyword
+  const words = s.split(/\s+/).filter(w => w.length > 0);
+  const label = words.slice(0, 2).join(' ');
+  const keyword = label.toLowerCase();
+
+  if (keyword.length < 3 || GENERIC_PRODUCT_KW.has(keyword)) return null;
+  return { keyword, label };
+}
+
+function buildProductCaseFromDB(pairs: { keyword: string; label: string }[]): string {
+  if (pairs.length === 0) return buildProductCaseInbound();
+  const whens = pairs
+    .map(({ keyword, label }) => {
+      const kw   = keyword.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[%_]/g, c => `\\${c}`);
+      const lbl  = label.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return `WHEN LOWER(q.Transcribe_Text) LIKE '%${kw}%' THEN '${lbl}'`;
+    })
+    .join('\n        ');
+  return `CASE\n        ${whens}\n        ELSE NULL\n      END`;
+}
+
+// Single table scan: each keyword becomes a SUM(CASE WHEN LIKE) column
+function buildKwScanSQL(
+  keywords: string[],
+  clapFilter: string | null,
+  base: (string | number)[],
+  cf: string,
+): [string, (string | number)[]] {
+  if (keywords.length === 0) return ['SELECT 1 LIMIT 0', []];
+  const clapWhere = clapFilter ? `AND (${CLAP_CASE_INBOUND}) = '${clapFilter}'` : '';
+  const cols = keywords.map((_, i) =>
+    `SUM(CASE WHEN LOWER(q.Transcribe_Text) LIKE ? THEN 1 ELSE 0 END) AS k${i}`
+  ).join(',\n    ');
+  const sql = `SELECT ${cols}
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+      ${clapWhere}
+      AND q.Transcribe_Text IS NOT NULL AND TRIM(q.Transcribe_Text) != ''`;
+  const params: (string | number)[] = [...keywords.map(kw => `%${kw}%`), ...base];
+  return [sql, params];
+}
+
+function kwScanRowToList(row: Record<string, number> | undefined, keywords: string[]): string[] {
+  if (!row) return [];
+  return keywords
+    .map((kw, i) => ({ kw, cnt: Number(row[`k${i}`] ?? 0) }))
+    .filter(r => r.cnt > 0)
+    .sort((a, b) => b.cnt - a.cnt)
+    .slice(0, 12)
+    .map(r => r.kw);
+}
+
 function wordListFromRaw(raw: string | null | undefined): string[] {
   if (!raw) return [];
   const freq: Record<string, number> = {};
@@ -3946,6 +4078,8 @@ export interface ClapIntelligenceResult {
   logistics: {
     total: number;
     scenarios: ClapScenWithSubs[];
+    posWords: string[];
+    negWords: string[];
   };
   agent: {
     total: number;
@@ -3963,6 +4097,8 @@ export interface ClapIntelligenceResult {
       pct: number;
       scenarioBreakdown: ClapScenWithSubs[];
     }[];
+    posWords: string[];
+    negWords: string[];
   };
   trend: { date: string; calls: number; avgQA: number; posCount: number; negCount: number }[];
   repeatCalls: { repeatCallers: number; totalCallers: number; repeatCallCount: number };
@@ -3986,7 +4122,33 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
     `SUM(CASE WHEN COALESCE(q.${p.col},0) = 1 THEN 1 ELSE 0 END) AS ${p.col}_pass`
   ).join(',\n      ');
 
-  const productCase = buildProductCaseInbound();
+  // Load product names from DB and build keyword→label pairs for transcript matching
+  let productCase: string;
+  if (clientId) {
+    const dbProds = await querySource<{ line_item_name: string }>(
+      'SELECT DISTINCT line_item_name FROM db_masmis.md_products WHERE client_id = ? ORDER BY line_item_name',
+      [clientId],
+    );
+    const seenKw = new Set<string>();
+    const dbPairs: { keyword: string; label: string }[] = [];
+    for (const p of dbProds) {
+      const extracted = productNameToSearchKw(p.line_item_name);
+      if (!extracted) continue;
+      if (seenKw.has(extracted.keyword)) continue;
+      seenKw.add(extracted.keyword);
+      dbPairs.push(extracted);
+    }
+    productCase = buildProductCaseFromDB(dbPairs);
+  } else {
+    productCase = buildProductCaseInbound();
+  }
+
+  const [logPosSQL, logPosParams] = buildKwScanSQL(CLAP_KW.logisticPos, 'Logistic', base, cf);
+  const [logNegSQL, logNegParams] = buildKwScanSQL(CLAP_KW.logisticNeg, 'Logistic', base, cf);
+  const [agePosSQL, agePosParams] = buildKwScanSQL(CLAP_KW.agentPos,    null,       base, cf);
+  const [ageNegSQL, ageNegParams] = buildKwScanSQL(CLAP_KW.agentNeg,    null,       base, cf);
+  const [proPosSQL, proPosParams] = buildKwScanSQL(CLAP_KW.productPos,  'Product',  base, cf);
+  const [proNegSQL, proNegParams] = buildKwScanSQL(CLAP_KW.productNeg,  'Product',  base, cf);
 
   const [
     overallRows,
@@ -4003,6 +4165,12 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
     trendRows,
     repeatRows,
     agentClapCallRows,
+    logPosKwRows,
+    logNegKwRows,
+    agePosKwRows,
+    ageNegKwRows,
+    proPosKwRows,
+    proNegKwRows,
   ] = await Promise.all([
 
     // 1. Overall KPI
@@ -4198,6 +4366,14 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
       ORDER BY q.CallDate DESC
       LIMIT 200
     `, base),
+
+    // 15–20. Transcript keyword single-scan (one row per query, columns k0..kN)
+    querySource<Record<string, number>>(logPosSQL, logPosParams),
+    querySource<Record<string, number>>(logNegSQL, logNegParams),
+    querySource<Record<string, number>>(agePosSQL, agePosParams),
+    querySource<Record<string, number>>(ageNegSQL, ageNegParams),
+    querySource<Record<string, number>>(proPosSQL, proPosParams),
+    querySource<Record<string, number>>(proNegSQL, proNegParams),
   ]);
 
   const ov = overallRows[0] ?? { total: 0, avgQA: 0, posCount: 0, negCount: 0 };
@@ -4261,6 +4437,8 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
     logistics: {
       total: logisticTotal,
       scenarios: groupScenWithSubs(logisticScenRows),
+      posWords: kwScanRowToList(logPosKwRows[0], CLAP_KW.logisticPos),
+      negWords: kwScanRowToList(logNegKwRows[0], CLAP_KW.logisticNeg),
     },
     agent: {
       total: agentTotal,
@@ -4274,12 +4452,22 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         calls: Number(r.calls),
         avgScore: Number(r.avgScore ?? 0),
       })),
-      posWords: agentPhraseListFromRaw(String(agentWordRow.apw ?? '')),
-      negWords: agentPhraseListFromRaw(String(agentWordRow.anw ?? '')),
+      posWords: (() => {
+        const precomputed = agentPhraseListFromRaw(String(agentWordRow.apw ?? ''));
+        const transcript  = kwScanRowToList(agePosKwRows[0], CLAP_KW.agentPos);
+        return [...new Set([...precomputed, ...transcript])].slice(0, 15);
+      })(),
+      negWords: (() => {
+        const precomputed = agentPhraseListFromRaw(String(agentWordRow.anw ?? ''));
+        const transcript  = kwScanRowToList(ageNegKwRows[0], CLAP_KW.agentNeg);
+        return [...new Set([...precomputed, ...transcript])].slice(0, 15);
+      })(),
     },
     product: {
       total: productTotal,
       scenarios: groupScenWithSubs(productScenRows),
+      posWords: kwScanRowToList(proPosKwRows[0], CLAP_KW.productPos),
+      negWords: kwScanRowToList(proNegKwRows[0], CLAP_KW.productNeg),
       products: (() => {
         // Group rows by product name, then build scenario → sub-scenario tree per product
         const map = new Map<string, { count: number; scenMap: Map<string, { count: number; subs: Map<string, number> }> }>();

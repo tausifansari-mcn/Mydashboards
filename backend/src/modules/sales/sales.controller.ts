@@ -486,6 +486,163 @@ export async function uploadBellavitaChat(req: Request, res: Response) {
   }
 }
 
+// ─── Neemans Sale Raw Upload ──────────────────────────────────────────────────
+// Positional parsing — header row identified by "EMP ID" or "Week" column.
+// Columns (0-based): Week|Date|EMP ID|Name|TL|LOB|Tenure|OrderID|CustomerNumber|
+//   E-mail ID|Payment Status|Amount|Discount Code|Line_Item_Name|LOB(calling)|
+//   Calling Status|Status|Count|Order ID(neemans)|Current Status|Final Status|
+//   Line_Item_Qty|Target|Call Date&Time|Duration|Created At
+
+export async function uploadNeemansSaleRaw(req: Request, res: Response) {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rawRows = XLSX.utils.sheet_to_json<(string | null)[]>(sheet, { header: 1, defval: null, blankrows: false });
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'User not authenticated' });
+
+    // Find header row by looking for "EMP ID" or "Week"
+    const hdrIdx = rawRows.findIndex(r =>
+      r.some(c => c != null && /^(emp.?id|week)$/i.test(String(c).trim()))
+    );
+    if (hdrIdx === -1) return res.status(400).json({ success: false, message: 'Header row not found (expected "Week" or "EMP ID" column)' });
+
+    const dataRows = rawRows.slice(hdrIdx + 1).filter(r => r.some(c => c != null && String(c).trim() !== ''));
+    if (!dataRows.length) return res.status(400).json({ success: false, message: 'No data rows found' });
+
+    const s = (v: string | null) => String(v ?? '').trim();
+    const mapped: svc.NeemansSaleRawRow[] = dataRows.map(r => ({
+      week:          s(r[0]),  date:          s(r[1]),  empId:          s(r[2]),
+      name:          s(r[3]),  tl:            s(r[4]),  lob:            s(r[5]),
+      tenure:        s(r[6]),  orderId:       s(r[7]),  customerNumber: s(r[8]),
+      emailId:       s(r[9]),  paymentStatus: s(r[10]), amount:         parseFloat(s(r[11])) || 0,
+      discountCode:  s(r[12]), lineItemName:  s(r[13]), callingLob:     s(r[14]),
+      callingStatus: s(r[15]), status:        s(r[16]), count:          parseInt(s(r[17])) || 0,
+      neemansOrderId: s(r[18]), currentStatus: s(r[19]), finalStatus:   s(r[20]),
+      lineItemQty:   parseInt(s(r[21])) || 0, target: parseInt(s(r[22])) || 0,
+      callDateTime:  s(r[23]), duration:      s(r[24]), createdAt:      s(r[25]),
+    }));
+
+    const batchId = svc.generateBatchId();
+    const inserted = await svc.uploadNeemansSaleRaw(mapped, userId, batchId);
+    await svc.logUpload(batchId, 'neemans_sale_raw', req.file.originalname, inserted, userId);
+    res.json({ success: true, data: { rowsInserted: inserted, totalRows: mapped.length, batchId } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('sales uploadNeemansSaleRaw error:', msg);
+    res.status(500).json({ success: false, message: `Upload failed: ${msg}` });
+  }
+}
+
+// ─── Neemans Allocation Upload ────────────────────────────────────────────────
+// Header-based: Phone|Email|CustomerName|ProductTitle|Amount|Type|Date|
+//   Agent|CallingStatus|SubSCENARIO1|SubSCENARIO2|CallId
+
+export async function uploadNeemansAllocation(req: Request, res: Response) {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rawRows = XLSX.utils.sheet_to_json<(string | null)[]>(sheet, { header: 1, defval: null, blankrows: false });
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'User not authenticated' });
+
+    const hdrIdx = rawRows.findIndex(r =>
+      r.some(c => c != null && /^(phone|email|customername|customer.?name)$/i.test(String(c).trim()))
+    );
+    if (hdrIdx === -1) return res.status(400).json({ success: false, message: 'Header row not found (expected "Phone", "Email" or "CustomerName" column)' });
+
+    const rawHdrs = rawRows[hdrIdx].map(c => String(c ?? '').toLowerCase().replace(/[\s_/\\]+/g, '_').replace(/[^a-z0-9_]/g, ''));
+    const dataRows = rawRows.slice(hdrIdx + 1).filter(r => r.some(c => c != null && String(c).trim() !== ''));
+    if (!dataRows.length) return res.status(400).json({ success: false, message: 'No data rows found' });
+
+    const idx = (names: string[]) => {
+      for (const n of names) { const i = rawHdrs.indexOf(n); if (i >= 0) return i; }
+      return -1;
+    };
+    const col = (r: (string | null)[], names: string[]) => String(r[idx(names)] ?? '').trim();
+
+    const mapped: svc.NeemansAllocationRow[] = dataRows.map(r => ({
+      phone:         col(r, ['phone', 'phone_number', 'mobile']),
+      email:         col(r, ['email', 'email_id', 'emailid']),
+      customerName:  col(r, ['customername', 'customer_name', 'name']),
+      productTitle:  col(r, ['producttitle', 'product_title', 'line_items', 'lineitems', 'product', 'products']),
+      amount:        parseFloat(col(r, ['amount', 'value', 'total', 'cart_value'])) || 0,
+      type:          col(r, ['type']),
+      date:          col(r, ['date']),
+      agent:         col(r, ['agent', 'agent_name', 'agentname']),
+      callingStatus: col(r, ['callingstatus', 'calling_status', 'status']),
+      subScenario1:  col(r, ['subscenario1', 'sub_scenario1', 'subscenario_1', 'scenario1']),
+      subScenario2:  col(r, ['subscenario2', 'sub_scenario2', 'subscenario_2', 'scenario2']),
+      callId:        col(r, ['callid', 'call_id', 'id']),
+    }));
+
+    const batchId = svc.generateBatchId();
+    const inserted = await svc.uploadNeemansAllocation(mapped, userId, batchId);
+    await svc.logUpload(batchId, 'neemans_allocation', req.file.originalname, inserted, userId);
+    res.json({ success: true, data: { rowsInserted: inserted, totalRows: mapped.length, batchId } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('sales uploadNeemansAllocation error:', msg);
+    res.status(500).json({ success: false, message: `Upload failed: ${msg}` });
+  }
+}
+
+// ─── Neemans Cart Upload ──────────────────────────────────────────────────────
+
+export async function uploadNeemansCart(req: Request, res: Response) {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'User not authenticated' });
+
+    // Header-based parsing — find header row first
+    const rawRows = XLSX.utils.sheet_to_json<(string | null)[]>(sheet, { header: 1, defval: null, blankrows: false });
+    const hdrIdx = rawRows.findIndex(r => r.some(c => c != null && /sno|cart.?id|customer/i.test(String(c))));
+    const headers: string[] = hdrIdx >= 0
+      ? rawRows[hdrIdx].map(c => String(c ?? '').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''))
+      : [];
+    const dataRows = hdrIdx >= 0 ? rawRows.slice(hdrIdx + 1) : rawRows.slice(1);
+
+    const col = (r: (string | null)[], names: string[]): string => {
+      for (const name of names) {
+        const idx = headers.indexOf(name);
+        if (idx >= 0 && r[idx] != null) return String(r[idx]);
+      }
+      return '';
+    };
+
+    const mapped: svc.NeemansCartRow[] = dataRows.map((r, i) => ({
+      sno:            parseInt(col(r, ['sno', 's_no', 'serial'])) || i + 1,
+      cartId:         col(r, ['cart_id', 'cartid', 'id']),
+      createdAt:      col(r, ['created_at', 'created_date', 'createdat']),
+      updatedAt:      col(r, ['updated_at', 'updated_date', 'updatedat']),
+      customerName:   col(r, ['customer_name', 'customername', 'name']),
+      phoneNumber:    col(r, ['phone_number', 'phonenumber', 'phone', 'mobile']),
+      emailId:        col(r, ['email_id', 'email', 'emailid']),
+      lineItems:      col(r, ['line_items', 'lineitems', 'items', 'products', 'product']),
+      amount:         parseFloat(col(r, ['amount', 'cart_value', 'value', 'total'])) || 0,
+      agent:          col(r, ['agent', 'agent_name', 'agentname']),
+      disposition:    col(r, ['disposition', 'disp']),
+      subDisposition: col(r, ['sub_disposition', 'subdisposition', 'sub_disp']),
+      callDate:       col(r, ['call_date', 'calldate', 'date']),
+      status:         col(r, ['status']),
+    }));
+
+    const batchId = svc.generateBatchId();
+    const inserted = await svc.uploadNeemansCart(mapped, userId, batchId);
+    await svc.logUpload(batchId, 'neemans_cart', req.file.originalname, inserted, userId);
+    res.json({ success: true, data: { rowsInserted: inserted, totalRows: mapped.length, batchId } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('sales uploadNeemansCart error:', msg);
+    res.status(500).json({ success: false, message: `Upload failed: ${msg}` });
+  }
+}
+
 // ─── Bellavita Cart Upload (array-based, positional columns) ─────────────────
 
 export async function uploadBellavitaCart(req: Request, res: Response) {
@@ -545,6 +702,21 @@ export async function deleteUploadLog(req: Request, res: Response) {
   } catch (err) {
     console.error('deleteUploadLog error:', err);
     res.status(500).json({ success: false, message: 'Failed to delete upload' });
+  }
+}
+
+// ─── Neemans Dashboard ────────────────────────────────────────────────────────
+
+export async function getNeemansDashboard(req: Request, res: Response) {
+  try {
+    const month = (req.query.month as string) || (() => {
+      const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    })();
+    const data = await svc.getNeemansDashboard(month);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[neemans-dashboard] error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch Neemans dashboard' });
   }
 }
 

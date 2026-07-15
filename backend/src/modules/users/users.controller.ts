@@ -72,3 +72,23 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
   await svc.adminResetPassword(Number(req.params.id));
   res.json({ message: 'Temporary password sent to user email' });
 }
+
+export async function getSaleBrands(req: Request, res: Response): Promise<void> {
+  res.json(await svc.getSaleBrands(Number(req.params.id)));
+}
+
+export async function setSaleBrands(req: Request, res: Response): Promise<void> {
+  const { brands } = z.object({ brands: z.array(z.string()) }).parse(req.body);
+  await svc.setSaleBrands(Number(req.params.id), brands);
+  res.json({ ok: true });
+}
+
+export async function getSaleUploaderBrands(req: Request, res: Response): Promise<void> {
+  res.json(await svc.getSaleUploaderBrands(Number(req.params.id)));
+}
+
+export async function setSaleUploaderBrands(req: Request, res: Response): Promise<void> {
+  const { brands } = z.object({ brands: z.array(z.string()) }).parse(req.body);
+  await svc.setSaleUploaderBrands(Number(req.params.id), brands);
+  res.json({ ok: true });
+}

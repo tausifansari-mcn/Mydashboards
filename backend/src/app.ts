@@ -13,6 +13,7 @@ import dashboardRoutes from './modules/dashboards/dashboards.routes';
 import auditRoutes from './modules/audit/audit.routes';
 import callMasterRoutes from './modules/call-master/call-master.routes';
 import salesRoutes from './modules/sales/sales.routes';
+import { initNeemansTables } from './modules/sales/sales.service';
 import inboundRoutes from './modules/inbound/inbound.routes';
 import qualityRoutes from './modules/quality/quality.routes';
 import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.routes';
@@ -47,6 +48,9 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ message: 'Internal server error' });
 });
 
-app.listen(PORT, () => logger.info(`Backend running on port ${PORT}`));
+app.listen(PORT, () => {
+  logger.info(`Backend running on port ${PORT}`);
+  initNeemansTables().catch(err => logger.error('[startup] initNeemansTables failed:', err.message));
+});
 
 export default app;

@@ -1,6 +1,67 @@
 import bcrypt from 'bcryptjs';
 import prisma from '../../lib/prismaClient';
 import { sendWelcomeEmail } from '../../lib/mailer';
+import { querySource } from '../../lib/sourceDb';
+
+const ENSURE_SALE_BRAND_TABLE = `
+  CREATE TABLE IF NOT EXISTS shivamgiri.md_sale_brand_access (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    brand VARCHAR(50) NOT NULL,
+    granted_at DATETIME DEFAULT NOW(),
+    UNIQUE KEY uq_user_brand (user_id, brand)
+  )
+`;
+
+const ENSURE_SALE_UPLOADER_TABLE = `
+  CREATE TABLE IF NOT EXISTS shivamgiri.md_sale_uploader_access (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    brand VARCHAR(50) NOT NULL,
+    granted_at DATETIME DEFAULT NOW(),
+    UNIQUE KEY uq_user_uploader_brand (user_id, brand)
+  )
+`;
+
+export async function getSaleBrands(userId: number): Promise<string[]> {
+  await querySource(ENSURE_SALE_BRAND_TABLE, []);
+  const rows = await querySource<{ brand: string }>(
+    'SELECT brand FROM shivamgiri.md_sale_brand_access WHERE user_id = ? ORDER BY brand',
+    [userId],
+  );
+  return rows.map((r) => r.brand);
+}
+
+export async function setSaleBrands(userId: number, brands: string[]): Promise<void> {
+  await querySource(ENSURE_SALE_BRAND_TABLE, []);
+  await querySource('DELETE FROM shivamgiri.md_sale_brand_access WHERE user_id = ?', [userId]);
+  for (const brand of brands) {
+    await querySource(
+      'INSERT INTO shivamgiri.md_sale_brand_access (user_id, brand) VALUES (?, ?)',
+      [userId, brand],
+    );
+  }
+}
+
+export async function getSaleUploaderBrands(userId: number): Promise<string[]> {
+  await querySource(ENSURE_SALE_UPLOADER_TABLE, []);
+  const rows = await querySource<{ brand: string }>(
+    'SELECT brand FROM shivamgiri.md_sale_uploader_access WHERE user_id = ? ORDER BY brand',
+    [userId],
+  );
+  return rows.map((r) => r.brand);
+}
+
+export async function setSaleUploaderBrands(userId: number, brands: string[]): Promise<void> {
+  await querySource(ENSURE_SALE_UPLOADER_TABLE, []);
+  await querySource('DELETE FROM shivamgiri.md_sale_uploader_access WHERE user_id = ?', [userId]);
+  for (const brand of brands) {
+    await querySource(
+      'INSERT INTO shivamgiri.md_sale_uploader_access (user_id, brand) VALUES (?, ?)',
+      [userId, brand],
+    );
+  }
+}
 
 function generateTempPassword(): string {
   return Math.random().toString(36).slice(-8) + 'A1!';

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as ctrl from './auth.controller';
 import { verifyToken } from '../../middleware/verifyToken';
 import rateLimit from 'express-rate-limit';
+import { getSaleBrands, getSaleUploaderBrands } from '../users/users.service';
 
 const router = Router();
 
@@ -20,5 +21,18 @@ router.get('/me', verifyToken, ctrl.getMe);
 router.patch('/change-password', verifyToken, ctrl.changePassword);
 router.patch('/avatar', verifyToken, ctrl.updateAvatar);
 router.post('/send-test-email', verifyToken, ctrl.sendTestEmail);
+router.get('/me/sale-brands', verifyToken, async (req, res) => {
+  try {
+    const brands = await getSaleBrands(req.user!.id);
+    res.json(brands);
+  } catch { res.json([]); }
+});
+
+router.get('/me/sale-uploader-brands', verifyToken, async (req, res) => {
+  try {
+    const brands = await getSaleUploaderBrands(req.user!.id);
+    res.json(brands);
+  } catch { res.json([]); }
+});
 
 export default router;

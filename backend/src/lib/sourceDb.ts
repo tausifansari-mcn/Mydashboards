@@ -21,6 +21,8 @@ export function getSourcePool(): mysql.Pool {
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+const RETRYABLE = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'PROTOCOL_CONNECTION_LOST', 'ER_CON_COUNT_ERROR'];
+
 export async function querySource<T = Record<string, unknown>>(
   sql: string,
   params: (string | number | null)[] = [],
@@ -31,9 +33,10 @@ export async function querySource<T = Record<string, unknown>>(
       const [rows] = await getSourcePool().execute(sql, params);
       return rows as T[];
     } catch (err: unknown) {
-      const code = (err as { code?: string }).code;
-      if ((code === 'ER_CON_COUNT_ERROR' || code === 'ECONNREFUSED') && attempt < retries) {
-        await sleep(attempt * 800); // 800ms, 1600ms back-off
+      const code = (err as { code?: string }).code ?? '';
+      if (RETRYABLE.includes(code) && attempt < retries) {
+        pool = null; // force fresh pool on next attempt
+        await sleep(attempt * 800);
         continue;
       }
       throw err;

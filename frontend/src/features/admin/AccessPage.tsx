@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, ShieldCheck, ShieldOff, Loader2, GitBranch, LayoutDashboard } from 'lucide-react';
+import { Search, ShieldCheck, ShieldOff, Loader2, GitBranch, LayoutDashboard, TrendingUp, Upload } from 'lucide-react';
 import api from '@/lib/axios';
 import { User, Dashboard, PaginatedResponse } from '@/types';
 
@@ -14,6 +14,12 @@ const LOB_COLOR: Record<string, { bg: string; text: string }> = {
   'IB/OB':  { bg: '#F5F3FF', text: '#7C3AED' },
 };
 
+const SALE_BRANDS = [
+  { key: 'bellavita', label: 'Bellavita', desc: 'Bellavita sales dashboard & data uploader', color: '#1A1A1A', bg: '#F0F0F0' },
+  { key: 'gnc',       label: 'GNC',       desc: 'GNC sales dashboard & data uploader',       color: '#ED1C24', bg: '#FFE0E0' },
+  { key: 'neemans',   label: 'Neemans',   desc: 'Neemans cart data uploader',                color: '#2D6A4F', bg: '#D8F3DC' },
+];
+
 export default function AccessPage() {
   const [users,      setUsers]      = useState<User[]>([]);
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
@@ -21,11 +27,15 @@ export default function AccessPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [access,     setAccess]     = useState<AccessRow[]>([]);
   const [userProcs,  setUserProcs]  = useState<number[]>([]);
-  const [search,     setSearch]     = useState('');
-  const [tab,        setTab]        = useState<'dashboards' | 'processes'>('dashboards');
-  const [loading,    setLoading]    = useState(false);
-  const [saving,     setSaving]     = useState<number | null>(null);
-  const [procSaving, setProcSaving] = useState<number | null>(null);
+  const [saleBrands,    setSaleBrands]    = useState<string[]>([]);
+  const [uploaderBrands, setUploaderBrands] = useState<string[]>([]);
+  const [search,        setSearch]        = useState('');
+  const [tab,           setTab]           = useState<'dashboards' | 'processes'>('dashboards');
+  const [loading,       setLoading]       = useState(false);
+  const [saving,        setSaving]        = useState<number | null>(null);
+  const [procSaving,    setProcSaving]    = useState<number | null>(null);
+  const [brandSaving,   setBrandSaving]   = useState<string | null>(null);
+  const [uploaderSaving, setUploaderSaving] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -43,12 +53,16 @@ export default function AccessPage() {
     setSelectedUser(user);
     setLoading(true);
     try {
-      const [dashRes, procRes] = await Promise.all([
+      const [dashRes, procRes, brandRes, uploaderRes] = await Promise.all([
         api.get<AccessRow[]>(`/dashboards/user/${user.id}/access`),
         api.get<MappingItem[]>(`/processes/user/${user.id}`),
+        api.get<string[]>(`/users/${user.id}/sale-brands`),
+        api.get<string[]>(`/users/${user.id}/sale-uploader-brands`),
       ]);
       setAccess(dashRes.data);
       setUserProcs(procRes.data.map((m) => m.process.id));
+      setSaleBrands(brandRes.data);
+      setUploaderBrands(uploaderRes.data);
     } finally { setLoading(false); }
   };
 
@@ -82,6 +96,32 @@ export default function AccessPage() {
         setUserProcs([...userProcs, procId]);
       }
     } finally { setProcSaving(null); }
+  };
+
+  const toggleBrand = async (brandKey: string) => {
+    if (!selectedUser) return;
+    setBrandSaving(brandKey);
+    try {
+      const next = saleBrands.includes(brandKey)
+        ? saleBrands.filter((b) => b !== brandKey)
+        : [...saleBrands, brandKey];
+      await api.put(`/users/${selectedUser.id}/sale-brands`, { brands: next });
+      setSaleBrands(next);
+    } finally { setBrandSaving(null); }
+  };
+
+  const hasSalesAccess = access.some((a) => a.dashboard.slug === 'sales');
+
+  const toggleUploaderBrand = async (brandKey: string) => {
+    if (!selectedUser) return;
+    setUploaderSaving(brandKey);
+    try {
+      const next = uploaderBrands.includes(brandKey)
+        ? uploaderBrands.filter((b) => b !== brandKey)
+        : [...uploaderBrands, brandKey];
+      await api.put(`/users/${selectedUser.id}/sale-uploader-brands`, { brands: next });
+      setUploaderBrands(next);
+    } finally { setUploaderSaving(null); }
   };
 
   const filteredUsers = users.filter((u) =>
@@ -190,37 +230,153 @@ export default function AccessPage() {
                 </div>
               ) : (
                 /* ── Process Access ── */
-                <div>
-                  <p className="text-xs text-slate-500 mb-4">
-                    Toggle the processes this user can access. Enabled processes appear in their Inbound sidebar and restrict their data view.
-                  </p>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {processes.filter((p) => p.is_active).map((proc) => {
-                      const assigned = hasProcess(proc.id);
-                      const lob = LOB_COLOR[proc.lob] ?? { bg: '#F8FAFC', text: '#64748B' };
-                      return (
-                        <motion.div key={proc.id} whileHover={{ y: -2 }}
-                          className={`rounded-xl border bg-white p-4 shadow-sm transition-all ${assigned ? 'border-purple-300' : 'border-slate-200'}`}>
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="font-semibold text-slate-800 truncate">{proc.process_name}</p>
-                              <p className="text-xs text-slate-500 mt-0.5 truncate">{proc.client?.name ?? `Client #${proc.client_id}`}</p>
-                              <span className="inline-block mt-2 text-[10px] font-bold px-2 py-0.5 rounded-full"
-                                    style={{ background: lob.bg, color: lob.text }}>
-                                {proc.lob}
-                              </span>
+                <div className="space-y-8">
+                  <div>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Toggle the processes this user can access. Enabled processes appear in their Inbound sidebar and restrict their data view.
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {processes.filter((p) => p.is_active).map((proc) => {
+                        const assigned = hasProcess(proc.id);
+                        const lob = LOB_COLOR[proc.lob] ?? { bg: '#F8FAFC', text: '#64748B' };
+                        return (
+                          <motion.div key={proc.id} whileHover={{ y: -2 }}
+                            className={`rounded-xl border bg-white p-4 shadow-sm transition-all ${assigned ? 'border-purple-300' : 'border-slate-200'}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="font-semibold text-slate-800 truncate">{proc.process_name}</p>
+                                <p className="text-xs text-slate-500 mt-0.5 truncate">{proc.client?.name ?? `Client #${proc.client_id}`}</p>
+                                <span className="inline-block mt-2 text-[10px] font-bold px-2 py-0.5 rounded-full"
+                                      style={{ background: lob.bg, color: lob.text }}>
+                                  {proc.lob}
+                                </span>
+                              </div>
+                              <button onClick={() => toggleProcess(proc.id)} disabled={procSaving === proc.id}
+                                className={`rounded-lg p-2 shrink-0 transition-colors ${assigned ? 'bg-purple-100 text-purple-700 hover:bg-red-50 hover:text-red-600' : 'bg-slate-100 text-slate-400 hover:bg-purple-100 hover:text-purple-700'}`}>
+                                {procSaving === proc.id ? <Loader2 className="h-4 w-4 animate-spin" /> : assigned ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
+                              </button>
                             </div>
-                            <button onClick={() => toggleProcess(proc.id)} disabled={procSaving === proc.id}
-                              className={`rounded-lg p-2 shrink-0 transition-colors ${assigned ? 'bg-purple-100 text-purple-700 hover:bg-red-50 hover:text-red-600' : 'bg-slate-100 text-slate-400 hover:bg-purple-100 hover:text-purple-700'}`}>
-                              {procSaving === proc.id ? <Loader2 className="h-4 w-4 animate-spin" /> : assigned ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
-                            </button>
-                          </div>
-                          <div className={`mt-3 text-xs font-semibold ${assigned ? 'text-purple-700' : 'text-slate-400'}`}>
-                            {assigned ? '✓ Process assigned' : 'Not assigned'}
-                          </div>
-                        </motion.div>
-                      );
-                    })}
+                            <div className={`mt-3 text-xs font-semibold ${assigned ? 'text-purple-700' : 'text-slate-400'}`}>
+                              {assigned ? '✓ Process assigned' : 'Not assigned'}
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* ── Sales Dashboard Brand Access ── */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <TrendingUp className="h-4 w-4 text-emerald-600" />
+                      <h3 className="text-sm font-bold text-slate-800">Sales Dashboard Brand Access</h3>
+                      {!hasSalesAccess && (
+                        <span className="ml-1 text-[10px] font-semibold bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full">
+                          Requires Sales dashboard access
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Select which brand dashboards this user can access inside the Sales module.
+                      {!hasSalesAccess && ' Grant "Sales" in the Dashboard Access tab first.'}
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {SALE_BRANDS.map((brand) => {
+                        const granted = saleBrands.includes(brand.key);
+                        const disabled = !hasSalesAccess;
+                        return (
+                          <motion.div key={brand.key} whileHover={disabled ? {} : { y: -2 }}
+                            className={`rounded-xl border bg-white p-4 shadow-sm transition-all ${
+                              disabled ? 'opacity-50 cursor-not-allowed' :
+                              granted ? 'border-emerald-300' : 'border-slate-200'
+                            }`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: brand.color }} />
+                                  <p className="font-semibold text-slate-800">{brand.label}</p>
+                                </div>
+                                <p className="text-xs text-slate-500">{brand.desc}</p>
+                              </div>
+                              <button
+                                onClick={() => !disabled && toggleBrand(brand.key)}
+                                disabled={disabled || brandSaving === brand.key}
+                                className={`rounded-lg p-2 shrink-0 transition-colors ${
+                                  disabled ? 'bg-slate-100 text-slate-300 cursor-not-allowed' :
+                                  granted
+                                    ? 'bg-emerald-100 text-emerald-700 hover:bg-red-50 hover:text-red-600'
+                                    : 'bg-slate-100 text-slate-400 hover:bg-emerald-100 hover:text-emerald-700'
+                                }`}>
+                                {brandSaving === brand.key
+                                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                                  : granted ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
+                              </button>
+                            </div>
+                            <div className={`mt-3 text-xs font-semibold ${granted && !disabled ? 'text-emerald-700' : 'text-slate-400'}`}>
+                              {granted && !disabled ? '✓ Brand access granted' : 'No access'}
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* ── Sales Uploader Access ── */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Upload className="h-4 w-4 text-blue-600" />
+                      <h3 className="text-sm font-bold text-slate-800">Sales Data Uploader Access</h3>
+                      {!hasSalesAccess && (
+                        <span className="ml-1 text-[10px] font-semibold bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full">
+                          Requires Sales dashboard access
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Control which brands this user can upload data for. If not granted, the uploader section will be hidden for that brand.
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {SALE_BRANDS.map((brand) => {
+                        const granted  = uploaderBrands.includes(brand.key);
+                        const hasBrand = saleBrands.includes(brand.key);
+                        const disabled = !hasSalesAccess || !hasBrand;
+                        return (
+                          <motion.div key={brand.key} whileHover={disabled ? {} : { y: -2 }}
+                            className={`rounded-xl border bg-white p-4 shadow-sm transition-all ${
+                              disabled ? 'opacity-50 cursor-not-allowed' :
+                              granted ? 'border-blue-300' : 'border-slate-200'
+                            }`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: brand.color }} />
+                                  <p className="font-semibold text-slate-800">{brand.label}</p>
+                                </div>
+                                <p className="text-xs text-slate-500">
+                                  {!hasBrand ? 'Grant brand access first' : 'Upload Excel / CSV files'}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => !disabled && toggleUploaderBrand(brand.key)}
+                                disabled={disabled || uploaderSaving === brand.key}
+                                className={`rounded-lg p-2 shrink-0 transition-colors ${
+                                  disabled ? 'bg-slate-100 text-slate-300 cursor-not-allowed' :
+                                  granted
+                                    ? 'bg-blue-100 text-blue-700 hover:bg-red-50 hover:text-red-600'
+                                    : 'bg-slate-100 text-slate-400 hover:bg-blue-100 hover:text-blue-700'
+                                }`}>
+                                {uploaderSaving === brand.key
+                                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                                  : granted ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
+                              </button>
+                            </div>
+                            <div className={`mt-3 text-xs font-semibold ${granted && !disabled ? 'text-blue-700' : 'text-slate-400'}`}>
+                              {granted && !disabled ? '✓ Uploader access granted' : disabled && hasSalesAccess ? 'Requires brand access' : 'No access'}
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               )}

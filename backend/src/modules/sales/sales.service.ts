@@ -1,7 +1,59 @@
 import crypto from 'crypto';
 import mysql from 'mysql2/promise';
 import { querySource } from '../../lib/sourceDb';
-import { getMasmisPool } from '../../lib/masmisDb';
+import { getMasmisPool, queryMasmis } from '../../lib/masmisDb';
+
+// ─── One-time table init (called at server startup) ───────────────────────────
+
+export async function initNeemansTables(): Promise<void> {
+  const pool = getMasmisPool();
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.neemans_sale_raw (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        week VARCHAR(20), date VARCHAR(50), emp_id VARCHAR(50),
+        name VARCHAR(200), tl VARCHAR(200), lob VARCHAR(100), tenure VARCHAR(100),
+        order_id VARCHAR(100), customer_number VARCHAR(30), email_id VARCHAR(255),
+        payment_status VARCHAR(100), amount DECIMAL(12,2), discount_code VARCHAR(255),
+        line_item_name TEXT, calling_lob VARCHAR(100), calling_status VARCHAR(100),
+        status VARCHAR(100), count INT, neemans_order_id VARCHAR(100),
+        current_status VARCHAR(255), final_status VARCHAR(255),
+        line_item_qty INT, target INT, call_date_time VARCHAR(100),
+        duration VARCHAR(100), created_at_raw VARCHAR(100),
+        uploaded_by INT, upload_batch_id VARCHAR(36),
+        inserted_at DATETIME DEFAULT NOW()
+      )
+    `);
+    // Widen columns that may already exist with a shorter length
+    await pool.execute(`ALTER TABLE db_masmis.neemans_sale_raw MODIFY COLUMN duration VARCHAR(100)`);
+    await pool.execute(`ALTER TABLE db_masmis.neemans_sale_raw MODIFY COLUMN call_date_time VARCHAR(100)`);
+    await pool.execute(`ALTER TABLE db_masmis.neemans_sale_raw MODIFY COLUMN created_at_raw VARCHAR(100)`);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.neemans_allocation (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        phone VARCHAR(30), email VARCHAR(255), customer_name VARCHAR(255),
+        product_title TEXT, amount DECIMAL(12,2), type VARCHAR(100),
+        date VARCHAR(50), agent VARCHAR(200), calling_status VARCHAR(100),
+        sub_scenario1 VARCHAR(255), sub_scenario2 VARCHAR(255), call_id VARCHAR(100),
+        uploaded_by INT, upload_batch_id VARCHAR(36),
+        inserted_at DATETIME DEFAULT NOW()
+      )
+    `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.neemans_cart (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        sno INT, cart_id VARCHAR(100), created_at VARCHAR(50), updated_at VARCHAR(50),
+        customer_name VARCHAR(200), phone_number VARCHAR(20), email_id VARCHAR(200),
+        line_items TEXT, amount DECIMAL(12,2), agent VARCHAR(100),
+        disposition VARCHAR(100), sub_disposition VARCHAR(100), call_date DATE,
+        status VARCHAR(50), uploaded_by INT, upload_batch_id VARCHAR(36),
+        inserted_at DATETIME DEFAULT NOW()
+      )
+    `);
+  } catch (err) {
+    console.error('[sales] initNeemansTables warning:', (err as Error).message);
+  }
+}
 
 export interface SalesFilters {
   startDate: string;
@@ -599,6 +651,86 @@ export async function uploadBellavitaChat(rows: BellavitaChatRow[], uploadedBy: 
   return (result as mysql.ResultSetHeader).affectedRows;
 }
 
+// ─── Neemans Sale Raw Upload ───────────────────────────────────────────────────
+
+export interface NeemansSaleRawRow {
+  week: string; date: string; empId: string; name: string; tl: string;
+  lob: string; tenure: string; orderId: string; customerNumber: string;
+  emailId: string; paymentStatus: string; amount: number; discountCode: string;
+  lineItemName: string; callingLob: string; callingStatus: string; status: string;
+  count: number; neemansOrderId: string; currentStatus: string; finalStatus: string;
+  lineItemQty: number; target: number; callDateTime: string; duration: string;
+  createdAt: string;
+}
+
+export async function uploadNeemansSaleRaw(rows: NeemansSaleRawRow[], uploadedBy: number, batchId: string): Promise<number> {
+  const sql = `INSERT INTO db_masmis.neemans_sale_raw (
+    week, date, emp_id, name, tl, lob, tenure,
+    order_id, customer_number, email_id, payment_status, amount, discount_code,
+    line_item_name, calling_lob, calling_status, status, count,
+    neemans_order_id, current_status, final_status, line_item_qty, target,
+    call_date_time, duration, created_at_raw, uploaded_by, upload_batch_id
+  ) VALUES ?`;
+  const values = rows.map(r => [
+    r.week, r.date, r.empId, r.name, r.tl, r.lob, r.tenure,
+    r.orderId, r.customerNumber, r.emailId, r.paymentStatus, r.amount || null, r.discountCode,
+    r.lineItemName, r.callingLob, r.callingStatus, r.status, r.count || null,
+    r.neemansOrderId, r.currentStatus, r.finalStatus, r.lineItemQty || null, r.target || null,
+    r.callDateTime, r.duration, r.createdAt, uploadedBy, batchId,
+  ]);
+  const [result] = await getMasmisPool().query(sql, [values]);
+  return (result as mysql.ResultSetHeader).affectedRows;
+}
+
+// ─── Neemans Allocation Upload ─────────────────────────────────────────────────
+
+export interface NeemansAllocationRow {
+  phone: string; email: string; customerName: string; productTitle: string;
+  amount: number; type: string; date: string; agent: string;
+  callingStatus: string; subScenario1: string; subScenario2: string; callId: string;
+}
+
+export async function uploadNeemansAllocation(rows: NeemansAllocationRow[], uploadedBy: number, batchId: string): Promise<number> {
+  const sql = `INSERT INTO db_masmis.neemans_allocation (
+    phone, email, customer_name, product_title, amount, type, date,
+    agent, calling_status, sub_scenario1, sub_scenario2, call_id,
+    uploaded_by, upload_batch_id
+  ) VALUES ?`;
+  const values = rows.map(r => [
+    r.phone, r.email, r.customerName, r.productTitle, r.amount || null, r.type, r.date,
+    r.agent, r.callingStatus, r.subScenario1, r.subScenario2, r.callId,
+    uploadedBy, batchId,
+  ]);
+  const [result] = await getMasmisPool().query(sql, [values]);
+  return (result as mysql.ResultSetHeader).affectedRows;
+}
+
+// ─── Neemans Cart Upload ───────────────────────────────────────────────────────
+
+export interface NeemansCartRow {
+  sno: number; cartId: string; createdAt: string; updatedAt: string;
+  customerName: string; phoneNumber: string; emailId: string;
+  lineItems: string; amount: number; agent: string;
+  disposition: string; subDisposition: string; callDate: string; status: string;
+}
+
+export async function uploadNeemansCart(rows: NeemansCartRow[], uploadedBy: number, batchId: string): Promise<number> {
+  const sql = `INSERT INTO db_masmis.neemans_cart (
+    sno, cart_id, created_at, updated_at,
+    customer_name, phone_number, email_id, line_items, amount,
+    agent, disposition, sub_disposition, call_date, status,
+    uploaded_by, upload_batch_id
+  ) VALUES ?`;
+  const values = rows.map(r => [
+    r.sno || null, r.cartId, r.createdAt, r.updatedAt,
+    r.customerName, r.phoneNumber, r.emailId, r.lineItems, r.amount || null,
+    r.agent, r.disposition, r.subDisposition, r.callDate || null, r.status,
+    uploadedBy, batchId,
+  ]);
+  const [result] = await getMasmisPool().query(sql, [values]);
+  return (result as mysql.ResultSetHeader).affectedRows;
+}
+
 // ─── Bellavita Cart Upload ─────────────────────────────────────────────────────
 
 export interface BellavitaCartRow {
@@ -815,6 +947,203 @@ export async function getBellavitaDashboard(month: string): Promise<{
   });
 
   return { metrics, lob };
+}
+
+// ─── Neemans Dashboard ────────────────────────────────────────────────────────
+
+const NEEMANS_MONTH_TARGETS: Record<string, number> = {
+  '2026-06': 6774194,
+};
+
+const SERIAL_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// Excel serial number → date (UTC). Excel epoch is 1899-12-30.
+function serialToDate(serial: number): Date {
+  return new Date((serial - 25569) * 86400000);
+}
+
+// Date → Excel serial number.
+function dateToSerial(y: number, m: number, d: number): number {
+  return Math.floor(Date.UTC(y, m, d) / 86400000) + 25569;
+}
+
+// Excel serial → "1-Jun" label for chart display.
+function serialToLabel(serial: number): string {
+  const d = serialToDate(serial);
+  return `${d.getUTCDate()}-${SERIAL_MONTHS[d.getUTCMonth()]}`;
+}
+
+function round1(n: number) { return Math.round(n * 10) / 10; }
+
+export async function getNeemansDashboard(yyyyMm: string) {
+  const [yyyy, mm] = yyyyMm.split('-');
+  const yr = parseInt(yyyy);
+  const mo = parseInt(mm) - 1; // 0-indexed
+
+  const target     = NEEMANS_MONTH_TARGETS[yyyyMm] ?? 0;
+  const daysInMo   = new Date(yr, mo + 1, 0).getDate();
+  const dailyTarget = target / daysInMo;
+
+  // Excel serial range for the selected month
+  const startSerial = dateToSerial(yr, mo, 1);
+  const endSerial   = dateToSerial(yr, mo, daysInMo);
+
+  const [
+    allocKpiRows,
+    saleKpiRows,
+    allocDateRows,
+    saleDateRows,
+    agentRows,
+    dateDetailRows,
+  ] = await Promise.all([
+    queryMasmis(`
+      SELECT
+        COUNT(CASE WHEN calling_status IS NOT NULL AND calling_status NOT IN ('', '-') THEN 1 END) AS workable,
+        COUNT(CASE WHEN calling_status = 'Connected' THEN 1 END) AS connected
+      FROM db_masmis.neemans_allocation
+      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
+        AND CAST(date AS UNSIGNED) > 0
+    `, [startSerial, endSerial]),
+
+    queryMasmis(`
+      SELECT
+        COUNT(*) AS total_orders,
+        COALESCE(SUM(amount), 0) AS revenue,
+        COUNT(CASE WHEN LOWER(payment_status) = 'paid' THEN 1 END) AS paid_orders,
+        COUNT(CASE WHEN LOWER(payment_status) = 'cod' THEN 1 END) AS cod_orders
+      FROM db_masmis.neemans_sale_raw
+      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
+        AND CAST(date AS UNSIGNED) > 0
+    `, [startSerial, endSerial]),
+
+    queryMasmis(`
+      SELECT CAST(date AS UNSIGNED) AS serial, COUNT(*) AS connected
+      FROM db_masmis.neemans_allocation
+      WHERE calling_status = 'Connected'
+        AND CAST(date AS UNSIGNED) BETWEEN ? AND ?
+        AND CAST(date AS UNSIGNED) > 0
+      GROUP BY serial
+      ORDER BY serial ASC
+    `, [startSerial, endSerial]),
+
+    queryMasmis(`
+      SELECT CAST(date AS UNSIGNED) AS serial,
+        COUNT(*) AS sale_count,
+        COALESCE(SUM(amount), 0) AS revenue
+      FROM db_masmis.neemans_sale_raw
+      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
+        AND CAST(date AS UNSIGNED) > 0
+      GROUP BY serial
+      ORDER BY serial ASC
+    `, [startSerial, endSerial]),
+
+    queryMasmis(`
+      SELECT
+        COALESCE(NULLIF(TRIM(name), ''), 'Unknown') AS agent,
+        COUNT(*) AS sale_count,
+        COALESCE(SUM(amount), 0) AS revenue,
+        COUNT(CASE WHEN LOWER(payment_status) = 'cod'  THEN 1 END) AS cod_count,
+        COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'cod'  THEN amount ELSE 0 END), 0) AS cod_revenue,
+        COUNT(CASE WHEN LOWER(payment_status) = 'paid' THEN 1 END) AS paid_count,
+        COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'paid' THEN amount ELSE 0 END), 0) AS paid_revenue
+      FROM db_masmis.neemans_sale_raw
+      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
+        AND CAST(date AS UNSIGNED) > 0
+      GROUP BY agent
+      ORDER BY revenue DESC
+    `, [startSerial, endSerial]),
+
+    queryMasmis(`
+      SELECT
+        CAST(date AS UNSIGNED) AS serial,
+        COUNT(*) AS sale_count,
+        COALESCE(SUM(amount), 0) AS revenue,
+        COUNT(CASE WHEN LOWER(payment_status) = 'cod'  THEN 1 END) AS cod_count,
+        COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'cod'  THEN amount ELSE 0 END), 0) AS cod_revenue,
+        COUNT(CASE WHEN LOWER(payment_status) = 'paid' THEN 1 END) AS paid_count,
+        COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'paid' THEN amount ELSE 0 END), 0) AS paid_revenue
+      FROM db_masmis.neemans_sale_raw
+      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
+        AND CAST(date AS UNSIGNED) > 0
+      GROUP BY serial
+      ORDER BY serial ASC
+    `, [startSerial, endSerial]),
+  ]);
+
+  const a = (allocKpiRows as any[])[0] ?? {};
+  const s = (saleKpiRows  as any[])[0] ?? {};
+  const workable    = Number(a.workable     ?? 0);
+  const connected   = Number(a.connected    ?? 0);
+  const totalOrders = Number(s.total_orders ?? 0);
+  const revenue     = Number(s.revenue      ?? 0);
+  const paidOrders  = Number(s.paid_orders  ?? 0);
+  const codOrders   = Number(s.cod_orders   ?? 0);
+
+  const kpis = {
+    workable, connected,
+    connectedPct:   workable > 0    ? round1(connected   / workable    * 100) : 0,
+    totalOrders,
+    conversionPct:  connected > 0   ? round1(totalOrders / connected   * 100) : 0,
+    revenue:        Math.round(revenue),
+    target,
+    achievementPct: target > 0      ? round1(revenue     / target      * 100) : 0,
+    paidPct:        totalOrders > 0 ? round1(paidOrders  / totalOrders * 100) : 0,
+    codPct:         totalOrders > 0 ? round1(codOrders   / totalOrders * 100) : 0,
+  };
+
+  // Merge date-wise data from both tables keyed by serial number
+  const dateMap = new Map<number, { connected: number; saleCount: number; revenue: number }>();
+  for (const row of allocDateRows as any[]) {
+    const ser = Number(row.serial);
+    dateMap.set(ser, { connected: Number(row.connected), saleCount: 0, revenue: 0 });
+  }
+  for (const row of saleDateRows as any[]) {
+    const ser = Number(row.serial);
+    const e   = dateMap.get(ser) ?? { connected: 0, saleCount: 0, revenue: 0 };
+    dateMap.set(ser, { ...e, saleCount: Number(row.sale_count), revenue: Number(row.revenue) });
+  }
+
+  const sortedSerials = [...dateMap.keys()].sort((a, b) => a - b);
+
+  let cumRevenue = 0;
+  let cumTarget  = 0;
+  const dateRows = sortedSerials.map(ser => {
+    const row = dateMap.get(ser)!;
+    cumRevenue += row.revenue;
+    cumTarget  += dailyTarget;
+    return {
+      date:              serialToLabel(ser),
+      connected:         row.connected,
+      saleCount:         row.saleCount,
+      revenue:           Math.round(row.revenue),
+      conversionPct:     row.connected > 0 ? round1(row.saleCount / row.connected * 100) : 0,
+      dailyTarget:       Math.round(dailyTarget),
+      cumulativeRevenue: Math.round(cumRevenue),
+      cumulativeTarget:  Math.round(cumTarget),
+    };
+  });
+
+  const agentTable = (agentRows as any[]).map(r => ({
+    agent:       String(r.agent),
+    saleCount:   Number(r.sale_count)   || 0,
+    revenue:     Math.round(Number(r.revenue)     || 0),
+    codCount:    Number(r.cod_count)    || 0,
+    codRevenue:  Math.round(Number(r.cod_revenue)  || 0),
+    paidCount:   Number(r.paid_count)   || 0,
+    paidRevenue: Math.round(Number(r.paid_revenue) || 0),
+  }));
+
+  const dateTable = (dateDetailRows as any[]).map(r => ({
+    date:        serialToLabel(Number(r.serial)),
+    saleCount:   Number(r.sale_count)   || 0,
+    revenue:     Math.round(Number(r.revenue)     || 0),
+    codCount:    Number(r.cod_count)    || 0,
+    codRevenue:  Math.round(Number(r.cod_revenue)  || 0),
+    paidCount:   Number(r.paid_count)   || 0,
+    paidRevenue: Math.round(Number(r.paid_revenue) || 0),
+  }));
+
+  return { kpis, dateRows, agentTable, dateTable };
 }
 
 export async function deleteUploadBatch(batchId: string, tableName: string): Promise<{ deleted: number }> {

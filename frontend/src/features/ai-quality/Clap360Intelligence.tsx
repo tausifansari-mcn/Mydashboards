@@ -25,7 +25,7 @@ interface ClapIntelligenceResult {
     scenarios: { scenario: string; count: number; pct: number }[];
     posWords: string[]; negWords: string[];
   };
-  logistics: { total: number; scenarios: ClapScenWithSubs[] };
+  logistics: { total: number; scenarios: ClapScenWithSubs[]; posWords: string[]; negWords: string[] };
   agent: {
     total: number;
     topAgents: { agent: string; calls: number; avgScore: number }[];
@@ -35,6 +35,8 @@ interface ClapIntelligenceResult {
   product: {
     total: number;
     scenarios: ClapScenWithSubs[];
+    posWords: string[];
+    negWords: string[];
     products: {
       name: string;
       count: number;
@@ -475,6 +477,18 @@ export default function Clap360Intelligence({ clientId, startDate, endDate }: Pr
           {logistics.scenarios.length > 0 && (
             <p className="text-[9px] text-slate-400 mt-3 italic">▼ Click a scenario to see sub-categories</p>
           )}
+          {logistics.posWords.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-amber-50">
+              <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wide mb-1.5">✅ Positive Signals</p>
+              <WordCloud words={logistics.posWords} positive={true} />
+            </div>
+          )}
+          {logistics.negWords.length > 0 && (
+            <div className="mt-3">
+              <p className="text-[10px] font-semibold text-red-500 uppercase tracking-wide mb-1.5">⚠️ Negative Signals</p>
+              <WordCloud words={logistics.negWords} positive={false} />
+            </div>
+          )}
         </div>
 
         {/* Product */}
@@ -555,6 +569,23 @@ export default function Clap360Intelligence({ clientId, startDate, endDate }: Pr
               {/* Note when no products matched but calls exist */}
               {product.products.length === 0 && (
                 <p className="text-[10px] text-slate-400 italic">No product names detected in transcripts — issue breakdown shown above</p>
+              )}
+              {/* Product sentiment word clouds */}
+              {(product.posWords.length > 0 || product.negWords.length > 0) && (
+                <div className="space-y-2 border-t border-slate-100 pt-3 mt-3">
+                  {product.posWords.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wide mb-1.5">✅ Positive Signals</p>
+                      <WordCloud words={product.posWords} positive={true} />
+                    </div>
+                  )}
+                  {product.negWords.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold text-red-500 uppercase tracking-wide mb-1.5">⚠️ Negative Signals</p>
+                      <WordCloud words={product.negWords} positive={false} />
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
