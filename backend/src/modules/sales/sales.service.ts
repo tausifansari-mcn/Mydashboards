@@ -1030,6 +1030,13 @@ export async function getNeemansDashboard(yyyyMm: string) {
   const daysInMo    = new Date(yr, mo + 1, 0).getDate();
   const dailyTarget = target / daysInMo;
 
+  // Prorated target: for the current month use days elapsed so far,
+  // for past months use the full month (all days elapsed).
+  const now          = new Date();
+  const isCurrentMo  = now.getFullYear() === yr && now.getMonth() === mo;
+  const daysElapsed  = isCurrentMo ? now.getDate() : daysInMo;
+  const proratedTarget = Math.round(dailyTarget * daysElapsed);
+
   // Excel serial range for the selected month
   const startSerial = dateToSerial(yr, mo, 1);
   const endSerial   = dateToSerial(yr, mo, daysInMo);
@@ -1087,14 +1094,17 @@ export async function getNeemansDashboard(yyyyMm: string) {
 
   const kpis = {
     workable, connected,
-    connectedPct:   workable > 0    ? round1(connected   / workable    * 100) : 0,
+    connectedPct:   workable > 0         ? round1(connected   / workable         * 100) : 0,
     totalOrders,
-    conversionPct:  connected > 0   ? round1(totalOrders / connected   * 100) : 0,
+    conversionPct:  connected > 0        ? round1(totalOrders / connected        * 100) : 0,
     revenue:        Math.round(revenue),
     target,
-    achievementPct: target > 0      ? round1(revenue     / target      * 100) : 0,
-    paidPct:        totalOrders > 0 ? round1(paidOrders  / totalOrders * 100) : 0,
-    codPct:         totalOrders > 0 ? round1(codOrders   / totalOrders * 100) : 0,
+    proratedTarget,
+    daysElapsed,
+    daysInMo,
+    achievementPct: proratedTarget > 0   ? round1(revenue     / proratedTarget   * 100) : 0,
+    paidPct:        totalOrders > 0      ? round1(paidOrders  / totalOrders      * 100) : 0,
+    codPct:         totalOrders > 0      ? round1(codOrders   / totalOrders      * 100) : 0,
   };
 
   // Merge allocation + sale rows into one date map

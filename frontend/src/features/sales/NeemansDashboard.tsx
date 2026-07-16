@@ -46,7 +46,8 @@ function monthToRange(m: string) {
 interface Kpis {
   workable: number; connected: number; connectedPct: number;
   totalOrders: number; conversionPct: number;
-  revenue: number; target: number; achievementPct: number;
+  revenue: number; target: number; proratedTarget: number;
+  daysElapsed: number; daysInMo: number; achievementPct: number;
   paidPct: number; codPct: number;
 }
 interface DateRow {
@@ -746,7 +747,7 @@ export default function NeemansDashboard() {
                   icon={ShoppingBag} color="#F59E0B"  gradient="linear-gradient(135deg,#FFFBEB,#FDE68A)" />
                 <KpiCard label="Revenue"        value={fmtMoney(k!.revenue)}      sub={fmtMoneyFull(k!.revenue)}
                   icon={IndianRupee} color="#10B981"  gradient="linear-gradient(135deg,#ECFDF5,#A7F3D0)" />
-                <KpiCard label="Achievement %"  value={fmtPct(k!.achievementPct)} sub={`Tgt: ${fmtMoney(k!.target)}`}
+                <KpiCard label="Achievement %"  value={fmtPct(k!.achievementPct)} sub={`Till day ${k!.daysElapsed}: ${fmtMoney(k!.proratedTarget)} / ${fmtMoney(k!.target)}`}
                   icon={Target}
                   color={k!.achievementPct >= 100 ? '#10B981' : k!.achievementPct >= 70 ? '#F59E0B' : '#EF4444'}
                   gradient={k!.achievementPct >= 100 ? 'linear-gradient(135deg,#ECFDF5,#A7F3D0)' : k!.achievementPct >= 70 ? 'linear-gradient(135deg,#FFFBEB,#FDE68A)' : 'linear-gradient(135deg,#FEF2F2,#FECACA)'} />
