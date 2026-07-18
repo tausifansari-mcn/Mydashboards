@@ -967,3 +967,42 @@ export async function getAbcCartSnap(req: Request, res: Response) {
     res.status(500).json({ success: false, message: 'Failed to fetch ABC Cart Snap' });
   }
 }
+
+// ─── NMS Agent Details ─────────────────────────────────────────────────────────
+
+export async function listNmsAgentDetails(_req: Request, res: Response) {
+  try {
+    res.json({ success: true, data: await svc.getNmsAgentDetails() });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to fetch agent details' });
+  }
+}
+
+export async function createNmsAgentDetail(req: Request, res: Response) {
+  try {
+    const userId = (req as any).user?.id ?? 0;
+    const id = await svc.createNmsAgentDetail(req.body, userId);
+    res.json({ success: true, data: { id } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to create agent' });
+  }
+}
+
+export async function updateNmsAgentDetail(req: Request, res: Response) {
+  try {
+    const userId = (req as any).user?.id ?? 0;
+    await svc.updateNmsAgentDetail(Number(req.params.id), req.body, userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to update agent' });
+  }
+}
+
+export async function deleteNmsAgentDetail(req: Request, res: Response) {
+  try {
+    await svc.deleteNmsAgentDetail(Number(req.params.id));
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to delete agent' });
+  }
+}

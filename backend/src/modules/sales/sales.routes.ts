@@ -43,5 +43,9 @@ router.post('/upload-neemans-apr',      upload.single('file'), ctrl.uploadNeeman
 router.get('/neemans-apr-dashboard',    ctrl.getNeemansAprDashboard);
 router.get('/neemans-apr-export',       ctrl.getNeemansAprExport);
 router.get('/neemans-abc-cart-snap',    ctrl.getAbcCartSnap);
+router.get   ('/nms-agent-details',       ctrl.listNmsAgentDetails);
+router.post  ('/nms-agent-details',       ctrl.createNmsAgentDetail);
+router.put   ('/nms-agent-details/:id',   ctrl.updateNmsAgentDetail);
+router.delete('/nms-agent-details/:id',   ctrl.deleteNmsAgentDetail);
 
 export default router;

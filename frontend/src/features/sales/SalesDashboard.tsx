@@ -121,7 +121,7 @@ export default function SalesDashboard() {
   }
 
   return (
-    <div className="min-h-screen p-3 sm:p-6 max-w-7xl mx-auto">
+    <div className="min-h-screen p-3 sm:p-6">
       <div className="flex items-center gap-3 mb-6">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl"
              style={{ backgroundColor: lightBg }}>

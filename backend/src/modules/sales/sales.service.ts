@@ -109,9 +109,100 @@ export async function initNeemansTables(): Promise<void> {
         MODIFY COLUMN mtd VARCHAR(100),
         MODIFY COLUMN capping VARCHAR(100)
     `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.nms_Agent_Details (
+        id          INT AUTO_INCREMENT PRIMARY KEY,
+        emp_id      VARCHAR(20)  NOT NULL,
+        daildesk_id VARCHAR(100),
+        name        VARCHAR(200) NOT NULL,
+        lob         VARCHAR(100),
+        tl          VARCHAR(200),
+        doj         DATE,
+        fhd         DATE,
+        status      VARCHAR(20)  DEFAULT 'Active',
+        dol         DATE,
+        created_by  INT,
+        updated_by  INT,
+        created_at  DATETIME DEFAULT NOW(),
+        updated_at  DATETIME DEFAULT NOW() ON UPDATE NOW()
+      )
+    `);
   } catch (err) {
     console.error('[sales] initNeemansTables warning:', (err as Error).message);
   }
+}
+
+// ─── NMS Agent Details CRUD ────────────────────────────────────────────────────
+
+function tenureBucket(days: number): string {
+  if (days > 180) return 'Above 180';
+  if (days > 120) return '121-180';
+  if (days > 90)  return '91-120';
+  if (days > 60)  return '61-90';
+  if (days > 30)  return '31-60';
+  return '0-30';
+}
+function calcTenure(doj: string | null, dol: string | null) {
+  if (!doj) return { tenure: 0, tenureBucket: '-' };
+  const start = new Date(doj).getTime();
+  const end   = dol ? new Date(dol).getTime() : Date.now();
+  const days  = Math.max(0, Math.floor((end - start) / 86400000));
+  return { tenure: days, tenureBucket: tenureBucket(days) };
+}
+
+function mapAgentRow(r: any) {
+  const doj = r.doj ?? null;
+  const fhd = r.fhd ?? null;
+  const dol = r.dol ?? null;
+  const { tenure, tenureBucket: bucket } = calcTenure(doj, dol);
+  return { id: r.id, empId: r.emp_id, daildeskId: r.daildesk_id, name: r.name,
+           lob: r.lob, tl: r.tl, doj, fhd, status: r.status, dol,
+           tenure, tenureBucket: bucket };
+}
+
+export async function getNmsAgentDetails() {
+  const [rows] = await getMasmisPool().query(`
+    SELECT id, emp_id, daildesk_id, name, lob, tl,
+      DATE_FORMAT(doj,'%Y-%m-%d') AS doj,
+      DATE_FORMAT(fhd,'%Y-%m-%d') AS fhd,
+      status,
+      DATE_FORMAT(dol,'%Y-%m-%d') AS dol
+    FROM db_masmis.nms_Agent_Details ORDER BY name ASC`);
+  return (rows as any[]).map(mapAgentRow);
+}
+
+export async function createNmsAgentDetail(
+  d: { empId: string; daildeskId?: string; name: string; lob?: string; tl?: string;
+       doj?: string; fhd?: string; status?: string; dol?: string },
+  userId: number
+) {
+  const [res] = await getMasmisPool().execute(
+    `INSERT INTO db_masmis.nms_Agent_Details
+       (emp_id,daildesk_id,name,lob,tl,doj,fhd,status,dol,created_by,updated_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [d.empId, d.daildeskId||null, d.name, d.lob||null, d.tl||null,
+     d.doj||null, d.fhd||null, d.status||'Active', d.dol||null, userId, userId]
+  );
+  return (res as mysql.ResultSetHeader).insertId;
+}
+
+export async function updateNmsAgentDetail(
+  id: number,
+  d: { empId: string; daildeskId?: string; name: string; lob?: string; tl?: string;
+       doj?: string; fhd?: string; status?: string; dol?: string },
+  userId: number
+) {
+  await getMasmisPool().execute(
+    `UPDATE db_masmis.nms_Agent_Details
+     SET emp_id=?,daildesk_id=?,name=?,lob=?,tl=?,doj=?,fhd=?,status=?,dol=?,updated_by=?
+     WHERE id=?`,
+    [d.empId, d.daildeskId||null, d.name, d.lob||null, d.tl||null,
+     d.doj||null, d.fhd||null, d.status||'Active', d.dol||null, userId, id]
+  );
+}
+
+export async function deleteNmsAgentDetail(id: number) {
+  await getMasmisPool().execute('DELETE FROM db_masmis.nms_Agent_Details WHERE id=?', [id]);
 }
 
 // ─── Neemans Target CRUD ──────────────────────────────────────────────────────
@@ -1114,7 +1205,8 @@ export async function getNeemansDashboard(yyyyMm: string) {
         COUNT(CASE WHEN LOWER(payment_status) = 'cod'  THEN 1 END) AS cod_count,
         COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'cod'  THEN amount ELSE 0 END), 0) AS cod_revenue,
         COUNT(CASE WHEN LOWER(payment_status) = 'paid' THEN 1 END) AS paid_count,
-        COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'paid' THEN amount ELSE 0 END), 0) AS paid_revenue
+        COALESCE(SUM(CASE WHEN LOWER(payment_status) = 'paid' THEN amount ELSE 0 END), 0) AS paid_revenue,
+        COUNT(CASE WHEN LOWER(TRIM(COALESCE(final_status,''))) = 'rto' THEN 1 END) AS rto_count
       FROM db_masmis.neemans_sale_raw
       WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
         AND CAST(date AS UNSIGNED) > 0
@@ -1130,12 +1222,13 @@ export async function getNeemansDashboard(yyyyMm: string) {
     connected += Number(row.connected) || 0;
   }
 
-  let totalOrders = 0, revenue = 0, paidOrders = 0, codOrders = 0;
+  let totalOrders = 0, revenue = 0, paidOrders = 0, codOrders = 0, rtoCount = 0;
   for (const row of dateDetailRows as any[]) {
     totalOrders += Number(row.sale_count) || 0;
     revenue     += Number(row.revenue)    || 0;
     paidOrders  += Number(row.paid_count) || 0;
     codOrders   += Number(row.cod_count)  || 0;
+    rtoCount    += Number(row.rto_count)  || 0;
   }
 
   const kpis = {
@@ -1151,6 +1244,8 @@ export async function getNeemansDashboard(yyyyMm: string) {
     achievementPct: proratedTarget > 0   ? round1(revenue     / proratedTarget   * 100) : 0,
     paidPct:        totalOrders > 0      ? round1(paidOrders  / totalOrders      * 100) : 0,
     codPct:         totalOrders > 0      ? round1(codOrders   / totalOrders      * 100) : 0,
+    rtoCount,
+    rtoPct:         totalOrders > 0      ? round1(rtoCount    / totalOrders      * 100) : 0,
   };
 
   // Merge allocation + sale rows into one date map
@@ -1591,14 +1686,14 @@ export async function getAbcCartSnap(yyyyMm: string) {
         GROUP BY serial`, [startSerial, endSerial]),
 
       pool.query(`
-        SELECT COALESCE(STR_TO_DATE(date,'%d-%b-%Y'),STR_TO_DATE(date,'%d-%b-%y'),STR_TO_DATE(date,'%Y-%m-%d')) AS day_date,
+        SELECT DAY(COALESCE(STR_TO_DATE(date,'%d-%b-%Y'),STR_TO_DATE(date,'%d-%b-%y'),STR_TO_DATE(date,'%Y-%m-%d'))) AS day_num,
           SUM(calls) AS total_calls, COUNT(DISTINCT emp_id) AS agent_count
         FROM db_masmis.neemans_apr
         WHERE COALESCE(STR_TO_DATE(date,'%d-%b-%Y'),STR_TO_DATE(date,'%d-%b-%y'),STR_TO_DATE(date,'%Y-%m-%d')) BETWEEN ? AND ?
-        GROUP BY day_date`, [startDateStr, endDateStr]),
+        GROUP BY day_num`, [startDateStr, endDateStr]),
 
       pool.query(`
-        SELECT COALESCE(STR_TO_DATE(date,'%d-%b-%Y'),STR_TO_DATE(date,'%d-%b-%y'),STR_TO_DATE(date,'%Y-%m-%d')) AS day_date,
+        SELECT DAY(COALESCE(STR_TO_DATE(date,'%d-%b-%Y'),STR_TO_DATE(date,'%d-%b-%y'),STR_TO_DATE(date,'%Y-%m-%d'))) AS day_num,
           SUM(COALESCE(attendance,1))                                                                             AS login_count,
           SUM(calls)                                                                                              AS adv_calls,
           SUM(${toSecs('talk')})                                                                                  AS talk_secs,
@@ -1609,7 +1704,7 @@ export async function getAbcCartSnap(yyyyMm: string) {
           SUM(COALESCE(acht,0)*COALESCE(attendance,1))                                                           AS w_aht
         FROM db_masmis.neemans_apr
         WHERE COALESCE(STR_TO_DATE(date,'%d-%b-%Y'),STR_TO_DATE(date,'%d-%b-%y'),STR_TO_DATE(date,'%Y-%m-%d')) BETWEEN ? AND ?
-        GROUP BY day_date`, [startDateStr, endDateStr]),
+        GROUP BY day_num`, [startDateStr, endDateStr]),
 
       pool.query(`
         SELECT CAST(date AS UNSIGNED) AS serial, COALESCE(sub_scenario1,'') AS name, COUNT(*) AS cnt
@@ -1651,10 +1746,10 @@ export async function getAbcCartSnap(yyyyMm: string) {
   for (const r of saleRows as any[]) saleMap.set(Number(r.serial), r);
 
   const aprCallMap = new Map<number, any>();
-  for (const r of aprCallRows as any[]) if (r.day_date) aprCallMap.set(new Date(r.day_date).getUTCDate(), r);
+  for (const r of aprCallRows as any[]) if (r.day_num) aprCallMap.set(Number(r.day_num), r);
 
   const aprAdvMap  = new Map<number, any>();
-  for (const r of aprAdvRows as any[]) if (r.day_date) aprAdvMap.set(new Date(r.day_date).getUTCDate(), r);
+  for (const r of aprAdvRows as any[]) if (r.day_num) aprAdvMap.set(Number(r.day_num), r);
 
   function buildDispMap(rows: any[]) {
     const map = new Map<number, Map<string, number>>();

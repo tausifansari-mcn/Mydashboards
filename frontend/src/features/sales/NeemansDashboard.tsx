@@ -50,6 +50,7 @@ interface Kpis {
   revenue: number; target: number; proratedTarget: number;
   daysElapsed: number; daysInMo: number; achievementPct: number;
   paidPct: number; codPct: number;
+  rtoCount: number; rtoPct: number;
 }
 interface DateRow {
   date: string; connected: number; saleCount: number; revenue: number;
@@ -63,6 +64,21 @@ interface AgentRow {
   saleCount: number; revenue: number;
   codCount: number; codRevenue: number; codPct: number;
   paidCount: number; paidRevenue: number; paidPct: number;
+}
+
+interface NmsAgent {
+  id: number;
+  empId: string;
+  daildeskId: string | null;
+  name: string;
+  lob: string | null;
+  tl: string | null;
+  doj: string | null;
+  fhd: string | null;
+  status: string;
+  dol: string | null;
+  tenure: number;
+  tenureBucket: string;
 }
 
 // ── Chart Modal ───────────────────────────────────────────────────────────────
@@ -742,13 +758,21 @@ interface SnapDataType {
 
 function AbcCartSnapTable({ data, month }: { data: SnapDataType; month: string }) {
   type ColEntry = { label: string; col: SnapColType; type: 'mtd' | 'week' | 'day'; weekIdx?: number; dayIdx?: number };
+
+  const hasData = (col: SnapColType) =>
+    col.workable > 0 || col.saleCount > 0 || col.connected > 0 || col.loginCount > 0;
+
+  // Only show weeks/days that have actual data in sale raw
+  const activeWeekIdxs = data.weeks.map((_, i) => i).filter(i => hasData(data.weeks[i] as SnapColType));
+  const activeDayIdxs  = data.daily.map((_, i) => i).filter(i => hasData(data.daily[i] as SnapColType));
+
   const allCols: ColEntry[] = [
-    { label: 'MTD',        col: data.mtd,  type: 'mtd' },
-    ...data.weeks.map((w, i) => ({ label: w.label, col: w as SnapColType, type: 'week' as const, weekIdx: i })),
-    ...data.daily.map((d, i) => ({ label: d.label, col: d as SnapColType, type: 'day'  as const, dayIdx:  i })),
+    { label: 'MTD', col: data.mtd, type: 'mtd' },
+    ...activeWeekIdxs.map(i => ({ label: data.weeks[i].label, col: data.weeks[i] as SnapColType, type: 'week' as const, weekIdx: i })),
+    ...activeDayIdxs.map(i => ({ label: data.daily[i].label, col: data.daily[i] as SnapColType, type: 'day' as const, dayIdx: i })),
   ];
 
-  // Delivery column slices (aligned to allCols)
+  // Delivery column slices (aligned to filtered allCols)
   const delivCols: DelivSlice[] = allCols.map((c) => {
     if (c.type === 'mtd')  return data.deliveryStatus.mtd;
     if (c.type === 'week') return data.deliveryStatus.weeks[c.weekIdx!] ?? { counts: {}, total: 0 };
@@ -761,16 +785,16 @@ function AbcCartSnapTable({ data, month }: { data: SnapDataType; month: string }
     'PICKUP_PENDING', 'OUT FOR PICKUP',
   ];
 
-  const hasData = (col: SnapColType) =>
-    col.workable > 0 || col.saleCount > 0 || col.connected > 0 || col.loginCount > 0;
-
   const colBg = (c: ColEntry) => c.type === 'mtd' ? SC_MTD : c.type === 'week' ? SC_WEEK : 'transparent';
-  const hdrBg = (c: ColEntry) => {
-    const active = hasData(c.col);
-    if (c.type === 'mtd')  return active ? '#0A4A5A' : '#64748B';
-    if (c.type === 'week') return active ? '#7C3A10' : '#64748B';
-    return active ? '#0D5E73' : '#94A3B8';
-  };
+  const hdrBg = (c: ColEntry) => c.type === 'mtd' ? '#0A4A5A' : c.type === 'week' ? '#7C3A10' : '#0D5E73';
+
+  // Sticky left offset for MTD and week columns (metric col = 220px, each data col = 85px)
+  const METRIC_W = 220;
+  const COL_W    = 85;
+  const colStickyStyle = (c: ColEntry, idx: number) =>
+    (c.type === 'mtd' || c.type === 'week')
+      ? { position: 'sticky' as const, left: METRIC_W + idx * COL_W, zIndex: 9 }
+      : {};
 
   // Sticky column helpers
   const TH_METRIC = 'text-xs font-bold text-white text-left px-3 py-2 whitespace-nowrap sticky left-0 z-30';
@@ -783,10 +807,15 @@ function AbcCartSnapTable({ data, month }: { data: SnapDataType; month: string }
   function SectionHdr({ label, color }: { label: string; color: string }) {
     return (
       <tr>
-        <td className="sticky left-0 z-10 text-xs font-black text-white px-3 py-2" style={{ background: color, minWidth: 220 }}>
+        <td className="sticky left-0 z-10 text-xs font-black text-white px-3 py-2 whitespace-nowrap" style={{ background: color, minWidth: 220 }}>
           {label}
         </td>
-        {allCols.map((_, i) => <td key={i} style={{ background: color, minWidth: 85 }} />)}
+        {allCols.map((c, i) => (
+          <td key={i} className="text-xs font-semibold text-white text-center px-2 py-2 whitespace-nowrap"
+              style={{ background: color, minWidth: 85, ...colStickyStyle(c, i) }}>
+            {c.label}
+          </td>
+        ))}
       </tr>
     );
   }
@@ -802,7 +831,7 @@ function AbcCartSnapTable({ data, month }: { data: SnapDataType; month: string }
           const val = c.col[m.key];
           return (
             <td key={ci} className={TD_DATA_CLS}
-                style={{ background: colBg(c), fontWeight: fw, fontVariantNumeric: 'tabular-nums', color: SC_DARK }}>
+                style={{ background: colBg(c), fontWeight: fw, fontVariantNumeric: 'tabular-nums', color: SC_DARK, ...colStickyStyle(c, ci) }}>
               {m.fmt ? m.fmt(val) : fmtNum(val as number)}
             </td>
           );
@@ -816,42 +845,62 @@ function AbcCartSnapTable({ data, month }: { data: SnapDataType; month: string }
   }
 
   // Disposition section renderer — returns <thead> + <tbody> so each table gets its own sticky header
+  // Only shows active weeks/days; freezes Name + MTD + week columns on horizontal scroll
   function DispSection({ section, showPct, label, color, rowBg, altBg }:
     { section: SnapDispSection; showPct: boolean; label: string; color: string; rowBg: string; altBg: string }) {
-    const total      = section.mtdTotal;
-    const weekLabels = data.weeks.map(w => w.label);
-    const dayLabels  = data.daily.map(d => d.label);
-    const TH = `${TH_DATA} whitespace-nowrap`;
+    const total = section.mtdTotal;
+    const TH    = `${TH_DATA} whitespace-nowrap`;
+    // column left offsets: Name=0(220px), MTD=220(85px), [%=305(60px)], Week-i...
+    const MTD_L  = 220;
+    const MTD_W  = 85;
+    const PCT_W  = 60;
+    const weekStart = MTD_L + MTD_W + (showPct ? PCT_W : 0);
     return (
       <>
         <thead className="sticky top-0 z-20">
           <tr>
             <th className={`${TH_METRIC} z-30`} style={{ background: color, minWidth: 220 }}>{label}</th>
-            <th className={TH} style={{ background: '#0A4A5A', minWidth: 75 }}>MTD</th>
-            {showPct && <th className={TH} style={{ background: '#0A4A5A', minWidth: 60 }}>%</th>}
-            {weekLabels.map((h, i) => <th key={i} className={TH} style={{ background: '#7C3A10', minWidth: 85 }}>{h.toUpperCase()}</th>)}
-            {dayLabels.map((h, i) => <th key={i+100} className={TH} style={{ background: '#0D5E73', minWidth: 85 }}>{h.toUpperCase()}</th>)}
+            <th className={TH} style={{ background: '#0A4A5A', minWidth: MTD_W, position: 'sticky', left: MTD_L, zIndex: 10 }}>MTD</th>
+            {showPct && <th className={TH} style={{ background: '#0A4A5A', minWidth: PCT_W, position: 'sticky', left: MTD_L + MTD_W, zIndex: 10 }}>%</th>}
+            {activeWeekIdxs.map((wi, ii) => (
+              <th key={wi} className={TH} style={{ background: '#7C3A10', minWidth: 85, position: 'sticky', left: weekStart + ii * 85, zIndex: 10 }}>
+                {data.weeks[wi].label.toUpperCase()}
+              </th>
+            ))}
+            {activeDayIdxs.map(di => (
+              <th key={di+100} className={TH} style={{ background: '#0D5E73', minWidth: 85 }}>
+                {data.daily[di].label.toUpperCase()}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
           {section.rows.map((r, ri) => {
-            const bg = ri%2===0 ? rowBg : altBg;
+            const bg = ri % 2 === 0 ? rowBg : altBg;
             return (
               <tr key={r.name} style={{ background: bg }}>
                 <td className={TD_METRIC_CLS} style={{ background: bg, color: SC_DARK, minWidth: 220 }}>{r.name}</td>
-                <td className={TD_DATA_CLS} style={{ background: SC_MTD, color: SC_DARK, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(r.mtd)}</td>
-                {showPct && <td className={TD_DATA_CLS} style={{ color: SC_DARK, fontVariantNumeric: 'tabular-nums' }}>{r.mtdPct}%</td>}
-                {r.weeks.map((v, i) => <td key={i} className={TD_DATA_CLS} style={{ background: SC_WEEK, color: SC_DARK, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(v)}</td>)}
-                {r.daily.map((v, i) => <td key={i+100} className={TD_DATA_CLS} style={{ color: SC_DARK, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(v)}</td>)}
+                <td className={TD_DATA_CLS} style={{ background: SC_MTD, color: SC_DARK, fontVariantNumeric: 'tabular-nums', position: 'sticky', left: MTD_L, zIndex: 8 }}>{fmtNum(r.mtd)}</td>
+                {showPct && <td className={TD_DATA_CLS} style={{ color: SC_DARK, fontVariantNumeric: 'tabular-nums', position: 'sticky', left: MTD_L + MTD_W, zIndex: 8 }}>{r.mtdPct}%</td>}
+                {activeWeekIdxs.map((wi, ii) => (
+                  <td key={wi} className={TD_DATA_CLS} style={{ background: SC_WEEK, color: SC_DARK, fontVariantNumeric: 'tabular-nums', position: 'sticky', left: weekStart + ii * 85, zIndex: 8 }}>{fmtNum(r.weeks[wi])}</td>
+                ))}
+                {activeDayIdxs.map(di => (
+                  <td key={di+100} className={TD_DATA_CLS} style={{ color: SC_DARK, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(r.daily[di])}</td>
+                ))}
               </tr>
             );
           })}
           <tr style={{ background: rowBg }}>
             <td className={TD_METRIC_CLS} style={{ background: rowBg, fontWeight: 700, color: SC_DARK, minWidth: 220 }}>Grand Total</td>
-            <td className={TD_DATA_CLS} style={{ background: SC_MTD, fontWeight: 700, color: SC_DARK, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(total)}</td>
-            {showPct && <td className={TD_DATA_CLS} style={{ fontWeight: 700, color: SC_DARK }}>100%</td>}
-            {section.weekTotals.map((v, i) => <td key={i} className={TD_DATA_CLS} style={{ background: SC_WEEK, fontWeight: 700, color: SC_DARK, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(v)}</td>)}
-            {section.dailyTotals.map((v, i) => <td key={i+100} className={TD_DATA_CLS} style={{ fontWeight: 700, color: SC_DARK, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(v)}</td>)}
+            <td className={TD_DATA_CLS} style={{ background: SC_MTD, fontWeight: 700, color: SC_DARK, fontVariantNumeric: 'tabular-nums', position: 'sticky', left: MTD_L, zIndex: 8 }}>{fmtNum(total)}</td>
+            {showPct && <td className={TD_DATA_CLS} style={{ fontWeight: 700, color: SC_DARK, position: 'sticky', left: MTD_L + MTD_W, zIndex: 8 }}>100%</td>}
+            {activeWeekIdxs.map((wi, ii) => (
+              <td key={wi} className={TD_DATA_CLS} style={{ background: SC_WEEK, fontWeight: 700, color: SC_DARK, fontVariantNumeric: 'tabular-nums', position: 'sticky', left: weekStart + ii * 85, zIndex: 8 }}>{fmtNum(section.weekTotals[wi])}</td>
+            ))}
+            {activeDayIdxs.map(di => (
+              <td key={di+100} className={TD_DATA_CLS} style={{ fontWeight: 700, color: SC_DARK, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(section.dailyTotals[di])}</td>
+            ))}
           </tr>
         </tbody>
       </>
@@ -915,7 +964,7 @@ function AbcCartSnapTable({ data, month }: { data: SnapDataType; month: string }
                 <div className="text-indigo-300 font-normal" style={{ fontSize: 10 }}>{month}</div>
               </th>
               {allCols.map((c, i) => (
-                <th key={i} className={TH_DATA} style={{ background: hdrBg(c), minWidth: 85, opacity: hasData(c.col) ? 1 : 0.55 }}>
+                <th key={i} className={TH_DATA} style={{ background: hdrBg(c), minWidth: 85, ...colStickyStyle(c, i) }}>
                   {c.label.toUpperCase()}
                 </th>
               ))}
@@ -1016,8 +1065,276 @@ function AbcCartSnapTable({ data, month }: { data: SnapDataType; month: string }
 
 // ── ABC Cart Snap Types (defined above AbcCartSnapTable) ──────────────────────
 
+// ── Agent Details Tab ──────────────────────────────────────────────────────────
+function calcTenurePreview(doj: string, dol: string): { days: number; bucket: string } {
+  if (!doj) return { days: 0, bucket: '—' };
+  const start = new Date(doj).getTime();
+  const end   = dol ? new Date(dol).getTime() : Date.now();
+  const days  = Math.max(0, Math.floor((end - start) / 86400000));
+  let bucket  = '—';
+  if (days >= 181)     bucket = 'Above 180';
+  else if (days >= 121) bucket = '121-180';
+  else if (days >= 91)  bucket = '91-120';
+  else if (days >= 61)  bucket = '61-90';
+  else if (days >= 31)  bucket = '31-60';
+  else if (days >= 1)   bucket = '0-30';
+  return { days, bucket };
+}
+
+function AgentDetailsTab({ data, loading, error, onRefresh }: {
+  data: NmsAgent[]; loading: boolean; error: string | null; onRefresh: () => void;
+}) {
+  const { user } = useAuthStore();
+  const isSuperAdmin = user?.role === 'super_admin';
+  const [search,    setSearch]    = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editAgent, setEditAgent] = useState<NmsAgent | null>(null);
+  const [deleteId,  setDeleteId]  = useState<number | null>(null);
+  const [saving,    setSaving]    = useState(false);
+  const [deleting,  setDeleting]  = useState(false);
+
+  const emptyForm = { emp_id: '', daildesk_id: '', name: '', lob: '', tl: '', doj: '', fhd: '', status: 'Active', dol: '' };
+  const [form, setForm] = useState(emptyForm);
+
+  const tenurePreview = calcTenurePreview(form.doj, form.dol);
+
+  function openAdd() { setForm(emptyForm); setEditAgent(null); setModalOpen(true); }
+  function openEdit(a: NmsAgent) {
+    setForm({
+      emp_id: a.empId, daildesk_id: a.daildeskId ?? '', name: a.name,
+      lob: a.lob ?? '', tl: a.tl ?? '', doj: a.doj ?? '',
+      fhd: a.fhd ?? '', status: a.status, dol: a.dol ?? '',
+    });
+    setEditAgent(a); setModalOpen(true);
+  }
+
+  async function handleSave() {
+    if (!form.emp_id.trim() || !form.name.trim()) { alert('Emp ID and Name are required'); return; }
+    setSaving(true);
+    try {
+      if (editAgent) await api.put(`/sales/nms-agent-details/${editAgent.id}`, form);
+      else            await api.post('/sales/nms-agent-details', form);
+      setModalOpen(false); onRefresh();
+    } catch (err: any) { alert(err?.response?.data?.message || err?.message || 'Failed to save'); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDelete() {
+    if (!deleteId) return;
+    setDeleting(true);
+    try { await api.delete(`/sales/nms-agent-details/${deleteId}`); setDeleteId(null); onRefresh(); }
+    catch (err: any) { alert(err?.response?.data?.message || err?.message || 'Failed to delete'); }
+    finally { setDeleting(false); }
+  }
+
+  const filtered = data.filter(a =>
+    [a.empId ?? '', a.name ?? '', a.lob ?? '', a.tl ?? '', a.status ?? ''].some(
+      s => s.toLowerCase().includes(search.toLowerCase())
+    )
+  );
+
+  const FIELD_CLS = 'w-full text-xs rounded-lg border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300';
+  const LABEL_CLS = 'block text-xs font-semibold text-slate-600 mb-1';
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3" style={{ background: NAVY }}>
+          <div>
+            <h3 className="text-sm font-bold text-white">Agent Details</h3>
+            <span className="text-xs text-indigo-200">{data.length} agents</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
+              className="text-xs rounded-lg px-3 py-1.5 w-36 focus:outline-none bg-white/20 text-white placeholder-indigo-200 border border-white/30" />
+            {isSuperAdmin && (
+              <button onClick={openAdd}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl text-white border border-white/30 hover:bg-white/20 transition">
+                + Add Agent
+              </button>
+            )}
+          </div>
+        </div>
+
+        {loading && (
+          <div className="flex items-center justify-center py-16">
+            <div className="h-8 w-8 border-4 rounded-full animate-spin" style={{ borderTopColor: NAVY, borderColor: '#E2E8F0' }} />
+          </div>
+        )}
+        {!loading && error && (
+          <div className="text-center py-12 text-red-500 text-sm font-semibold">{error}</div>
+        )}
+        {!loading && !error && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ background: '#EEF2FF' }}>
+                  {['#','Emp ID','Name','LOB','TL','DOJ','FHD','Tenure','Bucket','Status','DOL', ...(isSuperAdmin ? ['Actions'] : [])].map(h => (
+                    <th key={h} className="px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap text-left">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr><td colSpan={12} className="text-center py-10 text-slate-400">No agents found</td></tr>
+                ) : filtered.map((a, i) => (
+                  <tr key={a.id} className="border-t border-slate-50 hover:bg-slate-50/70 transition-colors">
+                    <td className="px-3 py-2.5 text-slate-400">{i + 1}</td>
+                    <td className="px-3 py-2.5 font-semibold text-slate-700 whitespace-nowrap">{a.empId}</td>
+                    <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap font-medium">{a.name}</td>
+                    <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{a.lob || '—'}</td>
+                    <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{a.tl || '—'}</td>
+                    <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{a.doj || '—'}</td>
+                    <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{a.fhd || '—'}</td>
+                    <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap" style={{ fontVariantNumeric: 'tabular-nums' }}>{a.tenure > 0 ? `${a.tenure}d` : '—'}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: '#EEF2FF', color: NAVY }}>{a.tenureBucket || '—'}</span>
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold text-white"
+                        style={{ background: a.status === 'Active' ? '#10B981' : '#EF4444' }}>{a.status}</span>
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{a.dol || '—'}</td>
+                    {isSuperAdmin && (
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <button onClick={() => openEdit(a)}
+                            className="px-2 py-1 rounded-lg text-[10px] font-semibold border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition">
+                            Edit
+                          </button>
+                          <button onClick={() => setDeleteId(a.id)}
+                            className="px-2 py-1 rounded-lg text-[10px] font-semibold border border-red-200 text-red-600 hover:bg-red-50 transition">
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Add / Edit Modal */}
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+             style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+            <div className="flex items-center justify-between px-6 py-4" style={{ background: NAVY, borderRadius: '1rem 1rem 0 0' }}>
+              <h3 className="font-bold text-white text-sm">{editAgent ? 'Edit Agent' : 'Add Agent'}</h3>
+              <button onClick={() => setModalOpen(false)} className="p-1.5 rounded-xl text-white/70 hover:text-white hover:bg-white/20 transition">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-6 space-y-3 overflow-y-auto" style={{ maxHeight: '70vh' }}>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={LABEL_CLS}>Emp ID *</label>
+                  <input className={FIELD_CLS} value={form.emp_id} onChange={e => setForm(f => ({ ...f, emp_id: e.target.value }))} placeholder="EMP001" />
+                </div>
+                <div>
+                  <label className={LABEL_CLS}>DialDesk ID</label>
+                  <input className={FIELD_CLS} value={form.daildesk_id} onChange={e => setForm(f => ({ ...f, daildesk_id: e.target.value }))} placeholder="DialDesk-EMP001" />
+                </div>
+                <div className="col-span-2">
+                  <label className={LABEL_CLS}>Name *</label>
+                  <input className={FIELD_CLS} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Full Name" />
+                </div>
+                <div>
+                  <label className={LABEL_CLS}>LOB</label>
+                  <input className={FIELD_CLS} value={form.lob} onChange={e => setForm(f => ({ ...f, lob: e.target.value }))} placeholder="Line of Business" />
+                </div>
+                <div>
+                  <label className={LABEL_CLS}>TL (Team Leader)</label>
+                  <input className={FIELD_CLS} value={form.tl} onChange={e => setForm(f => ({ ...f, tl: e.target.value }))} placeholder="TL Name" />
+                </div>
+                <div>
+                  <label className={LABEL_CLS}>DOJ (Date of Joining)</label>
+                  <input type="date" className={FIELD_CLS} value={form.doj} onChange={e => setForm(f => ({ ...f, doj: e.target.value }))} />
+                </div>
+                <div>
+                  <label className={LABEL_CLS}>FHD (First Handling Date)</label>
+                  <input type="date" className={FIELD_CLS} value={form.fhd} onChange={e => setForm(f => ({ ...f, fhd: e.target.value }))} />
+                </div>
+                <div>
+                  <label className={LABEL_CLS}>Status</label>
+                  <select className={FIELD_CLS} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={LABEL_CLS}>DOL (Date of Leaving)</label>
+                  <input type="date" className={FIELD_CLS} value={form.dol} onChange={e => setForm(f => ({ ...f, dol: e.target.value }))} />
+                </div>
+              </div>
+              {/* Auto-calculated Tenure Preview */}
+              {form.doj && (
+                <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: '#EEF2FF' }}>
+                  <div className="flex-1">
+                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-0.5">Auto-calculated Tenure</p>
+                    <p className="text-sm font-black" style={{ color: NAVY }}>{tenurePreview.days} days</p>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-0.5">Tenure Bucket</p>
+                    <p className="text-sm font-black" style={{ color: NAVY }}>{tenurePreview.bucket}</p>
+                  </div>
+                  <div className="text-[9px] text-slate-400 text-right leading-tight">
+                    {form.dol ? 'DOJ → DOL' : 'DOJ → Today'}
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-2 pt-1">
+                <button onClick={() => setModalOpen(false)}
+                  className="flex-1 py-2.5 text-sm font-semibold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+                  Cancel
+                </button>
+                <button onClick={handleSave} disabled={saving}
+                  className="flex-1 py-2.5 text-sm font-semibold rounded-xl text-white transition disabled:opacity-60 flex items-center justify-center gap-1.5"
+                  style={{ background: NAVY }}>
+                  {saving ? <RefreshCw size={14} className="animate-spin" /> : null}
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation */}
+      {deleteId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+             style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
+            <div className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3" style={{ background: '#FEF2F2' }}>
+              <X size={22} style={{ color: '#EF4444' }} />
+            </div>
+            <h3 className="font-bold text-slate-800 mb-1">Delete Agent?</h3>
+            <p className="text-sm text-slate-500 mb-5">This action cannot be undone.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteId(null)}
+                className="flex-1 py-2.5 text-sm font-semibold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+                Cancel
+              </button>
+              <button onClick={handleDelete} disabled={deleting}
+                className="flex-1 py-2.5 text-sm font-semibold rounded-xl text-white transition disabled:opacity-60 flex items-center justify-center gap-1.5"
+                style={{ background: '#EF4444' }}>
+                {deleting ? <RefreshCw size={14} className="animate-spin" /> : null}
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
-type Tab       = 'overall' | 'agent' | 'apr' | 'snap';
+type Tab       = 'overall' | 'agent' | 'apr' | 'snap' | 'agentdetails';
 type ExpandKey = 'conversion' | 'revenue' | 'saleCount' | 'achievement' | 'agentRevenue' | 'agentCodPaid' |
                  'aprCalls' | 'aprOccu' | 'aprLob' | 'aprAcht' | null;
 
@@ -1050,6 +1367,11 @@ export default function NeemansDashboard() {
   const [snapData,    setSnapData]    = useState<SnapDataType | null>(null);
   const [snapLoading, setSnapLoading] = useState(false);
   const [snapError,   setSnapError]   = useState<string | null>(null);
+
+  // Agent Details tab state
+  const [agentDetailsList,    setAgentDetailsList]    = useState<NmsAgent[]>([]);
+  const [agentDetailsLoading, setAgentDetailsLoading] = useState(false);
+  const [agentDetailsError,   setAgentDetailsError]   = useState<string | null>(null);
 
   // Export modal
   const [exportModal,   setExportModal]  = useState<ExportType | null>(null);
@@ -1104,6 +1426,18 @@ export default function NeemansDashboard() {
   useEffect(() => {
     if (tab === 'snap') fetchSnapData(snapMonth);
   }, [tab, snapMonth]);
+
+  function fetchAgentDetails() {
+    setAgentDetailsLoading(true); setAgentDetailsError(null);
+    api.get('/sales/nms-agent-details')
+      .then(r => setAgentDetailsList(r.data?.data ?? []))
+      .catch(err => setAgentDetailsError(err?.response?.data?.message || err?.message || 'Failed'))
+      .finally(() => setAgentDetailsLoading(false));
+  }
+
+  useEffect(() => {
+    if (tab === 'agentdetails') fetchAgentDetails();
+  }, [tab]);
 
   async function handleSaleRawExport(start: string, end: string) {
     const res  = await api.get('/sales/neemans-sale-raw-export', { params: { startDate: start, endDate: end } });
@@ -1168,6 +1502,14 @@ export default function NeemansDashboard() {
         </div>
         <div className="flex items-center gap-1.5 flex-wrap justify-end flex-1">
           {(() => {
+            if (tab === 'agentdetails') {
+              return (
+                <button onClick={fetchAgentDetails} disabled={agentDetailsLoading}
+                  className="p-2 rounded-xl border border-white/30 text-white/80 hover:bg-white/20 transition disabled:opacity-50">
+                  <RefreshCw size={15} className={agentDetailsLoading ? 'animate-spin' : ''} />
+                </button>
+              );
+            }
             const activeRange   = tab === 'overall' ? monthToRange(month)
                                 : tab === 'agent'   ? agentRange
                                 : tab === 'snap'    ? monthToRange(snapMonth)
@@ -1225,7 +1567,7 @@ export default function NeemansDashboard() {
 
       {/* ── Tab Switcher ── */}
       <div className="flex gap-1 p-1 rounded-xl w-fit" style={{ background: '#EEF2FF' }}>
-        {([['overall', 'Overall'], ['agent', 'Agent-wise'], ['apr', 'APR'], ['snap', 'ABC Cart Snap']] as [Tab, string][]).map(([t, label]) => (
+        {([['overall', 'Overall'], ['agent', 'Agent-wise'], ['apr', 'APR'], ['snap', 'ABC Cart Snap'], ['agentdetails', 'Agent Details']] as [Tab, string][]).map(([t, label]) => (
           <button key={t} onClick={() => setTab(t)}
             className="px-4 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all"
             style={tab === t
@@ -1316,24 +1658,24 @@ export default function NeemansDashboard() {
       )}
 
       {/* ── Overall loading / error (only for overall / agent tabs) ── */}
-      {tab !== 'apr' && tab !== 'snap' && loading && (
+      {tab !== 'apr' && tab !== 'snap' && tab !== 'agentdetails' && loading && (
         <div className="flex items-center justify-center py-28">
           <div className="h-10 w-10 border-4 rounded-full animate-spin" style={{ borderTopColor: NAVY, borderColor: '#E2E8F0', borderTopWidth: 4 }} />
         </div>
       )}
-      {tab !== 'apr' && tab !== 'snap' && !loading && error && (
+      {tab !== 'apr' && tab !== 'snap' && tab !== 'agentdetails' && !loading && error && (
         <div className="text-center py-28">
           <p className="text-red-500 font-semibold text-sm">{error}</p>
           <button onClick={() => fetchMain(month)} className="mt-3 text-xs text-slate-500 underline">Retry</button>
         </div>
       )}
 
-      {tab !== 'apr' && tab !== 'snap' && !loading && !error && data && (
+      {tab !== 'apr' && tab !== 'snap' && tab !== 'agentdetails' && !loading && !error && data && (
         <>
           {/* ════════════ OVERALL TAB ════════════ */}
           {tab === 'overall' && (
             <>
-              <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-9 gap-2">
                 <KpiCard label="Workable Data"  value={fmtNum(k!.workable)}       sub="Allocation"
                   icon={Users}       color={G}        gradient="linear-gradient(135deg,#F0FAF4,#D8F3DC)" />
                 <KpiCard label="Connected %"    value={fmtPct(k!.connectedPct)}   sub={`${fmtNum(k!.connected)} calls`}
@@ -1352,6 +1694,8 @@ export default function NeemansDashboard() {
                   icon={CreditCard}  color={PAY_C}   gradient="linear-gradient(135deg,#ECFEFF,#A5F3FC)" />
                 <KpiCard label="COD %"          value={fmtPct(k!.codPct)}         sub="Of total orders"
                   icon={Wallet}      color={COD_C}   gradient="linear-gradient(135deg,#FFF7ED,#FED7AA)" />
+                <KpiCard label="RTO %"          value={fmtPct(k!.rtoPct)}         sub={`${fmtNum(k!.rtoCount)} orders`}
+                  icon={TrendingUp}  color="#EF4444" gradient="linear-gradient(135deg,#FEF2F2,#FECACA)" />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-5">
@@ -1434,6 +1778,16 @@ export default function NeemansDashboard() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Agent Details TAB ── */}
+      {tab === 'agentdetails' && (
+        <AgentDetailsTab
+          data={agentDetailsList}
+          loading={agentDetailsLoading}
+          error={agentDetailsError}
+          onRefresh={fetchAgentDetails}
+        />
       )}
 
       {/* ── Expand Modal ── */}
