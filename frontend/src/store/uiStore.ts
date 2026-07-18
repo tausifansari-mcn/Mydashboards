@@ -5,6 +5,9 @@ interface UIState {
   sidebarExpanded: boolean;
   toggleSidebar: () => void;
   setSidebar: (val: boolean) => void;
+  mobileOpen: boolean;
+  toggleMobile: () => void;
+  closeMobile: () => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -13,7 +16,13 @@ export const useUIStore = create<UIState>()(
       sidebarExpanded: true,
       toggleSidebar: () => set((s) => ({ sidebarExpanded: !s.sidebarExpanded })),
       setSidebar: (val) => set({ sidebarExpanded: val }),
+      mobileOpen: false,
+      toggleMobile: () => set((s) => ({ mobileOpen: !s.mobileOpen })),
+      closeMobile: () => set({ mobileOpen: false }),
     }),
-    { name: 'md-ui' }
+    {
+      name: 'md-ui',
+      partialize: (state) => ({ sidebarExpanded: state.sidebarExpanded }),
+    }
   )
 );

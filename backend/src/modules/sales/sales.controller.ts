@@ -818,3 +818,152 @@ export async function getBellavitaDashboard(req: Request, res: Response) {
     res.status(500).json({ success: false, message: 'Failed to fetch Bellavita dashboard' });
   }
 }
+
+// ─── APR date / time helpers ──────────────────────────────────────────────────
+
+const APR_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function aprDate(v: any): string {
+  if (v == null) return '';
+  const s = String(v).trim();
+  if (!s) return '';
+  const n = Number(s);
+  // Excel serial date (>= 40000 → year 2009+)
+  if (!isNaN(n) && isFinite(n) && n >= 40000) {
+    const d = new Date(Math.round((n - 25569) * 86400000));
+    return `${String(d.getUTCDate()).padStart(2,'0')}-${APR_MON[d.getUTCMonth()]}-${d.getUTCFullYear()}`;
+  }
+  // "1-Jul-26" → "01-Jul-2026"
+  const short = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
+  if (short) {
+    const yr = short[3].length === 2 ? `20${short[3]}` : short[3];
+    return `${short[1].padStart(2,'0')}-${short[2]}-${yr}`;
+  }
+  // ISO "2026-07-01" → "01-Jul-2026"
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return `${iso[3]}-${APR_MON[parseInt(iso[2]) - 1]}-${iso[1]}`;
+  return s;
+}
+
+function aprTime(v: any): string {
+  if (v == null) return '0:00:00';
+  const s = String(v).trim();
+  if (!s) return '0:00:00';
+  const n = Number(s);
+  // Excel time fraction or datetime serial — extract fractional (time) part
+  if (!isNaN(n) && isFinite(n)) {
+    const frac   = n - Math.floor(n);          // time portion (0 to <1)
+    const totalS = Math.round(frac * 86400);
+    const h      = Math.floor(totalS / 3600);
+    const m      = Math.floor((totalS % 3600) / 60);
+    const sec    = totalS % 60;
+    return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  }
+  // Already a "H:MM:SS" string — normalise "9:18:35" → keep as-is
+  return s;
+}
+
+// ─── Neemans APR Upload ───────────────────────────────────────────────────────
+
+export async function uploadNeemansApr(req: Request, res: Response) {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'User not authenticated' });
+
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rawRows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, { header: 1, defval: null, blankrows: false });
+
+    // Skip header row
+    const dataRows = rawRows.slice(1).filter(r => r.some(c => c != null && String(c).trim() !== ''));
+
+    const str = (v: any) => (v == null ? '' : String(v).trim());
+    const num = (v: any) => { const n = parseFloat(String(v ?? '')); return isNaN(n) ? 0 : n; };
+
+    const mapped: svc.NeemansAprRow[] = dataRows.map(r => ({
+      uniqueId:     str(r[0]),
+      week:         str(r[1]),
+      date:         aprDate(r[2]),          // Excel date serial → DD-MMM-YYYY
+      empName:      str(r[3]),
+      empId:        str(r[4]),
+      calls:        Math.round(num(r[5])),
+      ucaOb:        Math.round(num(r[6])),
+      lob:          str(r[7]),
+      loginTime:    aprTime(r[8]),          // Excel time fraction → H:MM:SS
+      parks:        Math.round(num(r[9])),
+      parkTime:     aprTime(r[10]),
+      avgPark:      aprTime(r[11]),
+      parksPerCall: num(r[12]),
+      wait:         aprTime(r[13]),
+      talk:         aprTime(r[14]),
+      dispo:        aprTime(r[15]),
+      pause:        aprTime(r[16]),
+      loginTs:      aprTime(r[17]),         // clock-in time (fraction of day)
+      logoutTs:     aprTime(r[18]),         // clock-out time
+      acht:         Math.round(num(r[19])),
+      teamBriefing: aprTime(r[20]),
+      lunch:        aprTime(r[21]),
+      tea:          aprTime(r[22]),
+      tea1:         aprTime(r[23]),
+      washr:        aprTime(r[24]),
+      totalBreak:   aprTime(r[25]),
+      netLogin:     aprTime(r[26]),
+      occuPct:      (() => { const n = num(r[27]); return (n > 0 && n < 2) ? Math.round(n * 10000) / 100 : n; })(),
+      weekShort:    str(r[28]),
+      mtd:          str(r[29]),
+      attendance:   Math.round(num(r[30])),
+      capping:      aprTime(r[31]),         // capping is a duration like "8:00:00"
+    }));
+
+    const batchId = svc.generateBatchId();
+    const inserted = await svc.uploadNeemansApr(mapped, userId, batchId);
+    await svc.logUpload(batchId, 'neemans_apr', req.file.originalname, inserted, userId);
+    res.json({ success: true, data: { rowsInserted: inserted, totalRows: mapped.length, batchId } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('uploadNeemansApr error:', msg);
+    res.status(500).json({ success: false, message: `Upload failed: ${msg}` });
+  }
+}
+
+// ─── Neemans APR Dashboard ────────────────────────────────────────────────────
+
+export async function getNeemansAprDashboard(req: Request, res: Response) {
+  try {
+    const { startDate, endDate } = requireDateRange(req);
+    const data = await svc.getNeemansAprDashboard(startDate, endDate);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[neemans-apr-dashboard] error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch APR dashboard' });
+  }
+}
+
+// ─── Neemans APR Export ───────────────────────────────────────────────────────
+
+export async function getNeemansAprExport(req: Request, res: Response) {
+  try {
+    const { startDate, endDate } = requireDateRange(req);
+    const rows = await svc.getNeemansAprExport(startDate, endDate);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('[neemans-apr-export] error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch APR export' });
+  }
+}
+
+// ─── ABC Cart Snap ─────────────────────────────────────────────────────────────
+
+export async function getAbcCartSnap(req: Request, res: Response) {
+  try {
+    const now = new Date();
+    const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const month = String(req.query.month || defaultMonth);
+    const data = await svc.getAbcCartSnap(month);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[abc-cart-snap] error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch ABC Cart Snap' });
+  }
+}

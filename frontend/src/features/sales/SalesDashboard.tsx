@@ -13,13 +13,14 @@ import GncAllocationUpload from './GncAllocationUpload';
 import NeemansCartUpload from './NeemansCartUpload';
 import NeemansSaleUpload from './NeemansSaleUpload';
 import NeemansAllocationUpload from './NeemansAllocationUpload';
+import NeemansAprUpload from './NeemansAprUpload';
 import NeemansDashboard from './NeemansDashboard';
 
 type Brand = 'bellavita' | 'gnc' | 'neemans';
 type Section = 'dashboards' | 'uploader';
 type BellavitaUploadType = 'sale' | 'apr' | 'chat' | 'cart';
 type GncUploadType = 'sale' | 'apr' | 'allocation';
-type NeemansUploadType = 'cart' | 'sale' | 'allocation';
+type NeemansUploadType = 'cart' | 'sale' | 'allocation' | 'apr';
 
 const BRAND_THEMES: Record<Brand, { color: string; lightBg: string; label: string }> = {
   bellavita: { color: '#1A1A1A', lightBg: '#F0F0F0', label: 'Bellavita' },
@@ -55,6 +56,7 @@ const NEEMANS_UPLOAD_TYPES: { key: NeemansUploadType; label: string; desc: strin
   { key: 'sale',       label: 'Sale Raw Data',   desc: 'Upload Neemans raw sale records' },
   { key: 'allocation', label: 'Allocation Data', desc: 'Upload Neemans allocation / calling data' },
   { key: 'cart',       label: 'Cart Data',       desc: 'Upload Neemans cart / abandoned cart data' },
+  { key: 'apr',        label: 'APR Data',        desc: 'Upload Neemans Agent Performance Report' },
 ];
 
 const BrandAccentCtx = createContext('#10B981');
@@ -119,7 +121,7 @@ export default function SalesDashboard() {
   }
 
   return (
-    <div className="min-h-screen p-6 max-w-7xl mx-auto">
+    <div className="min-h-screen p-3 sm:p-6 max-w-7xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl"
              style={{ backgroundColor: lightBg }}>
@@ -268,6 +270,7 @@ export default function SalesDashboard() {
         {brand === 'neemans'   && section === 'uploader' && neemansUploadType === 'cart'       && <div className="mt-6"><NeemansCartUpload /></div>}
         {brand === 'neemans'   && section === 'uploader' && neemansUploadType === 'sale'       && <div className="mt-6"><NeemansSaleUpload /></div>}
         {brand === 'neemans'   && section === 'uploader' && neemansUploadType === 'allocation' && <div className="mt-6"><NeemansAllocationUpload /></div>}
+        {brand === 'neemans'   && section === 'uploader' && neemansUploadType === 'apr'        && <div className="mt-6"><NeemansAprUpload /></div>}
       </BrandAccentCtx.Provider>
 
       {/* Dashboards */}

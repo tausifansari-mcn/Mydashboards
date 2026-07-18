@@ -63,6 +63,52 @@ export async function initNeemansTables(): Promise<void> {
     await pool.execute(`
       INSERT IGNORE INTO db_masmis.neemans_month_targets (month, target) VALUES ('2026-06', 6774194)
     `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.neemans_apr (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        unique_id VARCHAR(100), week VARCHAR(100), date VARCHAR(100),
+        emp_name VARCHAR(200), emp_id VARCHAR(100), calls INT DEFAULT 0,
+        uca_ob INT DEFAULT 0, lob VARCHAR(200),
+        login_time VARCHAR(100), parks INT DEFAULT 0,
+        park_time VARCHAR(100), avg_park VARCHAR(100), parks_per_call DECIMAL(8,2),
+        wait VARCHAR(100), talk VARCHAR(100), dispo VARCHAR(100), pause VARCHAR(100),
+        login_ts VARCHAR(100), logout_ts VARCHAR(100), acht INT DEFAULT 0,
+        team_briefing VARCHAR(100), lunch VARCHAR(100), tea VARCHAR(100),
+        tea1 VARCHAR(100), washr VARCHAR(100), total_break VARCHAR(100),
+        net_login VARCHAR(100), occu_pct DECIMAL(6,2),
+        week_short VARCHAR(100), mtd VARCHAR(100),
+        attendance INT DEFAULT 0, capping VARCHAR(100),
+        uploaded_by INT, upload_batch_id VARCHAR(36),
+        inserted_at DATETIME DEFAULT NOW()
+      )
+    `);
+    // Widen VARCHAR columns on existing table (safe to run even if already wide)
+    await pool.execute(`
+      ALTER TABLE db_masmis.neemans_apr
+        MODIFY COLUMN week VARCHAR(100),
+        MODIFY COLUMN date VARCHAR(100),
+        MODIFY COLUMN emp_id VARCHAR(100),
+        MODIFY COLUMN lob VARCHAR(200),
+        MODIFY COLUMN login_time VARCHAR(100),
+        MODIFY COLUMN park_time VARCHAR(100),
+        MODIFY COLUMN avg_park VARCHAR(100),
+        MODIFY COLUMN wait VARCHAR(100),
+        MODIFY COLUMN talk VARCHAR(100),
+        MODIFY COLUMN dispo VARCHAR(100),
+        MODIFY COLUMN pause VARCHAR(100),
+        MODIFY COLUMN login_ts VARCHAR(100),
+        MODIFY COLUMN logout_ts VARCHAR(100),
+        MODIFY COLUMN team_briefing VARCHAR(100),
+        MODIFY COLUMN lunch VARCHAR(100),
+        MODIFY COLUMN tea VARCHAR(100),
+        MODIFY COLUMN tea1 VARCHAR(100),
+        MODIFY COLUMN washr VARCHAR(100),
+        MODIFY COLUMN total_break VARCHAR(100),
+        MODIFY COLUMN net_login VARCHAR(100),
+        MODIFY COLUMN week_short VARCHAR(100),
+        MODIFY COLUMN mtd VARCHAR(100),
+        MODIFY COLUMN capping VARCHAR(100)
+    `);
   } catch (err) {
     console.error('[sales] initNeemansTables warning:', (err as Error).message);
   }
@@ -1332,4 +1378,471 @@ export async function deleteUploadBatch(batchId: string, tableName: string): Pro
     'DELETE FROM db_masmis.upload_log WHERE batch_id = ?', [batchId],
   );
   return { deleted: (dataResult as mysql.ResultSetHeader).affectedRows };
+}
+
+// ─── Neemans APR Upload ────────────────────────────────────────────────────────
+
+export interface NeemansAprRow {
+  uniqueId: string; week: string; date: string; empName: string; empId: string;
+  calls: number; ucaOb: number; lob: string; loginTime: string;
+  parks: number; parkTime: string; avgPark: string; parksPerCall: number;
+  wait: string; talk: string; dispo: string; pause: string;
+  loginTs: string; logoutTs: string; acht: number;
+  teamBriefing: string; lunch: string; tea: string; tea1: string;
+  washr: string; totalBreak: string; netLogin: string;
+  occuPct: number; weekShort: string; mtd: string;
+  attendance: number; capping: string;
+}
+
+export async function uploadNeemansApr(rows: NeemansAprRow[], uploadedBy: number, batchId: string): Promise<number> {
+  const sql = `INSERT INTO db_masmis.neemans_apr (
+    unique_id, week, date, emp_name, emp_id, calls, uca_ob, lob,
+    login_time, parks, park_time, avg_park, parks_per_call,
+    wait, talk, dispo, pause, login_ts, logout_ts, acht,
+    team_briefing, lunch, tea, tea1, washr, total_break, net_login,
+    occu_pct, week_short, mtd, attendance, capping,
+    uploaded_by, upload_batch_id
+  ) VALUES ?`;
+  const values = rows.map(r => [
+    r.uniqueId, r.week, r.date, r.empName, r.empId,
+    r.calls || 0, r.ucaOb || 0, r.lob, r.loginTime,
+    r.parks || 0, r.parkTime, r.avgPark, r.parksPerCall || 0,
+    r.wait, r.talk, r.dispo, r.pause, r.loginTs, r.logoutTs,
+    r.acht || 0, r.teamBriefing, r.lunch, r.tea, r.tea1,
+    r.washr, r.totalBreak, r.netLogin, r.occuPct || 0,
+    r.weekShort, r.mtd, r.attendance || 0, r.capping,
+    uploadedBy, batchId,
+  ]);
+  const [result] = await getMasmisPool().query(sql, [values]);
+  return (result as mysql.ResultSetHeader).affectedRows;
+}
+
+// ─── Neemans APR Dashboard ─────────────────────────────────────────────────────
+
+function hmsToSec(hms: string): number {
+  if (!hms) return 0;
+  const parts = String(hms).split(':').map(Number);
+  if (parts.length === 3) return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
+  if (parts.length === 2) return (parts[0] || 0) * 60 + (parts[1] || 0);
+  return 0;
+}
+
+function secToHms(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+export async function getNeemansAprDashboard(startDate: string, endDate: string) {
+  const [rows] = await getMasmisPool().execute(`
+    SELECT
+      emp_name, emp_id, lob, week_short, date,
+      SUM(calls) AS total_calls,
+      SUM(uca_ob) AS total_uca,
+      SUM(parks) AS total_parks,
+      SUM(attendance) AS attendance,
+      AVG(CASE WHEN occu_pct > 0 AND occu_pct < 2 THEN occu_pct * 100 ELSE occu_pct END) AS avg_occu,
+      AVG(acht) AS avg_acht,
+      SUM(calls) AS calls,
+      MIN(login_ts) AS first_login_raw,
+      MAX(logout_ts) AS last_logout_raw,
+      wait, talk, dispo, pause, net_login, total_break, lunch, capping
+    FROM db_masmis.neemans_apr
+    WHERE (? = '' OR ? = '') OR COALESCE(
+        STR_TO_DATE(date, '%d-%b-%Y'),
+        STR_TO_DATE(date, '%d-%b-%y'),
+        STR_TO_DATE(date, '%Y-%m-%d')
+      ) BETWEEN ? AND ?
+    GROUP BY emp_name, emp_id, lob, week_short, date, wait, talk, dispo, pause, net_login, total_break, lunch, capping
+    ORDER BY date ASC, emp_name ASC
+  `, [startDate, endDate, startDate, endDate]);
+
+  const agentMap = new Map<string, {
+    empName: string; empId: string; lob: string;
+    totalCalls: number; totalUca: number;
+    totalTalkSec: number; totalWaitSec: number; totalPauseSec: number;
+    totalNetLoginSec: number; totalBreakSec: number;
+    totalAcht: number; ashtCount: number;
+    totalOccu: number; occuCount: number;
+    attendance: number;
+    minLoginSec: number; maxLogoutSec: number;
+  }>();
+
+  const dateMap = new Map<string, { date: string; calls: number; agents: number }>();
+  const lobMap  = new Map<string, number>();
+
+  for (const r of rows as any[]) {
+    const key = String(r.emp_id || r.emp_name);
+    const date = String(r.date);
+
+    // Agent aggregation
+    if (!agentMap.has(key)) {
+      agentMap.set(key, {
+        empName: String(r.emp_name), empId: String(r.emp_id), lob: String(r.lob || ''),
+        totalCalls: 0, totalUca: 0, totalTalkSec: 0, totalWaitSec: 0, totalPauseSec: 0,
+        totalNetLoginSec: 0, totalBreakSec: 0, totalAcht: 0, ashtCount: 0,
+        totalOccu: 0, occuCount: 0, attendance: 0,
+        minLoginSec: Infinity, maxLogoutSec: 0,
+      });
+    }
+    const a = agentMap.get(key)!;
+    a.totalCalls += Number(r.total_calls) || 0;
+    a.totalUca   += Number(r.total_uca)   || 0;
+    a.attendance += Number(r.attendance)  || 0;
+    a.totalTalkSec  += hmsToSec(String(r.talk  || '0:00:00'));
+    a.totalWaitSec  += hmsToSec(String(r.wait  || '0:00:00'));
+    a.totalPauseSec += hmsToSec(String(r.pause || '0:00:00'));
+    a.totalNetLoginSec += hmsToSec(String(r.net_login   || '0:00:00'));
+    a.totalBreakSec    += hmsToSec(String(r.total_break || '0:00:00'));
+    if (r.avg_acht) { a.totalAcht += Number(r.avg_acht); a.ashtCount++; }
+    if (r.avg_occu != null) { a.totalOccu += Number(r.avg_occu); a.occuCount++; }
+    const loginSec  = hmsToSec(String(r.first_login_raw  || '0:00:00'));
+    const logoutSec = hmsToSec(String(r.last_logout_raw  || '0:00:00'));
+    if (loginSec  > 0 && loginSec  < a.minLoginSec)  a.minLoginSec  = loginSec;
+    if (logoutSec > 0 && logoutSec > a.maxLogoutSec) a.maxLogoutSec = logoutSec;
+
+    // Date aggregation
+    if (!dateMap.has(date)) dateMap.set(date, { date, calls: 0, agents: 0 });
+    const d = dateMap.get(date)!;
+    d.calls  += Number(r.total_calls) || 0;
+    d.agents += 1;
+
+    // LOB aggregation
+    const lob = String(r.lob || 'Unknown');
+    lobMap.set(lob, (lobMap.get(lob) || 0) + (Number(r.total_calls) || 0));
+  }
+
+  const agentRows = [...agentMap.values()].map(a => ({
+    empName:    a.empName,
+    empId:      a.empId,
+    lob:        a.lob,
+    calls:      a.totalCalls,
+    uca:        a.totalUca,
+    attendance: a.attendance,
+    talk:       secToHms(a.totalTalkSec),
+    wait:       secToHms(a.totalWaitSec),
+    pause:      secToHms(a.totalPauseSec),
+    netLogin:   secToHms(a.totalNetLoginSec),
+    totalBreak: secToHms(a.totalBreakSec),
+    avgAcht:    a.ashtCount > 0 ? Math.round(a.totalAcht / a.ashtCount) : 0,
+    avgOccu:    a.occuCount > 0 ? Math.round((a.totalOccu / a.occuCount) * 10) / 10 : 0,
+    firstLogin:  a.minLoginSec  < Infinity ? secToHms(a.minLoginSec)  : '-',
+    lastLogout:  a.maxLogoutSec > 0        ? secToHms(a.maxLogoutSec) : '-',
+  })).sort((a, b) => b.calls - a.calls);
+
+  const dateRows = [...dateMap.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const lobRows  = [...lobMap.entries()].map(([lob, calls]) => ({ lob, calls })).sort((a, b) => b.calls - a.calls);
+
+  // KPIs
+  const totalCalls    = agentRows.reduce((s, r) => s + r.calls, 0);
+  const totalAgents   = agentRows.length;
+  const avgOccu       = agentRows.length > 0
+    ? Math.round(agentRows.reduce((s, r) => s + r.avgOccu, 0) / agentRows.length * 10) / 10 : 0;
+  const avgAcht       = agentRows.length > 0
+    ? Math.round(agentRows.reduce((s, r) => s + r.avgAcht, 0) / agentRows.length) : 0;
+  const totalAttendance = agentRows.reduce((s, r) => s + r.attendance, 0);
+
+  return { kpis: { totalCalls, totalAgents, avgOccu, avgAcht, totalAttendance }, agentRows, dateRows, lobRows };
+}
+
+// ─── ABC Cart Snap ─────────────────────────────────────────────────────────────
+
+export async function getAbcCartSnap(yyyyMm: string) {
+  const [y, m] = yyyyMm.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const toSerial = (day: number) => Math.floor(Date.UTC(y, m - 1, day) / 86400000) + 25569;
+  const startSerial = toSerial(1);
+  const endSerial   = toSerial(daysInMonth);
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const startDateStr = `${y}-${pad2(m)}-01`;
+  const endDateStr   = `${y}-${pad2(m)}-${pad2(daysInMonth)}`;
+  const pool = getMasmisPool();
+  const MON  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // SQL helper: HH:MM:SS string column → total seconds
+  const toSecs = (col: string) =>
+    `(CAST(SUBSTRING_INDEX(${col},':',1) AS UNSIGNED)*3600` +
+    `+CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(${col},':',2),':',-1) AS UNSIGNED)*60` +
+    `+CAST(SUBSTRING_INDEX(${col},':',-1) AS UNSIGNED))`;
+
+  const [[allocRows],[saleRows],[aprCallRows],[aprAdvRows],[dispRows],[niRows],[niwpRows],[targetRows],[delivRows]] =
+    await Promise.all([
+      pool.query(`
+        SELECT CAST(date AS UNSIGNED) AS serial,
+          COUNT(CASE WHEN calling_status IN ('Connected','Not Connected','Pending To Call') THEN 1 END) AS workable,
+          COUNT(CASE WHEN calling_status IN ('Connected','Not Connected') THEN 1 END)                   AS attempted,
+          COUNT(CASE WHEN calling_status='Connected' THEN 1 END)                                        AS connected
+        FROM db_masmis.neemans_allocation
+        WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ? AND CAST(date AS UNSIGNED)>0
+        GROUP BY serial`, [startSerial, endSerial]),
+
+      pool.query(`
+        SELECT CAST(date AS UNSIGNED) AS serial,
+          COUNT(CASE WHEN status='Sale Made' THEN 1 END)                                                        AS sale_count,
+          COALESCE(SUM(CASE WHEN status IN ('Sale Made','PTP') THEN COALESCE(line_item_qty,0) END),0)           AS line_items,
+          COUNT(CASE WHEN status='PTP' THEN 1 END)                                                              AS ptp_count,
+          COALESCE(SUM(CASE WHEN status='PTP'       THEN COALESCE(amount,0) END),0)                            AS ptp_revenue,
+          COALESCE(SUM(CASE WHEN status='Sale Made' THEN COALESCE(amount,0) END),0)                            AS revenue,
+          COUNT(CASE WHEN status='Sale Made' AND UPPER(TRIM(payment_status))='COD' THEN 1 END)                  AS cod_count,
+          COUNT(CASE WHEN status='Sale Made' AND UPPER(TRIM(payment_status)) NOT IN ('COD','') THEN 1 END)      AS prepaid_count
+        FROM db_masmis.neemans_sale_raw
+        WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ? AND CAST(date AS UNSIGNED)>0
+        GROUP BY serial`, [startSerial, endSerial]),
+
+      pool.query(`
+        SELECT COALESCE(STR_TO_DATE(date,'%d-%b-%Y'),STR_TO_DATE(date,'%d-%b-%y'),STR_TO_DATE(date,'%Y-%m-%d')) AS day_date,
+          SUM(calls) AS total_calls, COUNT(DISTINCT emp_id) AS agent_count
+        FROM db_masmis.neemans_apr
+        WHERE COALESCE(STR_TO_DATE(date,'%d-%b-%Y'),STR_TO_DATE(date,'%d-%b-%y'),STR_TO_DATE(date,'%Y-%m-%d')) BETWEEN ? AND ?
+        GROUP BY day_date`, [startDateStr, endDateStr]),
+
+      pool.query(`
+        SELECT COALESCE(STR_TO_DATE(date,'%d-%b-%Y'),STR_TO_DATE(date,'%d-%b-%y'),STR_TO_DATE(date,'%Y-%m-%d')) AS day_date,
+          SUM(COALESCE(attendance,1))                                                                             AS login_count,
+          SUM(calls)                                                                                              AS adv_calls,
+          SUM(${toSecs('talk')})                                                                                  AS talk_secs,
+          SUM(${toSecs('dispo')})                                                                                 AS wrap_secs,
+          SUM(${toSecs('wait')})                                                                                  AS idle_secs,
+          SUM(${toSecs('net_login')})                                                                             AS net_secs,
+          SUM((CASE WHEN occu_pct>0 AND occu_pct<2 THEN occu_pct*100 ELSE occu_pct END)*COALESCE(attendance,1)) AS w_occu,
+          SUM(COALESCE(acht,0)*COALESCE(attendance,1))                                                           AS w_aht
+        FROM db_masmis.neemans_apr
+        WHERE COALESCE(STR_TO_DATE(date,'%d-%b-%Y'),STR_TO_DATE(date,'%d-%b-%y'),STR_TO_DATE(date,'%Y-%m-%d')) BETWEEN ? AND ?
+        GROUP BY day_date`, [startDateStr, endDateStr]),
+
+      pool.query(`
+        SELECT CAST(date AS UNSIGNED) AS serial, COALESCE(sub_scenario1,'') AS name, COUNT(*) AS cnt
+        FROM db_masmis.neemans_allocation
+        WHERE calling_status='Connected' AND sub_scenario1 IS NOT NULL AND sub_scenario1!=''
+          AND CAST(date AS UNSIGNED) BETWEEN ? AND ? AND CAST(date AS UNSIGNED)>0
+        GROUP BY serial, sub_scenario1`, [startSerial, endSerial]),
+
+      pool.query(`
+        SELECT CAST(date AS UNSIGNED) AS serial, COALESCE(sub_scenario2,'Unknown') AS name, COUNT(*) AS cnt
+        FROM db_masmis.neemans_allocation
+        WHERE sub_scenario1='Not Interested'
+          AND CAST(date AS UNSIGNED) BETWEEN ? AND ? AND CAST(date AS UNSIGNED)>0
+        GROUP BY serial, sub_scenario2`, [startSerial, endSerial]),
+
+      pool.query(`
+        SELECT CAST(date AS UNSIGNED) AS serial, COALESCE(sub_scenario1,'Unknown') AS name, COUNT(*) AS cnt
+        FROM db_masmis.neemans_allocation
+        WHERE sub_scenario2='Not Interested-Without pitched'
+          AND CAST(date AS UNSIGNED) BETWEEN ? AND ? AND CAST(date AS UNSIGNED)>0
+        GROUP BY serial, sub_scenario1`, [startSerial, endSerial]),
+
+      pool.query(`SELECT target FROM db_masmis.neemans_month_targets WHERE month=? LIMIT 1`, [yyyyMm]),
+
+      pool.query(`
+        SELECT CAST(date AS UNSIGNED) AS serial,
+          COALESCE(NULLIF(TRIM(current_status),''), 'Unknown') AS deliv_status,
+          COUNT(*) AS cnt
+        FROM db_masmis.neemans_sale_raw
+        WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ? AND CAST(date AS UNSIGNED)>0
+        GROUP BY serial, deliv_status`, [startSerial, endSerial]),
+    ]) as any[];
+
+  // Build lookup maps
+  const allocMap = new Map<number, any>();
+  for (const r of allocRows as any[]) allocMap.set(Number(r.serial), r);
+
+  const saleMap = new Map<number, any>();
+  for (const r of saleRows as any[]) saleMap.set(Number(r.serial), r);
+
+  const aprCallMap = new Map<number, any>();
+  for (const r of aprCallRows as any[]) if (r.day_date) aprCallMap.set(new Date(r.day_date).getUTCDate(), r);
+
+  const aprAdvMap  = new Map<number, any>();
+  for (const r of aprAdvRows as any[]) if (r.day_date) aprAdvMap.set(new Date(r.day_date).getUTCDate(), r);
+
+  function buildDispMap(rows: any[]) {
+    const map = new Map<number, Map<string, number>>();
+    for (const r of rows) {
+      const s = Number(r.serial);
+      if (!map.has(s)) map.set(s, new Map());
+      map.get(s)!.set(String(r.name), Number(r.cnt || 0));
+    }
+    return map;
+  }
+  const connDispMap = buildDispMap(dispRows  as any[]);
+  const niMap       = buildDispMap(niRows    as any[]);
+  const niwpMap     = buildDispMap(niwpRows  as any[]);
+
+  // Delivery status map: serial → status → count
+  const delivMap = new Map<number, Record<string, number>>();
+  for (const r of delivRows as any[]) {
+    const s = Number(r.serial);
+    if (!delivMap.has(s)) delivMap.set(s, {});
+    delivMap.get(s)![String(r.deliv_status)] = Number(r.cnt || 0);
+  }
+
+  const totalTarget = Number((targetRows as any[])[0]?.target ?? 0);
+
+  // Per-day raw data
+  const days = Array.from({ length: daysInMonth }, (_, i) => {
+    const day    = i + 1;
+    const serial = toSerial(day);
+    const al = allocMap.get(serial)    || {};
+    const sl = saleMap.get(serial)     || {};
+    const ca = aprCallMap.get(day)     || {};
+    const ad = aprAdvMap.get(day)      || {};
+    return {
+      day, serial,
+      label: `${pad2(day)}-${MON[m-1]}-${String(y).slice(-2)}`,
+      delivCounts:  delivMap.get(serial) ?? {},
+      workable:     Number(al.workable     ?? 0),
+      attempted:    Number(al.attempted    ?? 0),
+      connected:    Number(al.connected    ?? 0),
+      totalCalls:   Number(ca.total_calls  ?? 0),
+      agentCount:   Number(ca.agent_count  ?? 0),
+      saleCount:    Number(sl.sale_count   ?? 0),
+      lineItems:    Number(sl.line_items   ?? 0),
+      ptpCount:     Number(sl.ptp_count    ?? 0),
+      ptpRevenue:   Number(sl.ptp_revenue  ?? 0),
+      revenue:      Number(sl.revenue      ?? 0),
+      codCount:     Number(sl.cod_count    ?? 0),
+      prepaidCount: Number(sl.prepaid_count ?? 0),
+      loginCount:   Number(ad.login_count  ?? 0),
+      advCalls:     Number(ad.adv_calls    ?? 0),
+      talkSecs:     Number(ad.talk_secs    ?? 0),
+      wrapSecs:     Number(ad.wrap_secs    ?? 0),
+      idleSecs:     Number(ad.idle_secs    ?? 0),
+      netSecs:      Number(ad.net_secs     ?? 0),
+      wOccu:        Number(ad.w_occu       ?? 0),
+      wAht:         Number(ad.w_aht        ?? 0),
+    };
+  });
+
+  const secsToHms = (s: number) => {
+    if (s <= 0) return '0:00:00';
+    const h = Math.floor(s / 3600), min = Math.floor((s % 3600) / 60), sec = Math.round(s % 60);
+    return `${h}:${pad2(min)}:${pad2(sec)}`;
+  };
+
+  function agg(slice: typeof days) {
+    const workable    = slice.reduce((s,d) => s+d.workable,   0);
+    const attempted   = slice.reduce((s,d) => s+d.attempted,  0);
+    const connected   = slice.reduce((s,d) => s+d.connected,  0);
+    const totalCalls  = slice.reduce((s,d) => s+d.totalCalls, 0);
+    const agentDays   = slice.reduce((s,d) => s+d.agentCount, 0);
+    const saleCount   = slice.reduce((s,d) => s+d.saleCount,  0);
+    const lineItems   = slice.reduce((s,d) => s+d.lineItems,  0);
+    const ptpCount    = slice.reduce((s,d) => s+d.ptpCount,   0);
+    const ptpRevenue  = slice.reduce((s,d) => s+d.ptpRevenue, 0);
+    const revenue     = slice.reduce((s,d) => s+d.revenue,    0);
+    const codCount    = slice.reduce((s,d) => s+d.codCount,   0);
+    const prepaid     = slice.reduce((s,d) => s+d.prepaidCount,0);
+    const loginCount  = slice.reduce((s,d) => s+d.loginCount, 0);
+    const advCalls    = slice.reduce((s,d) => s+d.advCalls,   0);
+    const talkSecs    = slice.reduce((s,d) => s+d.talkSecs,   0);
+    const wrapSecs    = slice.reduce((s,d) => s+d.wrapSecs,   0);
+    const idleSecs    = slice.reduce((s,d) => s+d.idleSecs,   0);
+    const netSecs     = slice.reduce((s,d) => s+d.netSecs,    0);
+    const wOccu       = slice.reduce((s,d) => s+d.wOccu,      0);
+    const wAht        = slice.reduce((s,d) => s+d.wAht,       0);
+    const target      = daysInMonth > 0 ? Math.round(totalTarget * slice.length / daysInMonth) : 0;
+    const r1 = (n: number) => Math.round(n * 10) / 10;
+    const totalSales  = saleCount;
+    return {
+      workable, attempted, connected,
+      connectedPct:    attempted  >0 ? r1(connected /attempted  *100) : 0,
+      callPerAgent:    agentDays  >0 ? Math.round(totalCalls/agentDays) : 0,
+      saleCount, lineItems, ptpCount, ptpRevenue,
+      conversionPct:   connected  >0 ? r1(saleCount /connected  *100) : 0,
+      revenue, target,
+      achievementPct:  target     >0 ? r1(revenue   /target     *100) : 0,
+      asp:             saleCount  >0 ? Math.round(revenue/saleCount)   : 0,
+      salePerAgent:    agentDays  >0 ? r1(saleCount /agentDays)        : 0,
+      revenuePerAgent: agentDays  >0 ? Math.round(revenue/agentDays)   : 0,
+      loginCount,
+      talktime:  secsToHms(loginCount>0 ? Math.round(talkSecs/loginCount) : 0),
+      wrap:      secsToHms(loginCount>0 ? Math.round(wrapSecs/loginCount) : 0),
+      idle:      secsToHms(loginCount>0 ? Math.round(idleSecs/loginCount) : 0),
+      netLogin:  secsToHms(loginCount>0 ? Math.round(netSecs /loginCount) : 0),
+      avgOccu:   loginCount>0 ? r1(wOccu/loginCount) : 0,
+      avgAht:    loginCount>0 ? Math.round(wAht/loginCount) : 0,
+      attemptPerAgent: loginCount>0 ? Math.round(advCalls/loginCount) : 0,
+      totalSales, codCount, prepaid,
+      prepaidPct: totalSales>0 ? +((prepaid/totalSales)*100).toFixed(2) : 0,
+    };
+  }
+
+  const numWeeks = Math.ceil(daysInMonth / 7);
+  const mtd   = agg(days);
+  const weeks  = Array.from({ length: numWeeks }, (_, i) => ({
+    label: `Week-${i+1}`,
+    ...agg(days.filter(d => d.day > i*7 && d.day <= (i+1)*7)),
+  }));
+  const daily  = days.map(d => ({ label: d.label, ...agg([d]) }));
+
+  // Aggregate disposition sections
+  function aggDisp(dmap: Map<number, Map<string, number>>) {
+    const nameSet = new Set<string>();
+    for (const dm of dmap.values()) for (const n of dm.keys()) nameSet.add(n);
+    const names = [...nameSet].sort();
+    const get   = (serial: number, name: string) => dmap.get(serial)?.get(name) ?? 0;
+    const mtdTotal  = names.reduce((s,n) => s + days.reduce((ss,d) => ss+get(d.serial,n),0), 0);
+    const wkTotals  = Array.from({length:numWeeks},(_,i) =>
+      names.reduce((s,n)=>s+days.filter(d=>d.day>i*7&&d.day<=(i+1)*7).reduce((ss,d)=>ss+get(d.serial,n),0),0));
+    const dayTotals = days.map(d => names.reduce((s,n)=>s+get(d.serial,n),0));
+    return {
+      names,
+      rows: names.map(name => {
+        const mtdCnt   = days.reduce((s,d)=>s+get(d.serial,name),0);
+        const wkCnts   = Array.from({length:numWeeks},(_,i)=>
+          days.filter(d=>d.day>i*7&&d.day<=(i+1)*7).reduce((s,d)=>s+get(d.serial,name),0));
+        const dayCnts  = days.map(d=>get(d.serial,name));
+        return { name, mtd:mtdCnt, mtdPct: mtdTotal>0 ? +((mtdCnt/mtdTotal)*100).toFixed(1):0,
+                 weeks:wkCnts, daily:dayCnts };
+      }),
+      mtdTotal, weekTotals:wkTotals, dailyTotals:dayTotals,
+    };
+  }
+
+  // Aggregate delivery status counts
+  function aggDeliv(slice: typeof days) {
+    const counts: Record<string, number> = {};
+    for (const d of slice) {
+      for (const [s, cnt] of Object.entries(d.delivCounts)) {
+        counts[s] = (counts[s] || 0) + cnt;
+      }
+    }
+    const total = Object.values(counts).reduce((s, n) => s + n, 0);
+    return { counts, total };
+  }
+
+  return {
+    mtd, weeks, daily, totalTarget,
+    connectedDisp: aggDisp(connDispMap),
+    notInterested: aggDisp(niMap),
+    notIntWp:      aggDisp(niwpMap),
+    deliveryStatus: {
+      mtd:   aggDeliv(days),
+      weeks: Array.from({ length: numWeeks }, (_, i) => ({
+        label: `Week-${i + 1}`,
+        ...aggDeliv(days.filter(d => d.day > i * 7 && d.day <= (i + 1) * 7)),
+      })),
+      daily: days.map(d => ({ label: d.label, ...aggDeliv([d]) })),
+    },
+  };
+}
+
+export async function getNeemansAprExport(startDate: string, endDate: string) {
+  const [rows] = await getMasmisPool().execute(`
+    SELECT unique_id, week, date, emp_name, emp_id, calls, uca_ob, lob,
+           login_time, parks, park_time, avg_park, parks_per_call,
+           wait, talk, dispo, pause, login_ts, logout_ts, acht,
+           team_briefing, lunch, tea, tea1, washr, total_break, net_login,
+           occu_pct, week_short, mtd, attendance, capping
+    FROM db_masmis.neemans_apr
+    WHERE (? = '' OR ? = '') OR COALESCE(
+        STR_TO_DATE(date, '%d-%b-%Y'),
+        STR_TO_DATE(date, '%d-%b-%y'),
+        STR_TO_DATE(date, '%Y-%m-%d')
+      ) BETWEEN ? AND ?
+    ORDER BY date ASC, emp_name ASC
+    LIMIT 500000
+  `, [startDate, endDate, startDate, endDate]);
+  return rows;
 }

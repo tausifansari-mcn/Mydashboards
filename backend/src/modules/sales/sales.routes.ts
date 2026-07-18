@@ -39,5 +39,9 @@ router.get('/neemans-dashboard',        ctrl.getNeemansDashboard);
 router.get('/neemans-agent-data',       ctrl.getNeemansAgentData);
 router.get('/neemans-sale-raw-export',  ctrl.getNeemansSaleRawExport);
 router.get('/neemans-cdr-export',       ctrl.getNeemansCdrExport);
+router.post('/upload-neemans-apr',      upload.single('file'), ctrl.uploadNeemansApr);
+router.get('/neemans-apr-dashboard',    ctrl.getNeemansAprDashboard);
+router.get('/neemans-apr-export',       ctrl.getNeemansAprExport);
+router.get('/neemans-abc-cart-snap',    ctrl.getAbcCartSnap);
 
 export default router;

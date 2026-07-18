@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Users, Building2, LogOut,
   ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck,
-  PhoneCall, Phone, ChevronDown, BarChart3, Package,
+  PhoneCall, Phone, ChevronDown, BarChart3, Package, X,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -43,11 +43,24 @@ const accountLinks = [
   { to: '/audit',   icon: ClipboardList, label: 'Audit Logs' },
 ];
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  );
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+}
+
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
-  const { sidebarExpanded, toggleSidebar } = useUIStore();
+  const { sidebarExpanded, toggleSidebar, mobileOpen, closeMobile } = useUIStore();
   const { canAccessInboundSlug, dashboardSlugs, isSuperAdmin: isAdminProcess } = useProcessStore();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const isSuperAdmin = user?.role === 'super_admin';
 
   const inboundProjects = ALL_INBOUND_PROJECTS.filter((p) => canAccessInboundSlug(p.slug));
@@ -66,25 +79,37 @@ export default function Sidebar() {
     navigate('/login');
   };
 
+  const onNavClick = () => { if (isMobile) closeMobile(); };
+
+  // Desktop: animated width. Mobile: fixed overlay with translateX.
+  const desktopExpanded = sidebarExpanded;
+
   return (
     <motion.aside
-      animate={{ width: sidebarExpanded ? 240 : 64 }}
+      animate={
+        isMobile
+          ? { x: mobileOpen ? 0 : -260, width: 240 }
+          : { x: 0, width: desktopExpanded ? 240 : 64 }
+      }
       transition={{ duration: 0.25, ease: 'easeInOut' }}
-      className="relative flex h-screen flex-col overflow-hidden flex-shrink-0"
+      className={cn(
+        'flex h-screen flex-col overflow-hidden flex-shrink-0',
+        isMobile ? 'fixed inset-y-0 left-0 z-40 shadow-2xl' : 'relative'
+      )}
       style={{ background: `linear-gradient(180deg, ${BLUE_DARK} 0%, ${BLUE} 100%)` }}
     >
-      {/* Logo */}
+      {/* Logo / header */}
       <div
         className="flex h-16 items-center px-3 flex-shrink-0"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', backgroundColor: BLUE_DARK }}
       >
-        {!sidebarExpanded && (
+        {!desktopExpanded && !isMobile && (
           <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden bg-white shadow-md">
             <img src="/Logo.png" alt="MAS" className="h-8 w-8 object-contain p-0.5" />
           </div>
         )}
         <AnimatePresence>
-          {sidebarExpanded && (
+          {(desktopExpanded || isMobile) && (
             <motion.div
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
@@ -95,46 +120,55 @@ export default function Sidebar() {
               <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden bg-white shadow-md">
                 <img src="/Logo.png" alt="MAS" className="h-9 w-9 object-contain p-0.5" />
               </div>
-              <div>
+              <div className="flex-1 min-w-0">
                 <p className="font-bold text-white text-sm leading-none">My Dashboard</p>
                 <p className="text-[10px] font-medium mt-0.5" style={{ color: 'rgba(255,255,255,0.6)' }}>
                   Analytics Platform
                 </p>
               </div>
+              {/* Mobile close button */}
+              {isMobile && (
+                <button
+                  onClick={closeMobile}
+                  className="p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition flex-shrink-0"
+                >
+                  <X size={18} />
+                </button>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1 scrollbar-thin">
-        <SidebarSection label="MAIN" expanded={sidebarExpanded}>
-          {mainLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={sidebarExpanded} />)}
+      <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1 scrollbar-thin" onClick={onNavClick}>
+        <SidebarSection label="MAIN" expanded={desktopExpanded || isMobile}>
+          {mainLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={desktopExpanded || isMobile} />)}
           <SidebarExpandableItem
             icon={Phone}
             label="Inbound"
             parentTo={!isSuperAdmin && inboundProjects.length === 1 ? inboundProjects[0].to : '/inbound'}
             subItems={inboundProjects}
-            sidebarExpanded={sidebarExpanded}
+            sidebarExpanded={desktopExpanded || isMobile}
             singleProject={!isSuperAdmin && inboundProjects.length === 1}
           />
         </SidebarSection>
 
         {isSuperAdmin && (
-          <SidebarSection label="ADMIN" expanded={sidebarExpanded}>
-            {adminLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={sidebarExpanded} />)}
+          <SidebarSection label="ADMIN" expanded={desktopExpanded || isMobile}>
+            {adminLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={desktopExpanded || isMobile} />)}
           </SidebarSection>
         )}
 
-        <SidebarSection label="ACCOUNT" expanded={sidebarExpanded}>
+        <SidebarSection label="ACCOUNT" expanded={desktopExpanded || isMobile}>
           {accountLinks.filter(l => isSuperAdmin || l.to !== '/audit').map((l) => (
-            <SidebarLink key={l.to} {...l} expanded={sidebarExpanded} />
+            <SidebarLink key={l.to} {...l} expanded={desktopExpanded || isMobile} />
           ))}
         </SidebarSection>
       </nav>
 
       {/* User info */}
-      {sidebarExpanded && user && (
+      {(desktopExpanded || isMobile) && user && (
         <div className="px-3 py-3 flex-shrink-0" style={{ borderTop: '1px solid rgba(255,255,255,0.1)', backgroundColor: 'rgba(0,0,0,0.2)' }}>
           <div className="flex items-center gap-2">
             {user.avatar_url ? (
@@ -158,15 +192,15 @@ export default function Sidebar() {
           onClick={handleLogout}
           className={cn(
             'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-            !sidebarExpanded && 'justify-center'
+            !(desktopExpanded || isMobile) && 'justify-center'
           )}
           style={{ color: '#ffffff' }}
-          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.1)'; (e.currentTarget as HTMLButtonElement).style.color = '#fff'; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = '#ffffff'; }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.1)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'; }}
         >
           <LogOut className="h-4 w-4 flex-shrink-0" />
           <AnimatePresence>
-            {sidebarExpanded && (
+            {(desktopExpanded || isMobile) && (
               <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-sm font-medium">
                 Logout
               </motion.span>
@@ -175,14 +209,16 @@ export default function Sidebar() {
         </button>
       </div>
 
-      {/* Toggle button */}
-      <button
-        onClick={toggleSidebar}
-        className="absolute -right-3 top-20 flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-md z-10 transition-colors hover:bg-blue-50"
-        style={{ color: BLUE, border: `1px solid rgba(21,101,192,0.3)` }}
-      >
-        {sidebarExpanded ? <ChevronLeft className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-      </button>
+      {/* Desktop-only toggle button */}
+      {!isMobile && (
+        <button
+          onClick={toggleSidebar}
+          className="absolute -right-3 top-20 flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-md z-10 transition-colors hover:bg-blue-50"
+          style={{ color: BLUE, border: `1px solid rgba(21,101,192,0.3)` }}
+        >
+          {desktopExpanded ? <ChevronLeft className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        </button>
+      )}
     </motion.aside>
   );
 }
@@ -212,27 +248,18 @@ function SidebarLink({ to, icon: Icon, label, expanded }: { to: string; icon: Re
       to={to}
       end
       className={({ isActive }) => cn(
-        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150',
-        isActive ? 'bg-white font-semibold' : '',
+        'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-150',
+        isActive ? 'bg-white/20 font-semibold' : '',
         !expanded && 'justify-center'
       )}
-      style={({ isActive }) => isActive
-        ? { color: '#ffffff' }
-        : { color: '#ffffff' }
-      }
+      style={{ color: '#ffffff' }}
       onMouseEnter={(e) => {
         const el = e.currentTarget as HTMLAnchorElement;
-        if (!el.classList.contains('bg-white')) {
-          el.style.backgroundColor = 'rgba(255,255,255,0.12)';
-          el.style.color = '#fff';
-        }
+        if (!el.style.backgroundColor) el.style.backgroundColor = 'rgba(255,255,255,0.12)';
       }}
       onMouseLeave={(e) => {
         const el = e.currentTarget as HTMLAnchorElement;
-        if (!el.classList.contains('bg-white')) {
-          el.style.backgroundColor = 'transparent';
-          el.style.color = '#ffffff';
-        }
+        if (el.style.backgroundColor === 'rgba(255, 255, 255, 0.12)') el.style.backgroundColor = '';
       }}
     >
       <Icon className="h-4 w-4 flex-shrink-0" />
@@ -271,21 +298,18 @@ function SidebarExpandableItem({
     if (isParentActive) setOpen(true);
   }, [location.pathname, isParentActive]);
 
-  // Single-project users: render a plain nav link, no dropdown
   if (singleProject) {
     return (
       <NavLink
         to={parentTo}
         className={({ isActive }) => cn(
-          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150',
+          'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-150',
           !sidebarExpanded && 'justify-center'
         )}
         style={({ isActive }) => ({
           backgroundColor: isActive ? 'rgba(255,255,255,0.18)' : 'transparent',
           color: '#ffffff',
         })}
-        onMouseEnter={(e) => { const el = e.currentTarget as HTMLAnchorElement; if (!el.style.backgroundColor.includes('0.18')) el.style.backgroundColor = 'rgba(255,255,255,0.12)'; }}
-        onMouseLeave={(e) => { const el = e.currentTarget as HTMLAnchorElement; if (!el.style.backgroundColor.includes('0.18')) el.style.backgroundColor = 'transparent'; }}
       >
         <Icon className="h-4 w-4 flex-shrink-0" />
         <AnimatePresence>
@@ -303,7 +327,7 @@ function SidebarExpandableItem({
     return (
       <button
         onClick={() => navigate(parentTo)}
-        className="flex w-full justify-center rounded-lg px-3 py-2 transition-colors"
+        className="flex w-full justify-center rounded-lg px-3 py-2.5 transition-colors"
         style={{
           backgroundColor: isParentActive ? 'rgba(255,255,255,0.18)' : 'transparent',
           color: '#ffffff',
@@ -322,7 +346,7 @@ function SidebarExpandableItem({
       >
         <button
           onClick={() => { navigate(parentTo); setOpen(v => !v); }}
-          className="flex flex-1 items-center gap-3 px-3 py-2 text-sm"
+          className="flex flex-1 items-center gap-3 px-3 py-2.5 text-sm"
           style={{ color: '#ffffff' }}
         >
           <Icon className="h-4 w-4 flex-shrink-0" />

@@ -121,7 +121,7 @@ export default function DashboardLauncher() {
         <div className="absolute -bottom-8 right-48 w-40 h-40 rounded-full opacity-10" style={{ background: MAS_RED }} />
         <div className="absolute top-4 right-4 w-24 h-24 rounded-full opacity-5 bg-white" />
 
-        <div className="relative px-8 py-8 flex items-center justify-between gap-6 flex-wrap">
+        <div className="relative px-4 sm:px-8 py-6 sm:py-8 flex items-center justify-between gap-4 flex-wrap">
           {/* Left: Logo + greeting */}
           <div className="flex items-center gap-5">
             <div className="bg-white rounded-2xl p-2 shadow-xl flex-shrink-0" style={{ boxShadow: '0 4px 20px rgba(0,0,0,0.25)' }}>
@@ -129,7 +129,7 @@ export default function DashboardLauncher() {
             </div>
             <div>
               <p className="text-blue-200 text-sm font-semibold uppercase tracking-widest mb-0.5">Mas CallNet Analytics</p>
-              <h1 className="text-3xl font-black text-white leading-tight">
+              <h1 className="text-xl sm:text-3xl font-black text-white leading-tight">
                 {greeting()}, {user?.name?.split(' ')[0] ?? 'User'} 👋
               </h1>
               <p className="text-blue-200 text-sm font-medium mt-1">Select a dashboard below to start your session</p>
@@ -157,7 +157,7 @@ export default function DashboardLauncher() {
         </div>
       </motion.div>
 
-      <div className="px-8 py-7">
+      <div className="px-3 sm:px-8 py-5 sm:py-7">
 
         {/* ── Stats Row ── */}
         <motion.div
@@ -388,7 +388,7 @@ function ClientPortal({ user, dashboards, processes, navigate }: PortalProps) {
               </div>
               <div>
                 <p className="text-blue-300 text-xs font-bold uppercase tracking-widest mb-1">{clientName} Analytics Hub</p>
-                <h1 className="text-3xl font-black text-white leading-tight">
+                <h1 className="text-xl sm:text-3xl font-black text-white leading-tight">
                   {greet}, {firstName} 👋
                 </h1>
                 <p className="text-blue-200 text-sm mt-1.5 font-medium">Your workspace is ready — select a module to begin</p>
