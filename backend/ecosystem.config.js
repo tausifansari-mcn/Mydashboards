@@ -3,7 +3,7 @@ module.exports = {
     {
       name: 'mydash-backend',
       script: 'dist/app.js',
-      cwd: 'C:\\Users\\MAS60358\\Desktop\\My Dashboards zip\\My Dashboards\\backend',
+      cwd: 'C:\\Users\\MAS60358\\Desktop\\My Dash\\Mydashboards\\backend',
       watch: false,
       autorestart: true,
       max_restarts: 20,
