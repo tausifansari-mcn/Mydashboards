@@ -4946,7 +4946,8 @@ export default function InboundQualityDashboard() {
                                 const bT = bd?.total ?? 0;
                                 const bP = bd?.pos ?? 0;
                                 const bN = bd?.neg ?? 0;
-                                const bPct = bT > 0 ? Math.round(bP / bT * 100) : 0;
+                                const bQuotes = bP + bN;
+                                const bPct = bQuotes > 0 ? Math.round(bP / bQuotes * 100) : 0;
                                 const isAct = clapActiveBranch === branch;
                                 return (
                                   <div key={branch}
@@ -4961,8 +4962,7 @@ export default function InboundQualityDashboard() {
                                     <div className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: isAct ? '#fff' : m.accent }}>{m.label}</div>
                                     <div className="text-lg font-black tabular-nums" style={{ color: isAct ? '#fff' : '#0F172A' }}>{bT.toLocaleString()}</div>
                                     <div className="flex gap-2 justify-center mt-1">
-                                      <span className="text-[9px] font-bold" style={{ color: isAct ? '#bbf7d0' : '#16A34A' }}>✅{bP}</span>
-                                      <span className="text-[9px] font-bold" style={{ color: isAct ? '#fecaca' : '#DC2626' }}>❌{bN}</span>
+                                      <span className="text-[9px] font-bold" style={{ color: isAct ? 'rgba(255,255,255,0.85)' : '#475569' }}>💬 Quotes: {bQuotes}</span>
                                     </div>
                                     <div className="mt-1.5 h-1 w-20 mx-auto rounded-full overflow-hidden" style={{ background: 'rgba(0,0,0,0.12)' }}>
                                       <div className="h-full rounded-full transition-all duration-300" style={{ width: `${bPct}%`, background: isAct ? 'rgba(255,255,255,0.7)' : m.accent }} />
