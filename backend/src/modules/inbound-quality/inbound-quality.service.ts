@@ -3962,6 +3962,53 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   return { overall: { total: Number(overall.total), pos: Number(overall.pos), neg: Number(overall.neg) }, branches };
 }
 
+export interface VocQuote { leadId: string; agentName: string; callDate: string; quote: string; }
+export interface ClapVocQuotesResponse { positive: VocQuote[]; negative: VocQuote[]; }
+
+const VOC_COLUMNS: Record<'Logistic' | 'Agent' | 'Product', { pos: string; neg: string }> = {
+  Logistic: { pos: 'customer_voc_logistic_positive', neg: 'customer_voc_logistic_negative' },
+  Agent:    { pos: 'customer_voc_agent_positive',    neg: 'customer_voc_agent_negative' },
+  Product:  { pos: 'customer_voc_product_positive',  neg: 'customer_voc_product_negative' },
+};
+
+export async function getClapVocQuotes(
+  clap: 'Logistic' | 'Agent' | 'Product',
+  filters: InboundQualityFilters,
+): Promise<ClapVocQuotesResponse> {
+  const { startDate, endDate, clientId } = filters;
+  const cf = clientId ? ' AND q.ClientId = ?' : '';
+  const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+  const cols = VOC_COLUMNS[clap];
+
+  type Row = { leadId: string; agentName: string; callDate: string; quote: string };
+  const runQuery = (column: string) => querySource<Row>(`
+    SELECT q.lead_id AS leadId,
+           COALESCE(am.AgentName, q.User) AS agentName,
+           q.CallDate AS callDate,
+           q.${column} AS quote
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+      AND q.${column} IS NOT NULL AND TRIM(q.${column}) != ''
+    ORDER BY q.CallDate DESC
+    LIMIT 50
+  `, base);
+
+  const [positiveRows, negativeRows] = await Promise.all([
+    runQuery(cols.pos),
+    runQuery(cols.neg),
+  ]);
+
+  const toQuote = (r: Row): VocQuote => ({
+    leadId:    String(r.leadId ?? ''),
+    agentName: String(r.agentName ?? 'Unknown'),
+    callDate:  String(r.callDate),
+    quote:     String(r.quote),
+  });
+
+  return { positive: positiveRows.map(toQuote), negative: negativeRows.map(toQuote) };
+}
+
 // ─── CLAP 360° Intelligence ────────────────────────────────────────────────────
 
 export interface ClapQaParam {
