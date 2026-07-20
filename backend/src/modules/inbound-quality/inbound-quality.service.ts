@@ -3894,7 +3894,7 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   const cf = clientId ? ' AND q.ClientId = ?' : '';
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
-  const [overallRows, branchRows, branchScenRows] = await Promise.all([
+  const [overallRows, branchTotalRows, vocCountRows, branchScenRows] = await Promise.all([
     // 1. Overall totals (Customer root node — unchanged)
     querySource<{ total: number; pos: number; neg: number }>(`
       SELECT COUNT(*) AS total,
@@ -3904,31 +3904,31 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
     `, base),
 
-    // 2. Per-branch totals — sourced from the dedicated customer_voc_* columns per branch
-    querySource<{ clap: string; total: number; pos: number; neg: number }>(`
-      SELECT ${CLAP_CASE_INBOUND} AS clap,
-        COUNT(*) AS total,
-        SUM(CASE
-          WHEN (${CLAP_CASE_INBOUND}) = 'Agent'
-            THEN CASE WHEN q.customer_voc_agent_positive IS NOT NULL AND q.customer_voc_agent_positive != '' THEN 1 ELSE 0 END
-          WHEN (${CLAP_CASE_INBOUND}) = 'Logistic'
-            THEN CASE WHEN q.customer_voc_logistic_positive IS NOT NULL AND q.customer_voc_logistic_positive != '' THEN 1 ELSE 0 END
-          ELSE CASE WHEN q.customer_voc_product_positive IS NOT NULL AND q.customer_voc_product_positive != '' THEN 1 ELSE 0 END
-        END) AS pos,
-        SUM(CASE
-          WHEN (${CLAP_CASE_INBOUND}) = 'Agent'
-            THEN CASE WHEN q.customer_voc_agent_negative IS NOT NULL AND q.customer_voc_agent_negative != '' THEN 1 ELSE 0 END
-          WHEN (${CLAP_CASE_INBOUND}) = 'Logistic'
-            THEN CASE WHEN q.customer_voc_logistic_negative IS NOT NULL AND q.customer_voc_logistic_negative != '' THEN 1 ELSE 0 END
-          ELSE CASE WHEN q.customer_voc_product_negative IS NOT NULL AND q.customer_voc_product_negative != '' THEN 1 ELSE 0 END
-        END) AS neg
+    // 2. Per-branch call totals — scenario classification (used for the "N total calls" label in the detail panel)
+    querySource<{ clap: string; total: number }>(`
+      SELECT ${CLAP_CASE_INBOUND} AS clap, COUNT(*) AS total
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
         AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
-      GROUP BY clap ORDER BY total DESC
+      GROUP BY clap
     `, base),
 
-    // 3. Logistic + Agent scenario+sub breakdown (subquery for reliability) — unchanged
+    // 3. Per-branch VOC pos/neg counts — purely from column population, independent of scenario
+    //    classification (must match the predicate used by getClapVocQuotes exactly, or the branch
+    //    card counts drift from what the quote drill-down actually shows).
+    querySource<{ logPos: number; logNeg: number; agePos: number; ageNeg: number; prodPos: number; prodNeg: number }>(`
+      SELECT
+        SUM(CASE WHEN q.customer_voc_logistic_positive IS NOT NULL AND q.customer_voc_logistic_positive != '' THEN 1 ELSE 0 END) AS logPos,
+        SUM(CASE WHEN q.customer_voc_logistic_negative IS NOT NULL AND q.customer_voc_logistic_negative != '' THEN 1 ELSE 0 END) AS logNeg,
+        SUM(CASE WHEN q.customer_voc_agent_positive    IS NOT NULL AND q.customer_voc_agent_positive    != '' THEN 1 ELSE 0 END) AS agePos,
+        SUM(CASE WHEN q.customer_voc_agent_negative    IS NOT NULL AND q.customer_voc_agent_negative    != '' THEN 1 ELSE 0 END) AS ageNeg,
+        SUM(CASE WHEN q.customer_voc_product_positive  IS NOT NULL AND q.customer_voc_product_positive  != '' THEN 1 ELSE 0 END) AS prodPos,
+        SUM(CASE WHEN q.customer_voc_product_negative  IS NOT NULL AND q.customer_voc_product_negative  != '' THEN 1 ELSE 0 END) AS prodNeg
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+    `, base),
+
+    // 4. Logistic + Agent scenario+sub breakdown (subquery for reliability) — unchanged
     querySource<{ clap: string; scenario: string; sub_scenario: string; cnt: number }>(`
       SELECT t.clap, t.scenario, t.sub_scenario, COUNT(*) AS cnt
       FROM (
@@ -3945,19 +3945,22 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   ]);
 
   const overall = overallRows[0] ?? { total: 0, pos: 0, neg: 0 };
+  const vc = vocCountRows[0] ?? { logPos: 0, logNeg: 0, agePos: 0, ageNeg: 0, prodPos: 0, prodNeg: 0 };
+  const VOC_COUNTS: Record<'Logistic' | 'Agent' | 'Product', { pos: number; neg: number }> = {
+    Logistic: { pos: Number(vc.logPos),  neg: Number(vc.logNeg) },
+    Agent:    { pos: Number(vc.agePos),  neg: Number(vc.ageNeg) },
+    Product:  { pos: Number(vc.prodPos), neg: Number(vc.prodNeg) },
+  };
 
-  const branches: ClapCustomerBranch[] = branchRows.map(br => {
-    const clap = String(br.clap);
-    return {
-      clap,
-      total: Number(br.total),
-      pos:   Number(br.pos),
-      neg:   Number(br.neg),
-      scenarioBreakdown: groupScenWithSubs(
-        branchScenRows.filter(r => String(r.clap) === clap)
-      ),
-    };
-  });
+  const branches: ClapCustomerBranch[] = (['Logistic', 'Agent', 'Product'] as const).map(clap => ({
+    clap,
+    total: Number(branchTotalRows.find(r => String(r.clap) === clap)?.total ?? 0),
+    pos:   VOC_COUNTS[clap].pos,
+    neg:   VOC_COUNTS[clap].neg,
+    scenarioBreakdown: groupScenWithSubs(
+      branchScenRows.filter(r => String(r.clap) === clap)
+    ),
+  }));
 
   return { overall: { total: Number(overall.total), pos: Number(overall.pos), neg: Number(overall.neg) }, branches };
 }
