@@ -182,6 +182,7 @@ interface RepeatPivotRow   { mobile_no: string; by_date: Record<string, number>;
 interface RepeatAnalysis   { grand_unique: number; grand_repeat: number; grand_pct: number; day_wise: DayWiseRepeatRow[]; pivot_dates: string[]; pivot_rows: RepeatPivotRow[]; }
 
 interface AgentMasterRow  { masId: string; agentName: string; lob: string; }
+interface VocQuote { leadId: string; agentName: string; callDate: string; quote: string; }
 
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 function downloadCSV(rows: Record<string, unknown>[], filename: string) {
@@ -1642,23 +1643,19 @@ export default function InboundQualityDashboard() {
 
   // ── CLAP Customer Product Analysis ──────────────────────────────────────
   type ClapScenWithSubs = { scenario: string; count: number; subs: { sub: string; count: number }[] };
-  type ClapProduct = { name: string; total: number; pos: number; neg: number; posWords: string[]; negWords: string[]; scenarioBreakdown: ClapScenWithSubs[] };
   const [clapCustomer, setClapCustomer] = useState<{
     overall: { total: number; pos: number; neg: number };
     branches: {
       clap: string; total: number; pos: number; neg: number;
-      posWords: string[]; negWords: string[];
       scenarioBreakdown: ClapScenWithSubs[];
-      products: ClapProduct[];
-      agentAllTotal?: number; agentAllPos?: number; agentAllNeg?: number;
-      agentAllPosWords?: string[]; agentAllNegWords?: string[];
     }[];
   } | null>(null);
   const [clapCustomerLoading, setClapCustomerLoading] = useState(false);
   const [clapCustomerExpanded, setClapCustomerExpanded] = useState(false);
   const [clapActiveBranch, setClapActiveBranch] = useState<string | null>(null);
-  const [clapActiveProduct, setClapActiveProduct] = useState<string | null>(null);
   const [clapActiveScenario, setClapActiveScenario] = useState<string | null>(null);
+  const [clapVocQuotes, setClapVocQuotes] = useState<{ positive: VocQuote[]; negative: VocQuote[] } | null>(null);
+  const [clapVocLoading, setClapVocLoading] = useState(false);
 
   // ── Deep analysis state ──────────────────────────────────────────────────
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
@@ -1837,6 +1834,18 @@ export default function InboundQualityDashboard() {
 
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
+
+  // Lazily fetch VOC quotes when a CLAP branch is opened
+  useEffect(() => {
+    if (!clapActiveBranch) { setClapVocQuotes(null); return; }
+    setClapVocLoading(true);
+    api.get<{ data: { positive: VocQuote[]; negative: VocQuote[] } }>(
+      `/inbound-quality/clap-voc-quotes?clap=${clapActiveBranch}&clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    )
+      .then(r => setClapVocQuotes(r.data?.data ?? { positive: [], negative: [] }))
+      .catch(() => setClapVocQuotes({ positive: [], negative: [] }))
+      .finally(() => setClapVocLoading(false));
+  }, [clapActiveBranch, clientId, sd, ed]);
 
   // Reset detail caches when date range changes
   useEffect(() => {
@@ -2087,7 +2096,6 @@ export default function InboundQualityDashboard() {
     setClapCustomerLoading(true);
     setClapCustomerExpanded(false);
     setClapActiveBranch(null);
-    setClapActiveProduct(null);
     setClapActiveScenario(null);
     api.get<{ data: typeof clapCustomer }>(`/inbound-quality/clap-customer-analysis?clientId=${clientId}&startDate=${sd}&endDate=${ed}`)
       .then(r => setClapCustomer(r.data?.data ?? null))
