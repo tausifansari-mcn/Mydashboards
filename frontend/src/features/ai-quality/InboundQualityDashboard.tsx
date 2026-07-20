@@ -4943,7 +4943,6 @@ export default function InboundQualityDashboard() {
                               {['Logistic', 'Agent', 'Product'].map(branch => {
                                 const m = BRANCH_META[branch];
                                 const bd = clapCustomer?.branches.find(b => b.clap === branch);
-                                const bT = bd?.total ?? 0;
                                 const bP = bd?.pos ?? 0;
                                 const bN = bd?.neg ?? 0;
                                 const bQuotes = bP + bN;
@@ -4960,9 +4959,10 @@ export default function InboundQualityDashboard() {
                                     }}>
                                     <div className="text-xl mb-0.5">{m.icon}</div>
                                     <div className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: isAct ? '#fff' : m.accent }}>{m.label}</div>
-                                    <div className="text-lg font-black tabular-nums" style={{ color: isAct ? '#fff' : '#0F172A' }}>{bT.toLocaleString()}</div>
+                                    <div className="text-lg font-black tabular-nums" style={{ color: isAct ? '#fff' : '#0F172A' }}>{bQuotes.toLocaleString()}</div>
                                     <div className="flex gap-2 justify-center mt-1">
-                                      <span className="text-[9px] font-bold" style={{ color: isAct ? 'rgba(255,255,255,0.85)' : '#475569' }}>💬 Quotes: {bQuotes}</span>
+                                      <span className="text-[9px] font-bold" style={{ color: isAct ? '#bbf7d0' : '#16A34A' }}>✅ Positive {bP}</span>
+                                      <span className="text-[9px] font-bold" style={{ color: isAct ? '#fecaca' : '#DC2626' }}>❌ Negative {bN}</span>
                                     </div>
                                     <div className="mt-1.5 h-1 w-20 mx-auto rounded-full overflow-hidden" style={{ background: 'rgba(0,0,0,0.12)' }}>
                                       <div className="h-full rounded-full transition-all duration-300" style={{ width: `${bPct}%`, background: isAct ? 'rgba(255,255,255,0.7)' : m.accent }} />
