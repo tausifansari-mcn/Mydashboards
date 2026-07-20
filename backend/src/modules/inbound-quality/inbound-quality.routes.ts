@@ -55,6 +55,7 @@ router.get('/tni-agent-params',        ctrl.getTNIAgentParams);
 router.get('/tni-comments',            ctrl.getTNIComments);
 router.post('/tni-comments',           ctrl.upsertTNIComment);
 router.get('/clap-customer-analysis',  ctrl.getClapCustomerAnalysis);
+router.get('/clap-voc-quotes',         ctrl.getClapVocQuotes);
 router.get('/clap-intelligence',       ctrl.getClapIntelligence);
 
 export default router;
