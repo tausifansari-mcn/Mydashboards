@@ -1,0 +1,24 @@
+* [33mbf01e0c[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;32mfeat/clap-voc-quotes[m[33m)[m Clappp
+* [33m3f0543a[m clap
+[31m|[m *   [33m07f6d38[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Merge pull request #3 from tausifansari-mcn/feat/clap-voc-quotes
+[31m|[m [32m|[m[31m\[m  
+[31m|[m [32m|[m[31m/[m  
+[31m|[m[31m/[m[32m|[m   
+* [32m|[m [33md7a50eb[m[33m ([m[1;31morigin/feat/clap-voc-quotes[m[33m)[m feat(inbound-quality-ui): remove scenario breakdown from Logistic branch panel
+* [32m|[m [33m1692d1c[m fix(inbound-quality): align branch card counts with what the drill-down actually shows
+* [32m|[m [33m50a6c0f[m fix(inbound-quality): decouple CLAP branch VOC counts from scenario classification
+* [32m|[m [33m8bebca2[m fix(inbound-quality-ui): branch card headline number = quotes sum, restore pos/neg breakdown
+* [32m|[m [33m54584b4[m feat(inbound-quality-ui): show combined Quotes count on CLAP branch cards
+* [32m|[m [33m2e1f69a[m fix(inbound-quality): route Repeat scenario through Complaint sub-classification
+* [32m|[m [33m0bf8e0e[m feat(inbound-quality-ui): show Product branch as Positive/Negative product-name chips
+* [32m|[m [33m9e252d5[m feat(inbound-quality): group Product branch VOC quotes by embedded product name
+* [32m|[m [33m77e8583[m feat(inbound-quality-ui): replace branch chip/product UI with VOC quote lists
+* [32m|[m [33mf9ca0f3[m feat(inbound-quality-ui): add VocQuoteList component
+* [32m|[m [33mbdb16cc[m feat(inbound-quality-ui): add VOC quote state, drop product-breakdown state
+* [32m|[m [33me51d5ad[m feat(inbound-quality): add clap-voc-quotes endpoint
+* [32m|[m [33m5ce6383[m feat(inbound-quality): add getClapVocQuotes service function
+* [32m|[m [33mb29b435[m feat(inbound-quality): source CLAP branch pos/neg counts from customer_voc_* columns
+[32m|[m[32m/[m  
+* [33mac9f408[m docs: add implementation plan for CLAP branch VoC quote drill-down
+* [33mc7b3524[m docs: add design spec for CLAP branch VoC quote drill-down
+* [33ma27546b[m sd
