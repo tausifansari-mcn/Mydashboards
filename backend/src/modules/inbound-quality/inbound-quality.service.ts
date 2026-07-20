@@ -1162,11 +1162,11 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
 // ─── CLAP CASE expression (reused across drill queries) ─────────────────────
 const CLAP_CASE_INBOUND = `
   CASE
-    WHEN q.scenario IN ('Query','General Query','General Queries','Feedback','Unclear','Short Call/Blank Call','Repeat','Customer Profile','Brand','Marketing','Content','Collaboration Request') THEN 'Customer'
+    WHEN q.scenario IN ('Query','General Query','General Queries','Feedback','Unclear','Short Call/Blank Call','Customer Profile','Brand','Marketing','Content','Collaboration Request') THEN 'Customer'
     WHEN q.scenario IN ('Return/Exchange','Return Request','Return & Exchange','Wrong product','Product Issue','Pricing','Refund Status','Refund issue','Refund Request','Tech issue','Policies and FAQs','Sale Done') THEN 'Product'
     WHEN q.scenario IN ('Delivery Issue','Post Order','Order Status','Reverse Pickup Issue','Pending payment','Payment issues','Wallet issue') THEN 'Logistic'
     WHEN q.scenario IN ('Needs Improvement','Hold Procedure','Transfer','') THEN 'Agent'
-    WHEN q.scenario = 'Complaint' THEN
+    WHEN q.scenario IN ('Complaint','Repeat') THEN
       CASE
         WHEN q.scenario1 IS NULL OR q.scenario1 = '' THEN 'Product'
         WHEN q.scenario1 LIKE '%Dispatch%' OR q.scenario1 LIKE '%Delivery%' OR q.scenario1 LIKE '%RTO%' OR q.scenario1 = 'Delivery Fail'
