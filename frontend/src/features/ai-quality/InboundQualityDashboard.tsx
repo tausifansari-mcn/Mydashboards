@@ -1473,6 +1473,41 @@ function AgentNameTag({ masId, agentMap, className = '', onSave }: {
   );
 }
 
+// ─── CLAP Branch VOC Quote List ────────────────────────────────────────────────
+function VocQuoteList({ positive, negative, loading }: { positive: VocQuote[]; negative: VocQuote[]; loading: boolean }) {
+  const fmtDate = (d: string) => {
+    const dt = new Date(d);
+    return isNaN(dt.getTime()) ? d : dt.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  };
+  const Column = ({ title, icon, quotes, borderColor, headerBg }: { title: string; icon: string; quotes: VocQuote[]; borderColor: string; headerBg: string }) => (
+    <div className="rounded-xl overflow-hidden border" style={{ borderColor }}>
+      <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: headerBg }}>
+        <span className="text-white text-sm">{icon}</span>
+        <span className="text-[10px] font-black uppercase tracking-widest text-white">{title}</span>
+        <span className="ml-auto text-[9px] text-white/70 font-semibold">{quotes.length}</span>
+      </div>
+      <div className="bg-white p-3 space-y-2 max-h-80 overflow-y-auto">
+        {loading ? (
+          <p className="text-[10px] text-slate-400 italic">Loading…</p>
+        ) : quotes.length === 0 ? (
+          <p className="text-[10px] text-slate-400 italic">No {title.toLowerCase()} recorded</p>
+        ) : quotes.map((q, i) => (
+          <div key={`${q.leadId}-${i}`} className="rounded-lg border border-slate-100 p-2.5 bg-slate-50">
+            <p className="text-[11px] text-slate-700 leading-snug">&ldquo;{q.quote}&rdquo;</p>
+            <p className="text-[9px] text-slate-400 font-semibold mt-1">{q.agentName} · {fmtDate(q.callDate)}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <Column title="Positive Quotes" icon="😊" quotes={positive} borderColor="#A7F3D0" headerBg="linear-gradient(135deg,#064E3B,#059669)" />
+      <Column title="Negative Quotes" icon="😠" quotes={negative} borderColor="#FECACA" headerBg="linear-gradient(135deg,#7F1D1D,#DC2626)" />
+    </div>
+  );
+}
+
 const SCENARIO_COLORS = ['#3B82F6','#22C55E','#F59E0B','#A855F7','#EF4444','#14B8A6','#F97316','#EC4899'];
 
 function cqColor(score: number): string {
