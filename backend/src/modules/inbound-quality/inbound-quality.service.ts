@@ -3894,7 +3894,7 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   const cf = clientId ? ' AND q.ClientId = ?' : '';
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
-  const [overallRows, branchTotalRows, vocCountRows, branchScenRows] = await Promise.all([
+  const [overallRows, branchTotalRows, vocCountRows, branchScenRows, productSummary] = await Promise.all([
     // 1. Overall totals (Customer root node — unchanged)
     querySource<{ total: number; pos: number; neg: number }>(`
       SELECT COUNT(*) AS total,
@@ -3942,14 +3942,23 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
       GROUP BY t.clap, t.scenario, t.sub_scenario
       ORDER BY t.clap, cnt DESC
     `, base),
+
+    // 5. Product branch counts as distinct product names (not raw quote count) — matches how
+    //    the Product detail panel itself counts "Positive Products" / "Negative Products".
+    getClapProductVocSummary(filters),
   ]);
 
   const overall = overallRows[0] ?? { total: 0, pos: 0, neg: 0 };
   const vc = vocCountRows[0] ?? { logPos: 0, logNeg: 0, agePos: 0, ageNeg: 0, prodPos: 0, prodNeg: 0 };
+  // Logistic/Agent counts are capped at 50 to match the LIMIT 50 the quote drill-down actually
+  // returns — otherwise the card can show a bigger number than the list a user can scroll through.
+  const QUOTE_LIST_CAP = 50;
+  const productPos = productSummary.products.filter(p => p.pos > 0).length;
+  const productNeg = productSummary.products.filter(p => p.neg > 0).length;
   const VOC_COUNTS: Record<'Logistic' | 'Agent' | 'Product', { pos: number; neg: number }> = {
-    Logistic: { pos: Number(vc.logPos),  neg: Number(vc.logNeg) },
-    Agent:    { pos: Number(vc.agePos),  neg: Number(vc.ageNeg) },
-    Product:  { pos: Number(vc.prodPos), neg: Number(vc.prodNeg) },
+    Logistic: { pos: Math.min(Number(vc.logPos), QUOTE_LIST_CAP), neg: Math.min(Number(vc.logNeg), QUOTE_LIST_CAP) },
+    Agent:    { pos: Math.min(Number(vc.agePos), QUOTE_LIST_CAP), neg: Math.min(Number(vc.ageNeg), QUOTE_LIST_CAP) },
+    Product:  { pos: productPos, neg: productNeg },
   };
 
   const branches: ClapCustomerBranch[] = (['Logistic', 'Agent', 'Product'] as const).map(clap => ({
