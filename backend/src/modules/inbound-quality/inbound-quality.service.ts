@@ -3858,29 +3858,12 @@ function agentPhraseListFromRaw(raw: string | null | undefined): string[] {
 
 export interface ClapSubScen { sub: string; count: number; }
 export interface ClapScenWithSubs { scenario: string; count: number; subs: ClapSubScen[]; }
-export interface ClapCustomerProduct {
-  name: string;
-  total: number;
-  pos: number;
-  neg: number;
-  posWords: string[];
-  negWords: string[];
-  scenarioBreakdown: ClapScenWithSubs[];
-}
 export interface ClapCustomerBranch {
   clap: string;
   total: number;
   pos: number;
   neg: number;
-  posWords: string[];
-  negWords: string[];
   scenarioBreakdown: ClapScenWithSubs[];
-  products: ClapCustomerProduct[];
-  agentAllTotal?: number;
-  agentAllPos?: number;
-  agentAllNeg?: number;
-  agentAllPosWords?: string[];
-  agentAllNegWords?: string[];
 }
 export interface ClapCustomerAnalysis {
   overall: { total: number; pos: number; neg: number };
@@ -3910,10 +3893,9 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   const { startDate, endDate, clientId } = filters;
   const cf = clientId ? ' AND q.ClientId = ?' : '';
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
-  const productCase = buildProductCaseInbound();
 
-  const [overallRows, branchRows, productRows, productScenRows, branchScenRows, agentAllRows] = await Promise.all([
-    // 1. Overall totals
+  const [overallRows, branchRows, branchScenRows] = await Promise.all([
+    // 1. Overall totals (Customer root node — unchanged)
     querySource<{ total: number; pos: number; neg: number }>(`
       SELECT COUNT(*) AS total,
         SUM(CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END) AS pos,
@@ -3922,65 +3904,31 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
     `, base),
 
-    // 2. Per-branch totals — Agent uses agent-specific word columns
-    querySource<{ clap: string; total: number; pos: number; neg: number; pw: string; nw: string; apw: string; anw: string }>(`
+    // 2. Per-branch totals — sourced from the dedicated customer_voc_* columns per branch
+    querySource<{ clap: string; total: number; pos: number; neg: number }>(`
       SELECT ${CLAP_CASE_INBOUND} AS clap,
         COUNT(*) AS total,
         SUM(CASE
           WHEN (${CLAP_CASE_INBOUND}) = 'Agent'
-            THEN CASE WHEN q.top_positive_words_agent IS NOT NULL AND q.top_positive_words_agent != '' THEN 1 ELSE 0 END
-          ELSE CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END
+            THEN CASE WHEN q.customer_voc_agent_positive IS NOT NULL AND q.customer_voc_agent_positive != '' THEN 1 ELSE 0 END
+          WHEN (${CLAP_CASE_INBOUND}) = 'Logistic'
+            THEN CASE WHEN q.customer_voc_logistic_positive IS NOT NULL AND q.customer_voc_logistic_positive != '' THEN 1 ELSE 0 END
+          ELSE CASE WHEN q.customer_voc_product_positive IS NOT NULL AND q.customer_voc_product_positive != '' THEN 1 ELSE 0 END
         END) AS pos,
         SUM(CASE
           WHEN (${CLAP_CASE_INBOUND}) = 'Agent'
-            THEN CASE WHEN q.top_negative_words_agent IS NOT NULL AND q.top_negative_words_agent != '' THEN 1 ELSE 0 END
-          ELSE CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END
-        END) AS neg,
-        LEFT(GROUP_CONCAT(q.top_positive_words      SEPARATOR '|'), 3000) AS pw,
-        LEFT(GROUP_CONCAT(q.top_negative_words      SEPARATOR '|'), 3000) AS nw,
-        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_positive_words_agent),'') SEPARATOR '|'), 8000) AS apw,
-        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_negative_words_agent),'') SEPARATOR '|'), 8000) AS anw
+            THEN CASE WHEN q.customer_voc_agent_negative IS NOT NULL AND q.customer_voc_agent_negative != '' THEN 1 ELSE 0 END
+          WHEN (${CLAP_CASE_INBOUND}) = 'Logistic'
+            THEN CASE WHEN q.customer_voc_logistic_negative IS NOT NULL AND q.customer_voc_logistic_negative != '' THEN 1 ELSE 0 END
+          ELSE CASE WHEN q.customer_voc_product_negative IS NOT NULL AND q.customer_voc_product_negative != '' THEN 1 ELSE 0 END
+        END) AS neg
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
         AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
       GROUP BY clap ORDER BY total DESC
     `, base),
 
-    // 3. Per-product totals (all three branches, product detected via Transcribe_Text)
-    querySource<{ clap: string; product: string; total: number; pos: number; neg: number; pw: string; nw: string }>(`
-      SELECT ${CLAP_CASE_INBOUND} AS clap,
-        ${productCase} AS product,
-        COUNT(*) AS total,
-        SUM(CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END) AS pos,
-        SUM(CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END) AS neg,
-        LEFT(GROUP_CONCAT(q.top_positive_words SEPARATOR '|'), 2000) AS pw,
-        LEFT(GROUP_CONCAT(q.top_negative_words SEPARATOR '|'), 2000) AS nw
-      FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
-        AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
-        AND q.Transcribe_Text IS NOT NULL AND q.Transcribe_Text != ''
-        AND ${productCase} IS NOT NULL
-      GROUP BY clap, product ORDER BY clap, total DESC
-    `, base),
-
-    // 4. Per-product per-scenario+sub counts (subquery avoids GROUP BY alias issue)
-    querySource<{ clap: string; product: string; scenario: string; sub_scenario: string; cnt: number }>(`
-      SELECT t.clap, t.product, t.scenario, t.sub_scenario, COUNT(*) AS cnt
-      FROM (
-        SELECT (${CLAP_CASE_INBOUND}) AS clap,
-          (${productCase}) AS product,
-          q.scenario,
-          COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
-        FROM db_audit.call_quality_assessment q
-        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
-          AND q.Transcribe_Text IS NOT NULL AND q.Transcribe_Text != ''
-      ) AS t
-      WHERE t.clap IN ('Logistic','Agent','Product') AND t.product IS NOT NULL
-      GROUP BY t.clap, t.product, t.scenario, t.sub_scenario
-      ORDER BY t.clap, t.product, cnt DESC
-    `, base),
-
-    // 5. Logistic + Agent scenario+sub breakdown (subquery for reliability)
+    // 3. Logistic + Agent scenario+sub breakdown (subquery for reliability) — unchanged
     querySource<{ clap: string; scenario: string; sub_scenario: string; cnt: number }>(`
       SELECT t.clap, t.scenario, t.sub_scenario, COUNT(*) AS cnt
       FROM (
@@ -3994,56 +3942,20 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
       GROUP BY t.clap, t.scenario, t.sub_scenario
       ORDER BY t.clap, cnt DESC
     `, base),
-
-    // 6. All-calls agent phrase summary (top_positive/negative_words_agent across every audit)
-    querySource<{ total: number; pos: number; neg: number; apw: string; anw: string }>(`
-      SELECT
-        COUNT(*) AS total,
-        SUM(CASE WHEN q.top_positive_words_agent IS NOT NULL AND TRIM(q.top_positive_words_agent) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS pos,
-        SUM(CASE WHEN q.top_negative_words_agent IS NOT NULL AND TRIM(q.top_negative_words_agent) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS neg,
-        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_positive_words_agent),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 12000) AS apw,
-        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_negative_words_agent),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 12000) AS anw
-      FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
-    `, base),
   ]);
 
   const overall = overallRows[0] ?? { total: 0, pos: 0, neg: 0 };
-  const agentAll = agentAllRows[0] ?? { total: 0, pos: 0, neg: 0, apw: '', anw: '' };
 
   const branches: ClapCustomerBranch[] = branchRows.map(br => {
     const clap = String(br.clap);
-    const isAgent = clap === 'Agent';
     return {
       clap,
       total: Number(br.total),
       pos:   Number(br.pos),
       neg:   Number(br.neg),
-      posWords: isAgent ? agentPhraseListFromRaw(br.apw as unknown as string) : wordListFromRaw(br.pw as unknown as string),
-      negWords: isAgent ? agentPhraseListFromRaw(br.anw as unknown as string) : wordListFromRaw(br.nw as unknown as string),
-      ...(isAgent ? {
-        agentAllTotal:    Number(agentAll.total),
-        agentAllPos:      Number(agentAll.pos),
-        agentAllNeg:      Number(agentAll.neg),
-        agentAllPosWords: agentPhraseListFromRaw(agentAll.apw as unknown as string),
-        agentAllNegWords: agentPhraseListFromRaw(agentAll.anw as unknown as string),
-      } : {}),
       scenarioBreakdown: groupScenWithSubs(
         branchScenRows.filter(r => String(r.clap) === clap)
       ),
-      products: productRows
-        .filter(pr => String(pr.clap) === clap && pr.product)
-        .map(pr => ({
-          name:     String(pr.product),
-          total:    Number(pr.total),
-          pos:      Number(pr.pos),
-          neg:      Number(pr.neg),
-          posWords: wordListFromRaw(pr.pw as unknown as string),
-          negWords: wordListFromRaw(pr.nw as unknown as string),
-          scenarioBreakdown: groupScenWithSubs(
-            productScenRows.filter(s => String(s.clap) === clap && String(s.product) === String(pr.product))
-          ),
-        })),
     };
   });
 
