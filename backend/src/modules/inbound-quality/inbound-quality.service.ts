@@ -1162,11 +1162,11 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
 // ─── CLAP CASE expression (reused across drill queries) ─────────────────────
 const CLAP_CASE_INBOUND = `
   CASE
-    WHEN q.scenario IN ('Query','General Query','General Queries','Feedback','Unclear','Short Call/Blank Call','Repeat','Customer Profile','Brand','Marketing','Content','Collaboration Request') THEN 'Customer'
+    WHEN q.scenario IN ('Query','General Query','General Queries','Feedback','Unclear','Short Call/Blank Call','Customer Profile','Brand','Marketing','Content','Collaboration Request') THEN 'Customer'
     WHEN q.scenario IN ('Return/Exchange','Return Request','Return & Exchange','Wrong product','Product Issue','Pricing','Refund Status','Refund issue','Refund Request','Tech issue','Policies and FAQs','Sale Done') THEN 'Product'
     WHEN q.scenario IN ('Delivery Issue','Post Order','Order Status','Reverse Pickup Issue','Pending payment','Payment issues','Wallet issue') THEN 'Logistic'
     WHEN q.scenario IN ('Needs Improvement','Hold Procedure','Transfer','') THEN 'Agent'
-    WHEN q.scenario = 'Complaint' THEN
+    WHEN q.scenario IN ('Complaint','Repeat') THEN
       CASE
         WHEN q.scenario1 IS NULL OR q.scenario1 = '' THEN 'Product'
         WHEN q.scenario1 LIKE '%Dispatch%' OR q.scenario1 LIKE '%Delivery%' OR q.scenario1 LIKE '%RTO%' OR q.scenario1 = 'Delivery Fail'
@@ -3858,29 +3858,12 @@ function agentPhraseListFromRaw(raw: string | null | undefined): string[] {
 
 export interface ClapSubScen { sub: string; count: number; }
 export interface ClapScenWithSubs { scenario: string; count: number; subs: ClapSubScen[]; }
-export interface ClapCustomerProduct {
-  name: string;
-  total: number;
-  pos: number;
-  neg: number;
-  posWords: string[];
-  negWords: string[];
-  scenarioBreakdown: ClapScenWithSubs[];
-}
 export interface ClapCustomerBranch {
   clap: string;
   total: number;
   pos: number;
   neg: number;
-  posWords: string[];
-  negWords: string[];
   scenarioBreakdown: ClapScenWithSubs[];
-  products: ClapCustomerProduct[];
-  agentAllTotal?: number;
-  agentAllPos?: number;
-  agentAllNeg?: number;
-  agentAllPosWords?: string[];
-  agentAllNegWords?: string[];
 }
 export interface ClapCustomerAnalysis {
   overall: { total: number; pos: number; neg: number };
@@ -3910,10 +3893,9 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   const { startDate, endDate, clientId } = filters;
   const cf = clientId ? ' AND q.ClientId = ?' : '';
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
-  const productCase = buildProductCaseInbound();
 
-  const [overallRows, branchRows, productRows, productScenRows, branchScenRows, agentAllRows] = await Promise.all([
-    // 1. Overall totals
+  const [overallRows, branchTotalRows, vocCountRows, branchScenRows, productSummary] = await Promise.all([
+    // 1. Overall totals (Customer root node — unchanged)
     querySource<{ total: number; pos: number; neg: number }>(`
       SELECT COUNT(*) AS total,
         SUM(CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END) AS pos,
@@ -3922,65 +3904,31 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
     `, base),
 
-    // 2. Per-branch totals — Agent uses agent-specific word columns
-    querySource<{ clap: string; total: number; pos: number; neg: number; pw: string; nw: string; apw: string; anw: string }>(`
-      SELECT ${CLAP_CASE_INBOUND} AS clap,
-        COUNT(*) AS total,
-        SUM(CASE
-          WHEN (${CLAP_CASE_INBOUND}) = 'Agent'
-            THEN CASE WHEN q.top_positive_words_agent IS NOT NULL AND q.top_positive_words_agent != '' THEN 1 ELSE 0 END
-          ELSE CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END
-        END) AS pos,
-        SUM(CASE
-          WHEN (${CLAP_CASE_INBOUND}) = 'Agent'
-            THEN CASE WHEN q.top_negative_words_agent IS NOT NULL AND q.top_negative_words_agent != '' THEN 1 ELSE 0 END
-          ELSE CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END
-        END) AS neg,
-        LEFT(GROUP_CONCAT(q.top_positive_words      SEPARATOR '|'), 3000) AS pw,
-        LEFT(GROUP_CONCAT(q.top_negative_words      SEPARATOR '|'), 3000) AS nw,
-        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_positive_words_agent),'') SEPARATOR '|'), 8000) AS apw,
-        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_negative_words_agent),'') SEPARATOR '|'), 8000) AS anw
+    // 2. Per-branch call totals — scenario classification (used for the "N total calls" label in the detail panel)
+    querySource<{ clap: string; total: number }>(`
+      SELECT ${CLAP_CASE_INBOUND} AS clap, COUNT(*) AS total
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
         AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
-      GROUP BY clap ORDER BY total DESC
+      GROUP BY clap
     `, base),
 
-    // 3. Per-product totals (all three branches, product detected via Transcribe_Text)
-    querySource<{ clap: string; product: string; total: number; pos: number; neg: number; pw: string; nw: string }>(`
-      SELECT ${CLAP_CASE_INBOUND} AS clap,
-        ${productCase} AS product,
-        COUNT(*) AS total,
-        SUM(CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END) AS pos,
-        SUM(CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END) AS neg,
-        LEFT(GROUP_CONCAT(q.top_positive_words SEPARATOR '|'), 2000) AS pw,
-        LEFT(GROUP_CONCAT(q.top_negative_words SEPARATOR '|'), 2000) AS nw
+    // 3. Per-branch VOC pos/neg counts — purely from column population, independent of scenario
+    //    classification (must match the predicate used by getClapVocQuotes exactly, or the branch
+    //    card counts drift from what the quote drill-down actually shows).
+    querySource<{ logPos: number; logNeg: number; agePos: number; ageNeg: number; prodPos: number; prodNeg: number }>(`
+      SELECT
+        SUM(CASE WHEN q.customer_voc_logistic_positive IS NOT NULL AND q.customer_voc_logistic_positive != '' THEN 1 ELSE 0 END) AS logPos,
+        SUM(CASE WHEN q.customer_voc_logistic_negative IS NOT NULL AND q.customer_voc_logistic_negative != '' THEN 1 ELSE 0 END) AS logNeg,
+        SUM(CASE WHEN q.customer_voc_agent_positive    IS NOT NULL AND q.customer_voc_agent_positive    != '' THEN 1 ELSE 0 END) AS agePos,
+        SUM(CASE WHEN q.customer_voc_agent_negative    IS NOT NULL AND q.customer_voc_agent_negative    != '' THEN 1 ELSE 0 END) AS ageNeg,
+        SUM(CASE WHEN q.customer_voc_product_positive  IS NOT NULL AND q.customer_voc_product_positive  != '' THEN 1 ELSE 0 END) AS prodPos,
+        SUM(CASE WHEN q.customer_voc_product_negative  IS NOT NULL AND q.customer_voc_product_negative  != '' THEN 1 ELSE 0 END) AS prodNeg
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
-        AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
-        AND q.Transcribe_Text IS NOT NULL AND q.Transcribe_Text != ''
-        AND ${productCase} IS NOT NULL
-      GROUP BY clap, product ORDER BY clap, total DESC
     `, base),
 
-    // 4. Per-product per-scenario+sub counts (subquery avoids GROUP BY alias issue)
-    querySource<{ clap: string; product: string; scenario: string; sub_scenario: string; cnt: number }>(`
-      SELECT t.clap, t.product, t.scenario, t.sub_scenario, COUNT(*) AS cnt
-      FROM (
-        SELECT (${CLAP_CASE_INBOUND}) AS clap,
-          (${productCase}) AS product,
-          q.scenario,
-          COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
-        FROM db_audit.call_quality_assessment q
-        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
-          AND q.Transcribe_Text IS NOT NULL AND q.Transcribe_Text != ''
-      ) AS t
-      WHERE t.clap IN ('Logistic','Agent','Product') AND t.product IS NOT NULL
-      GROUP BY t.clap, t.product, t.scenario, t.sub_scenario
-      ORDER BY t.clap, t.product, cnt DESC
-    `, base),
-
-    // 5. Logistic + Agent scenario+sub breakdown (subquery for reliability)
+    // 4. Logistic + Agent scenario+sub breakdown (subquery for reliability) — unchanged
     querySource<{ clap: string; scenario: string; sub_scenario: string; cnt: number }>(`
       SELECT t.clap, t.scenario, t.sub_scenario, COUNT(*) AS cnt
       FROM (
@@ -3995,59 +3943,162 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
       ORDER BY t.clap, cnt DESC
     `, base),
 
-    // 6. All-calls agent phrase summary (top_positive/negative_words_agent across every audit)
-    querySource<{ total: number; pos: number; neg: number; apw: string; anw: string }>(`
-      SELECT
-        COUNT(*) AS total,
-        SUM(CASE WHEN q.top_positive_words_agent IS NOT NULL AND TRIM(q.top_positive_words_agent) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS pos,
-        SUM(CASE WHEN q.top_negative_words_agent IS NOT NULL AND TRIM(q.top_negative_words_agent) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS neg,
-        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_positive_words_agent),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 12000) AS apw,
-        LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_negative_words_agent),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 12000) AS anw
-      FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
-    `, base),
+    // 5. Product branch counts as distinct product names (not raw quote count) — matches how
+    //    the Product detail panel itself counts "Positive Products" / "Negative Products".
+    getClapProductVocSummary(filters),
   ]);
 
   const overall = overallRows[0] ?? { total: 0, pos: 0, neg: 0 };
-  const agentAll = agentAllRows[0] ?? { total: 0, pos: 0, neg: 0, apw: '', anw: '' };
+  const vc = vocCountRows[0] ?? { logPos: 0, logNeg: 0, agePos: 0, ageNeg: 0, prodPos: 0, prodNeg: 0 };
+  // Logistic/Agent counts are capped at 50 to match the LIMIT 50 the quote drill-down actually
+  // returns — otherwise the card can show a bigger number than the list a user can scroll through.
+  const QUOTE_LIST_CAP = 50;
+  const productPos = productSummary.products.filter(p => p.pos > 0).length;
+  const productNeg = productSummary.products.filter(p => p.neg > 0).length;
+  const VOC_COUNTS: Record<'Logistic' | 'Agent' | 'Product', { pos: number; neg: number }> = {
+    Logistic: { pos: Math.min(Number(vc.logPos), QUOTE_LIST_CAP), neg: Math.min(Number(vc.logNeg), QUOTE_LIST_CAP) },
+    Agent:    { pos: Math.min(Number(vc.agePos), QUOTE_LIST_CAP), neg: Math.min(Number(vc.ageNeg), QUOTE_LIST_CAP) },
+    Product:  { pos: productPos, neg: productNeg },
+  };
 
-  const branches: ClapCustomerBranch[] = branchRows.map(br => {
-    const clap = String(br.clap);
-    const isAgent = clap === 'Agent';
-    return {
-      clap,
-      total: Number(br.total),
-      pos:   Number(br.pos),
-      neg:   Number(br.neg),
-      posWords: isAgent ? agentPhraseListFromRaw(br.apw as unknown as string) : wordListFromRaw(br.pw as unknown as string),
-      negWords: isAgent ? agentPhraseListFromRaw(br.anw as unknown as string) : wordListFromRaw(br.nw as unknown as string),
-      ...(isAgent ? {
-        agentAllTotal:    Number(agentAll.total),
-        agentAllPos:      Number(agentAll.pos),
-        agentAllNeg:      Number(agentAll.neg),
-        agentAllPosWords: agentPhraseListFromRaw(agentAll.apw as unknown as string),
-        agentAllNegWords: agentPhraseListFromRaw(agentAll.anw as unknown as string),
-      } : {}),
-      scenarioBreakdown: groupScenWithSubs(
-        branchScenRows.filter(r => String(r.clap) === clap)
-      ),
-      products: productRows
-        .filter(pr => String(pr.clap) === clap && pr.product)
-        .map(pr => ({
-          name:     String(pr.product),
-          total:    Number(pr.total),
-          pos:      Number(pr.pos),
-          neg:      Number(pr.neg),
-          posWords: wordListFromRaw(pr.pw as unknown as string),
-          negWords: wordListFromRaw(pr.nw as unknown as string),
-          scenarioBreakdown: groupScenWithSubs(
-            productScenRows.filter(s => String(s.clap) === clap && String(s.product) === String(pr.product))
-          ),
-        })),
-    };
-  });
+  const branches: ClapCustomerBranch[] = (['Logistic', 'Agent', 'Product'] as const).map(clap => ({
+    clap,
+    total: Number(branchTotalRows.find(r => String(r.clap) === clap)?.total ?? 0),
+    pos:   VOC_COUNTS[clap].pos,
+    neg:   VOC_COUNTS[clap].neg,
+    scenarioBreakdown: groupScenWithSubs(
+      branchScenRows.filter(r => String(r.clap) === clap)
+    ),
+  }));
 
   return { overall: { total: Number(overall.total), pos: Number(overall.pos), neg: Number(overall.neg) }, branches };
+}
+
+export interface VocQuote { leadId: string; agentName: string; callDate: string; quote: string; }
+export interface ClapVocQuotesResponse { positive: VocQuote[]; negative: VocQuote[]; }
+
+const VOC_COLUMNS: Record<'Logistic' | 'Agent' | 'Product', { pos: string; neg: string }> = {
+  Logistic: { pos: 'customer_voc_logistic_positive', neg: 'customer_voc_logistic_negative' },
+  Agent:    { pos: 'customer_voc_agent_positive',    neg: 'customer_voc_agent_negative' },
+  Product:  { pos: 'customer_voc_product_positive',  neg: 'customer_voc_product_negative' },
+};
+
+export async function getClapVocQuotes(
+  clap: 'Logistic' | 'Agent' | 'Product',
+  filters: InboundQualityFilters,
+): Promise<ClapVocQuotesResponse> {
+  const { startDate, endDate, clientId } = filters;
+  const cf = clientId ? ' AND q.ClientId = ?' : '';
+  const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+  const cols = VOC_COLUMNS[clap];
+
+  type Row = { leadId: string; agentName: string; callDate: string; quote: string };
+  const runQuery = (column: string) => querySource<Row>(`
+    SELECT q.lead_id AS leadId,
+           COALESCE(am.AgentName, q.User) AS agentName,
+           q.CallDate AS callDate,
+           q.${column} AS quote
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+      AND q.${column} IS NOT NULL AND TRIM(q.${column}) != ''
+    ORDER BY q.CallDate DESC
+    LIMIT 50
+  `, base);
+
+  const [positiveRows, negativeRows] = await Promise.all([
+    runQuery(cols.pos),
+    runQuery(cols.neg),
+  ]);
+
+  const toQuote = (r: Row): VocQuote => ({
+    leadId:    String(r.leadId ?? ''),
+    agentName: String(r.agentName ?? 'Unknown'),
+    callDate:  String(r.callDate),
+    quote:     String(r.quote),
+  });
+
+  return { positive: positiveRows.map(toQuote), negative: negativeRows.map(toQuote) };
+}
+
+// ─── CLAP Product VOC (product name embedded as "Product Name - quote") ────────
+
+interface RawVocRow { leadId: string; agentName: string; callDate: string; raw: string; }
+
+function fetchRawProductVocRows(
+  column: 'customer_voc_product_positive' | 'customer_voc_product_negative',
+  filters: InboundQualityFilters,
+) {
+  const { startDate, endDate, clientId } = filters;
+  const cf = clientId ? ' AND q.ClientId = ?' : '';
+  const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+  return querySource<RawVocRow>(`
+    SELECT q.lead_id AS leadId,
+           COALESCE(am.AgentName, q.User) AS agentName,
+           q.CallDate AS callDate,
+           q.${column} AS raw
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
+      AND q.${column} IS NOT NULL AND TRIM(q.${column}) != ''
+    ORDER BY q.CallDate DESC
+  `, base);
+}
+
+const OTHER_PRODUCT = 'Other';
+
+function splitProductVoc(raw: string): { product: string; quote: string } {
+  const idx = raw.indexOf(' - ');
+  if (idx === -1) return { product: OTHER_PRODUCT, quote: raw.trim() };
+  const product = raw.slice(0, idx).trim();
+  const quote = raw.slice(idx + 3).trim();
+  return { product: product || OTHER_PRODUCT, quote };
+}
+
+export interface ClapProductSummaryItem { product: string; pos: number; neg: number; }
+export interface ClapProductVocSummary { products: ClapProductSummaryItem[]; }
+
+export async function getClapProductVocSummary(filters: InboundQualityFilters): Promise<ClapProductVocSummary> {
+  const [posRows, negRows] = await Promise.all([
+    fetchRawProductVocRows('customer_voc_product_positive', filters),
+    fetchRawProductVocRows('customer_voc_product_negative', filters),
+  ]);
+
+  const counts = new Map<string, { pos: number; neg: number }>();
+  for (const r of posRows) {
+    const { product } = splitProductVoc(String(r.raw));
+    const entry = counts.get(product) ?? { pos: 0, neg: 0 };
+    entry.pos += 1;
+    counts.set(product, entry);
+  }
+  for (const r of negRows) {
+    const { product } = splitProductVoc(String(r.raw));
+    const entry = counts.get(product) ?? { pos: 0, neg: 0 };
+    entry.neg += 1;
+    counts.set(product, entry);
+  }
+
+  const products = Array.from(counts.entries())
+    .map(([product, c]) => ({ product, pos: c.pos, neg: c.neg }))
+    .sort((a, b) => (b.pos + b.neg) - (a.pos + a.neg));
+
+  return { products };
+}
+
+export async function getClapProductVocQuotes(product: string, filters: InboundQualityFilters): Promise<ClapVocQuotesResponse> {
+  const [posRows, negRows] = await Promise.all([
+    fetchRawProductVocRows('customer_voc_product_positive', filters),
+    fetchRawProductVocRows('customer_voc_product_negative', filters),
+  ]);
+
+  const toQuotes = (rows: RawVocRow[]): VocQuote[] =>
+    rows
+      .map(r => ({ ...splitProductVoc(String(r.raw)), leadId: String(r.leadId ?? ''), agentName: String(r.agentName ?? 'Unknown'), callDate: String(r.callDate) }))
+      .filter(r => r.product === product)
+      .slice(0, 50)
+      .map(r => ({ leadId: r.leadId, agentName: r.agentName, callDate: r.callDate, quote: r.quote }));
+
+  return { positive: toQuotes(posRows), negative: toQuotes(negRows) };
 }
 
 // ─── CLAP 360° Intelligence ────────────────────────────────────────────────────

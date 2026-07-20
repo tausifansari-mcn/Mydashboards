@@ -532,3 +532,40 @@ export async function getClapIntelligence(req: Request, res: Response) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
   }
 }
+
+export async function getClapVocQuotes(req: Request, res: Response) {
+  try {
+    const clap = req.query.clap as string;
+    if (clap !== 'Logistic' && clap !== 'Agent' && clap !== 'Product') {
+      res.status(400).json({ message: 'clap must be one of Logistic, Agent, Product' });
+      return;
+    }
+    const data = await svc.getClapVocQuotes(clap, parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getClapProductVocSummary(req: Request, res: Response) {
+  try {
+    const data = await svc.getClapProductVocSummary(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getClapProductVocQuotes(req: Request, res: Response) {
+  try {
+    const product = req.query.product as string;
+    if (!product) {
+      res.status(400).json({ message: 'product is required' });
+      return;
+    }
+    const data = await svc.getClapProductVocQuotes(product, parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}

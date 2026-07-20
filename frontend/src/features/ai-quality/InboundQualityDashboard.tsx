@@ -182,6 +182,7 @@ interface RepeatPivotRow   { mobile_no: string; by_date: Record<string, number>;
 interface RepeatAnalysis   { grand_unique: number; grand_repeat: number; grand_pct: number; day_wise: DayWiseRepeatRow[]; pivot_dates: string[]; pivot_rows: RepeatPivotRow[]; }
 
 interface AgentMasterRow  { masId: string; agentName: string; lob: string; }
+interface VocQuote { leadId: string; agentName: string; callDate: string; quote: string; }
 
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 function downloadCSV(rows: Record<string, unknown>[], filename: string) {
@@ -1472,6 +1473,41 @@ function AgentNameTag({ masId, agentMap, className = '', onSave }: {
   );
 }
 
+// ─── CLAP Branch VOC Quote List ────────────────────────────────────────────────
+function VocQuoteList({ positive, negative, loading }: { positive: VocQuote[]; negative: VocQuote[]; loading: boolean }) {
+  const fmtDate = (d: string) => {
+    const dt = new Date(d);
+    return isNaN(dt.getTime()) ? d : dt.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  };
+  const Column = ({ title, icon, quotes, borderColor, headerBg }: { title: string; icon: string; quotes: VocQuote[]; borderColor: string; headerBg: string }) => (
+    <div className="rounded-xl overflow-hidden border" style={{ borderColor }}>
+      <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: headerBg }}>
+        <span className="text-white text-sm">{icon}</span>
+        <span className="text-[10px] font-black uppercase tracking-widest text-white">{title}</span>
+        <span className="ml-auto text-[9px] text-white/70 font-semibold">{quotes.length}</span>
+      </div>
+      <div className="bg-white p-3 space-y-2 max-h-80 overflow-y-auto">
+        {loading ? (
+          <p className="text-[10px] text-slate-400 italic">Loading…</p>
+        ) : quotes.length === 0 ? (
+          <p className="text-[10px] text-slate-400 italic">No {title.toLowerCase()} recorded</p>
+        ) : quotes.map((q, i) => (
+          <div key={`${q.leadId}-${i}`} className="rounded-lg border border-slate-100 p-2.5 bg-slate-50">
+            <p className="text-[11px] text-slate-700 leading-snug">&ldquo;{q.quote}&rdquo;</p>
+            <p className="text-[9px] text-slate-400 font-semibold mt-1">{q.agentName} · {fmtDate(q.callDate)}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <Column title="Positive Quotes" icon="😊" quotes={positive} borderColor="#A7F3D0" headerBg="linear-gradient(135deg,#064E3B,#059669)" />
+      <Column title="Negative Quotes" icon="😠" quotes={negative} borderColor="#FECACA" headerBg="linear-gradient(135deg,#7F1D1D,#DC2626)" />
+    </div>
+  );
+}
+
 const SCENARIO_COLORS = ['#3B82F6','#22C55E','#F59E0B','#A855F7','#EF4444','#14B8A6','#F97316','#EC4899'];
 
 function cqColor(score: number): string {
@@ -1642,23 +1678,24 @@ export default function InboundQualityDashboard() {
 
   // ── CLAP Customer Product Analysis ──────────────────────────────────────
   type ClapScenWithSubs = { scenario: string; count: number; subs: { sub: string; count: number }[] };
-  type ClapProduct = { name: string; total: number; pos: number; neg: number; posWords: string[]; negWords: string[]; scenarioBreakdown: ClapScenWithSubs[] };
   const [clapCustomer, setClapCustomer] = useState<{
     overall: { total: number; pos: number; neg: number };
     branches: {
       clap: string; total: number; pos: number; neg: number;
-      posWords: string[]; negWords: string[];
       scenarioBreakdown: ClapScenWithSubs[];
-      products: ClapProduct[];
-      agentAllTotal?: number; agentAllPos?: number; agentAllNeg?: number;
-      agentAllPosWords?: string[]; agentAllNegWords?: string[];
     }[];
   } | null>(null);
   const [clapCustomerLoading, setClapCustomerLoading] = useState(false);
   const [clapCustomerExpanded, setClapCustomerExpanded] = useState(false);
   const [clapActiveBranch, setClapActiveBranch] = useState<string | null>(null);
-  const [clapActiveProduct, setClapActiveProduct] = useState<string | null>(null);
   const [clapActiveScenario, setClapActiveScenario] = useState<string | null>(null);
+  const [clapVocQuotes, setClapVocQuotes] = useState<{ positive: VocQuote[]; negative: VocQuote[] } | null>(null);
+  const [clapVocLoading, setClapVocLoading] = useState(false);
+  const [clapProductSummary, setClapProductSummary] = useState<{ product: string; pos: number; neg: number }[] | null>(null);
+  const [clapProductSummaryLoading, setClapProductSummaryLoading] = useState(false);
+  const [clapActiveProductVoc, setClapActiveProductVoc] = useState<string | null>(null);
+  const [clapProductQuotes, setClapProductQuotes] = useState<{ positive: VocQuote[]; negative: VocQuote[] } | null>(null);
+  const [clapProductQuotesLoading, setClapProductQuotesLoading] = useState(false);
 
   // ── Deep analysis state ──────────────────────────────────────────────────
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
@@ -1837,6 +1874,42 @@ export default function InboundQualityDashboard() {
 
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
+
+  // Lazily fetch VOC quotes when the Agent or Logistic branch is opened (Product uses its own product-grouped flow below)
+  useEffect(() => {
+    if (clapActiveBranch !== 'Agent' && clapActiveBranch !== 'Logistic') { setClapVocQuotes(null); return; }
+    setClapVocLoading(true);
+    api.get<{ data: { positive: VocQuote[]; negative: VocQuote[] } }>(
+      `/inbound-quality/clap-voc-quotes?clap=${clapActiveBranch}&clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    )
+      .then(r => setClapVocQuotes(r.data?.data ?? { positive: [], negative: [] }))
+      .catch(() => setClapVocQuotes({ positive: [], negative: [] }))
+      .finally(() => setClapVocLoading(false));
+  }, [clapActiveBranch, clientId, sd, ed]);
+
+  // Product branch: fetch the per-product Positive/Negative summary when opened
+  useEffect(() => {
+    if (clapActiveBranch !== 'Product') { setClapProductSummary(null); setClapActiveProductVoc(null); return; }
+    setClapProductSummaryLoading(true);
+    api.get<{ data: { products: { product: string; pos: number; neg: number }[] } }>(
+      `/inbound-quality/clap-product-voc-summary?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    )
+      .then(r => setClapProductSummary(r.data?.data?.products ?? []))
+      .catch(() => setClapProductSummary([]))
+      .finally(() => setClapProductSummaryLoading(false));
+  }, [clapActiveBranch, clientId, sd, ed]);
+
+  // Product branch: fetch the full VOC quotes for the selected product
+  useEffect(() => {
+    if (!clapActiveProductVoc) { setClapProductQuotes(null); return; }
+    setClapProductQuotesLoading(true);
+    api.get<{ data: { positive: VocQuote[]; negative: VocQuote[] } }>(
+      `/inbound-quality/clap-product-voc-quotes?product=${encodeURIComponent(clapActiveProductVoc)}&clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    )
+      .then(r => setClapProductQuotes(r.data?.data ?? { positive: [], negative: [] }))
+      .catch(() => setClapProductQuotes({ positive: [], negative: [] }))
+      .finally(() => setClapProductQuotesLoading(false));
+  }, [clapActiveProductVoc, clientId, sd, ed]);
 
   // Reset detail caches when date range changes
   useEffect(() => {
@@ -2087,7 +2160,6 @@ export default function InboundQualityDashboard() {
     setClapCustomerLoading(true);
     setClapCustomerExpanded(false);
     setClapActiveBranch(null);
-    setClapActiveProduct(null);
     setClapActiveScenario(null);
     api.get<{ data: typeof clapCustomer }>(`/inbound-quality/clap-customer-analysis?clientId=${clientId}&startDate=${sd}&endDate=${ed}`)
       .then(r => setClapCustomer(r.data?.data ?? null))
@@ -4831,7 +4903,7 @@ export default function InboundQualityDashboard() {
                           {/* Customer root node */}
                           <div className="flex flex-col items-center mb-0">
                             <div
-                              onClick={() => { setClapCustomerExpanded(v => !v); setClapActiveBranch(null); setClapActiveProduct(null); }}
+                              onClick={() => { setClapCustomerExpanded(v => !v); setClapActiveBranch(null); }}
                               className="cursor-pointer rounded-2xl shadow-lg border-2 px-10 py-4 text-center select-none"
                               style={{
                                 background: clapCustomerExpanded ? 'linear-gradient(135deg,#0369A1,#0EA5E9)' : 'white',
@@ -4871,14 +4943,14 @@ export default function InboundQualityDashboard() {
                               {['Logistic', 'Agent', 'Product'].map(branch => {
                                 const m = BRANCH_META[branch];
                                 const bd = clapCustomer?.branches.find(b => b.clap === branch);
-                                const bT = bd?.total ?? 0;
                                 const bP = bd?.pos ?? 0;
                                 const bN = bd?.neg ?? 0;
-                                const bPct = bT > 0 ? Math.round(bP / bT * 100) : 0;
+                                const bQuotes = bP + bN;
+                                const bPct = bQuotes > 0 ? Math.round(bP / bQuotes * 100) : 0;
                                 const isAct = clapActiveBranch === branch;
                                 return (
                                   <div key={branch}
-                                    onClick={() => { setClapActiveBranch(isAct ? null : branch); setClapActiveProduct(null); setClapActiveScenario(null); }}
+                                    onClick={() => { setClapActiveBranch(isAct ? null : branch); setClapActiveScenario(null); }}
                                     className="cursor-pointer rounded-xl shadow-md border-2 px-5 py-3 text-center select-none"
                                     style={{
                                       minWidth: 120, background: isAct ? m.accent : 'white',
@@ -4887,10 +4959,10 @@ export default function InboundQualityDashboard() {
                                     }}>
                                     <div className="text-xl mb-0.5">{m.icon}</div>
                                     <div className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: isAct ? '#fff' : m.accent }}>{m.label}</div>
-                                    <div className="text-lg font-black tabular-nums" style={{ color: isAct ? '#fff' : '#0F172A' }}>{bT.toLocaleString()}</div>
+                                    <div className="text-lg font-black tabular-nums" style={{ color: isAct ? '#fff' : '#0F172A' }}>{bQuotes.toLocaleString()}</div>
                                     <div className="flex gap-2 justify-center mt-1">
-                                      <span className="text-[9px] font-bold" style={{ color: isAct ? '#bbf7d0' : '#16A34A' }}>✅{bP}</span>
-                                      <span className="text-[9px] font-bold" style={{ color: isAct ? '#fecaca' : '#DC2626' }}>❌{bN}</span>
+                                      <span className="text-[9px] font-bold" style={{ color: isAct ? '#bbf7d0' : '#16A34A' }}>✅ Positive {bP}</span>
+                                      <span className="text-[9px] font-bold" style={{ color: isAct ? '#fecaca' : '#DC2626' }}>❌ Negative {bN}</span>
                                     </div>
                                     <div className="mt-1.5 h-1 w-20 mx-auto rounded-full overflow-hidden" style={{ background: 'rgba(0,0,0,0.12)' }}>
                                       <div className="h-full rounded-full transition-all duration-300" style={{ width: `${bPct}%`, background: isAct ? 'rgba(255,255,255,0.7)' : m.accent }} />
@@ -4911,56 +4983,15 @@ export default function InboundQualityDashboard() {
                             if (clapActiveBranch === 'Agent') {
                               const agScens = bd?.scenarioBreakdown ?? [];
                               const agTotal = agScens.reduce((s, r) => s + r.count, 0);
-                              const posWords = bd?.agentAllPosWords ?? bd?.posWords ?? [];
-                              const negWords = bd?.agentAllNegWords ?? bd?.negWords ?? [];
-                              const posCount = bd?.agentAllPos ?? bd?.pos ?? 0;
-                              const negCount = bd?.agentAllNeg ?? bd?.neg ?? 0;
-                              const allTotal = bd?.agentAllTotal ?? bd?.total ?? 0;
                               return (
                                 <div className="rounded-xl overflow-hidden border shadow-sm mb-4" style={{ borderColor: `${m.accent}40` }}>
                                   <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
                                     <span>{m.icon}</span>
                                     <span className="text-[11px] font-black uppercase tracking-widest text-white">Agent — Language &amp; Scenario Analysis</span>
-                                    <span className="ml-auto text-[9px] text-white/60 font-semibold">{allTotal} total audits analysed</span>
+                                    <span className="ml-auto text-[9px] text-white/60 font-semibold">{bd?.total ?? 0} total audits analysed</span>
                                   </div>
                                   <div className="bg-white p-4 space-y-4">
-                                    {/* Phrase clouds — sourced from ALL audits */}
-                                    <div className="grid grid-cols-2 gap-4">
-                                      <div className="rounded-xl overflow-hidden border border-emerald-200">
-                                        <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#064E3B,#059669)' }}>
-                                          <span className="text-white text-sm">😊</span>
-                                          <span className="text-[10px] font-black uppercase tracking-widest text-white">Positive Agent Phrases</span>
-                                          <span className="ml-auto text-[9px] text-white/60 font-semibold">{posCount} calls</span>
-                                        </div>
-                                        <div className="p-3">
-                                          {posWords.length === 0
-                                            ? <p className="text-[10px] text-slate-400 italic">No positive agent phrases recorded</p>
-                                            : <div className="flex flex-wrap gap-2">
-                                                {posWords.map(w => (
-                                                  <span key={w} className="text-[10px] font-semibold px-2.5 py-1 rounded-lg" style={{ background:'#06974A12', border:'1px solid #06974A30', color:'#059669', textTransform:'capitalize' }}>{w}</span>
-                                                ))}
-                                              </div>
-                                          }
-                                        </div>
-                                      </div>
-                                      <div className="rounded-xl overflow-hidden border border-red-200">
-                                        <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#7F1D1D,#DC2626)' }}>
-                                          <span className="text-white text-sm">😠</span>
-                                          <span className="text-[10px] font-black uppercase tracking-widest text-white">Negative Agent Phrases</span>
-                                          <span className="ml-auto text-[9px] text-white/60 font-semibold">{negCount} calls</span>
-                                        </div>
-                                        <div className="p-3">
-                                          {negWords.length === 0
-                                            ? <p className="text-[10px] text-slate-400 italic">No negative agent phrases recorded</p>
-                                            : <div className="flex flex-wrap gap-2">
-                                                {negWords.map(w => (
-                                                  <span key={w} className="text-[10px] font-semibold px-2.5 py-1 rounded-lg" style={{ background:'#DC262612', border:'1px solid #DC262630', color:'#DC2626', textTransform:'capitalize' }}>{w}</span>
-                                                ))}
-                                              </div>
-                                          }
-                                        </div>
-                                      </div>
-                                    </div>
+                                    <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} />
                                     {/* Scenario drill-down */}
                                     {agScens.length > 0 && (
                                       <div>
@@ -5008,9 +5039,6 @@ export default function InboundQualityDashboard() {
 
                             /* ── LOGISTIC branch ── */
                             if (clapActiveBranch === 'Logistic') {
-                              const scenBreakdown = bd?.scenarioBreakdown ?? [];
-                              const logTotal = scenBreakdown.reduce((s, r) => s + r.count, 0);
-                              const products = bd?.products ?? [];
                               return (
                                 <div className="rounded-xl overflow-hidden border shadow-sm mb-4" style={{ borderColor: `${m.accent}40` }}>
                                   <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
@@ -5018,215 +5046,88 @@ export default function InboundQualityDashboard() {
                                     <span className="text-[11px] font-black uppercase tracking-widest text-white">Logistic &amp; Operations — Deep Analysis</span>
                                     <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{bd?.total ?? 0} total calls</span>
                                   </div>
-                                  <div className="bg-white p-4 space-y-4">
-                                    {/* Scenario drill-down */}
-                                    <div>
-                                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Logistic Scenarios — click to expand sub-scenarios</p>
-                                      <div className="space-y-1.5">
-                                        {scenBreakdown.map(s => {
-                                          const clr = scenColor(s.scenario);
-                                          const pct = logTotal > 0 ? Math.round(s.count / logTotal * 100) : 0;
-                                          const isNeg = ['#DC2626','#EF4444'].includes(clr) || ['issue','complaint','fail','wrong','return','refund','reverse','fraud'].some(k => s.scenario.toLowerCase().includes(k));
-                                          const isOpen = clapActiveScenario === `Log:${s.scenario}`;
-                                          return (
-                                            <div key={s.scenario} className="rounded-lg overflow-hidden border" style={{ borderColor: `${clr}30` }}>
-                                              <div
-                                                onClick={() => setClapActiveScenario(isOpen ? null : `Log:${s.scenario}`)}
-                                                className="flex items-center gap-3 px-3 py-2 cursor-pointer"
-                                                style={{ background: isOpen ? `${clr}10` : 'white' }}
-                                              >
-                                                <span className="text-[10px] shrink-0">{isNeg ? '⚠️' : 'ℹ️'}</span>
-                                                <span className="text-[10px] font-bold flex-1 truncate" style={{ color: clr }}>{s.scenario}</span>
-                                                <div className="w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden mx-2">
-                                                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: clr }} />
-                                                </div>
-                                                <span className="text-[10px] font-black tabular-nums w-8 text-right" style={{ color: clr }}>{s.count}</span>
-                                                <span className="text-[9px] text-slate-400 tabular-nums w-7 text-right">{pct}%</span>
-                                                {s.subs.length > 0 && <span className="text-[9px] text-slate-400 ml-1">{isOpen ? '▲' : '▼'}</span>}
-                                              </div>
-                                              {isOpen && s.subs.length > 0 && (
-                                                <div className="px-6 pb-2 pt-1 space-y-1" style={{ background: `${clr}06` }}>
-                                                  {s.subs.map(sub => (
-                                                    <div key={sub.sub} className="flex items-center justify-between gap-2">
-                                                      <span className="text-[9px] text-slate-600 flex-1 truncate">↳ {sub.sub}</span>
-                                                      <span className="text-[9px] font-black tabular-nums" style={{ color: clr }}>{sub.count}</span>
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                              )}
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                    {/* Products mentioned in logistic calls */}
-                                    {products.length > 0 && (
-                                      <div>
-                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Products Mentioned in Logistic Calls</p>
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                          {products.map(prod => {
-                                            const isOpen = clapActiveProduct === prod.name;
-                                            const topScen = prod.scenarioBreakdown[0];
-                                            const topClr = scenColor(topScen?.scenario ?? '');
-                                            return (
-                                              <div key={prod.name}
-                                                onClick={() => setClapActiveProduct(isOpen ? null : prod.name)}
-                                                className="cursor-pointer rounded-lg border p-2.5 transition-all"
-                                                style={{ borderColor: isOpen ? m.accent : '#E2E8F0', background: isOpen ? `${m.accent}08` : 'white' }}>
-                                                <div className="text-[10px] font-bold text-slate-800 truncate mb-1">📦 {prod.name}</div>
-                                                <div className="text-[11px] font-black tabular-nums" style={{ color: m.accent }}>{prod.total} calls</div>
-                                                {topScen && <div className="text-[9px] font-semibold mt-0.5" style={{ color: topClr }}>Top: {topScen.scenario} ({topScen.count})</div>}
-                                                {isOpen && prod.scenarioBreakdown.length > 0 && (
-                                                  <div className="mt-2 space-y-1 border-t border-slate-100 pt-2">
-                                                    {prod.scenarioBreakdown.map(s => (
-                                                      <div key={s.scenario}>
-                                                        <div className="flex justify-between items-center">
-                                                          <span className="text-[9px] font-semibold truncate" style={{ color: scenColor(s.scenario) }}>{s.scenario}</span>
-                                                          <span className="text-[9px] font-black tabular-nums ml-1" style={{ color: scenColor(s.scenario) }}>{s.count}</span>
-                                                        </div>
-                                                        {s.subs.slice(0, 2).map(sub => (
-                                                          <div key={sub.sub} className="flex justify-between pl-3">
-                                                            <span className="text-[8px] text-slate-400 truncate">↳ {sub.sub}</span>
-                                                            <span className="text-[8px] text-slate-400 ml-1">{sub.count}</span>
-                                                          </div>
-                                                        ))}
-                                                      </div>
-                                                    ))}
-                                                  </div>
-                                                )}
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      </div>
-                                    )}
+                                  <div className="bg-white p-4">
+                                    <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} />
                                   </div>
                                 </div>
                               );
                             }
 
                             /* ── PRODUCT branch ── */
-                            const products = bd?.products ?? [];
+                            const productList = clapProductSummary ?? [];
+                            const positiveProducts = productList.filter(p => p.pos > 0);
+                            const negativeProducts = productList.filter(p => p.neg > 0);
+                            const ProductChip = ({ product, count, accent, bg, border }: { product: string; count: number; accent: string; bg: string; border: string }) => {
+                              const isOpen = clapActiveProductVoc === product;
+                              return (
+                                <span
+                                  onClick={() => setClapActiveProductVoc(isOpen ? null : product)}
+                                  className="cursor-pointer text-[10px] font-semibold px-2.5 py-1 rounded-lg"
+                                  style={{
+                                    background: isOpen ? accent : bg,
+                                    border: `1px solid ${border}`,
+                                    color: isOpen ? '#fff' : accent,
+                                  }}
+                                >
+                                  {product} <span style={{ opacity: 0.7 }}>({count})</span>
+                                </span>
+                              );
+                            };
                             return (
                               <div className="rounded-xl overflow-hidden border shadow-sm mb-4" style={{ borderColor: `${m.accent}40` }}>
                                 <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
                                   <span>{m.icon}</span>
-                                  <span className="text-[11px] font-black uppercase tracking-widest text-white">Product — Customer Sentiment &amp; Scenario</span>
-                                  <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{products.length} products · click to analyse</span>
+                                  <span className="text-[11px] font-black uppercase tracking-widest text-white">Product — Customer Sentiment</span>
+                                  <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{productList.length} products</span>
                                 </div>
-                                {products.length === 0 ? (
-                                  <div className="bg-white p-6 text-center text-sm text-slate-400">No product mentions found in transcripts.</div>
+                                {clapProductSummaryLoading ? (
+                                  <div className="bg-white p-6 text-center text-sm text-slate-400">Loading products…</div>
+                                ) : productList.length === 0 ? (
+                                  <div className="bg-white p-6 text-center text-sm text-slate-400">No product mentions found.</div>
                                 ) : (
-                                  <div className="bg-white divide-y divide-slate-50">
-                                    {products.map(prod => {
-                                      const posPct = prod.total > 0 ? Math.round(prod.pos / prod.total * 100) : 0;
-                                      const isOpen = clapActiveProduct === prod.name;
-                                      const topScen = prod.scenarioBreakdown[0];
-                                      return (
-                                        <div key={prod.name}>
-                                          <div onClick={() => setClapActiveProduct(isOpen ? null : prod.name)}
-                                            className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors">
-                                            <div className="w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0" style={{ background: `${m.accent}15`, color: m.accent }}>📦</div>
-                                            <div className="flex-1 min-w-0">
-                                              <div className="text-[12px] font-bold text-slate-900 truncate">{prod.name}</div>
-                                              <div className="flex items-center gap-2 mt-0.5">
-                                                <div className="h-1.5 w-20 rounded-full overflow-hidden bg-red-100">
-                                                  <div className="h-full rounded-full bg-emerald-500" style={{ width: `${posPct}%` }} />
-                                                </div>
-                                                <span className="text-[9px] text-emerald-600 font-bold">{posPct}% pos</span>
-                                                {topScen && <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: `${scenColor(topScen.scenario)}18`, color: scenColor(topScen.scenario) }}>{topScen.scenario}</span>}
-                                              </div>
-                                            </div>
-                                            <div className="flex items-center gap-3 shrink-0">
-                                              <div className="text-right">
-                                                <div className="text-[12px] font-black tabular-nums text-slate-900">{prod.total}</div>
-                                                <div className="text-[9px] text-slate-400">calls</div>
-                                              </div>
-                                              <div className="flex flex-col gap-0.5">
-                                                <span className="text-[10px] font-bold text-emerald-600">✅ {prod.pos}</span>
-                                                <span className="text-[10px] font-bold text-red-500">❌ {prod.neg}</span>
-                                              </div>
-                                              <span className="text-[9px] text-slate-400">{isOpen ? '▲' : '▼'}</span>
-                                            </div>
-                                          </div>
-                                          {/* Expanded — scenario drill + pos/neg words */}
-                                          {isOpen && (
-                                            <div className="px-4 pb-4 pt-1 space-y-3" style={{ background: `${m.accent}06` }}>
-                                              {/* Scenario breakdown with sub-scenario drill */}
-                                              {prod.scenarioBreakdown.length > 0 && (
-                                                <div>
-                                                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Scenario Breakdown — click to see sub-scenarios</p>
-                                                  <div className="space-y-1.5">
-                                                    {prod.scenarioBreakdown.map(s => {
-                                                      const clr = scenColor(s.scenario);
-                                                      const pct = prod.total > 0 ? Math.round(s.count / prod.total * 100) : 0;
-                                                      const key = `Prod:${prod.name}:${s.scenario}`;
-                                                      const isScenOpen = clapActiveScenario === key;
-                                                      return (
-                                                        <div key={s.scenario} className="rounded-lg overflow-hidden border" style={{ borderColor: `${clr}30` }}>
-                                                          <div
-                                                            onClick={() => setClapActiveScenario(isScenOpen ? null : key)}
-                                                            className="flex items-center gap-2 px-3 py-2 cursor-pointer"
-                                                            style={{ background: isScenOpen ? `${clr}10` : 'white' }}
-                                                          >
-                                                            <div className="w-2 h-2 rounded-full shrink-0" style={{ background: clr }} />
-                                                            <span className="text-[10px] font-bold flex-1" style={{ color: clr }}>{s.scenario}</span>
-                                                            <span className="text-[11px] font-black tabular-nums" style={{ color: clr }}>{s.count}</span>
-                                                            <span className="text-[9px] text-slate-400 ml-1">({pct}%)</span>
-                                                            {s.subs.length > 0 && <span className="text-[9px] text-slate-400 ml-1">{isScenOpen ? '▲' : '▼'}</span>}
-                                                          </div>
-                                                          {isScenOpen && s.subs.length > 0 && (
-                                                            <div className="px-6 pb-2 pt-1 space-y-1" style={{ background: `${clr}06` }}>
-                                                              {s.subs.map(sub => (
-                                                                <div key={sub.sub} className="flex items-center justify-between gap-2">
-                                                                  <span className="text-[9px] text-slate-600 flex-1 truncate">↳ {sub.sub}</span>
-                                                                  <span className="text-[9px] font-black tabular-nums" style={{ color: clr }}>{sub.count}</span>
-                                                                </div>
-                                                              ))}
-                                                            </div>
-                                                          )}
-                                                        </div>
-                                                      );
-                                                    })}
-                                                  </div>
-                                                </div>
-                                              )}
-                                              {/* Customer phrase signals */}
-                                              <div className="grid grid-cols-2 gap-3">
-                                                <div className="rounded-xl overflow-hidden border border-emerald-200">
-                                                  <div className="px-3 py-2 flex items-center gap-1.5" style={{ background: 'linear-gradient(135deg,#064E3B,#059669)' }}>
-                                                    <span className="text-[10px] font-black uppercase tracking-widest text-white">😊 Positive Signals</span>
-                                                    <span className="ml-auto text-[9px] text-white/60">{prod.pos} calls</span>
-                                                  </div>
-                                                  <div className="bg-white p-3">
-                                                    {prod.posWords.length === 0
-                                                      ? <p className="text-[10px] text-slate-400 italic">No positive signals</p>
-                                                      : <div className="flex flex-wrap gap-1.5">
-                                                          {prod.posWords.map(w => <span key={w} className="text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize" style={{ background:'#06974A12', border:'1px solid #06974A25', color:'#059669' }}>{w}</span>)}
-                                                        </div>
-                                                    }
-                                                  </div>
-                                                </div>
-                                                <div className="rounded-xl overflow-hidden border border-red-200">
-                                                  <div className="px-3 py-2 flex items-center gap-1.5" style={{ background: 'linear-gradient(135deg,#7F1D1D,#DC2626)' }}>
-                                                    <span className="text-[10px] font-black uppercase tracking-widest text-white">😠 Negative Signals</span>
-                                                    <span className="ml-auto text-[9px] text-white/60">{prod.neg} calls</span>
-                                                  </div>
-                                                  <div className="bg-white p-3">
-                                                    {prod.negWords.length === 0
-                                                      ? <p className="text-[10px] text-slate-400 italic">No negative signals</p>
-                                                      : <div className="flex flex-wrap gap-1.5">
-                                                          {prod.negWords.map(w => <span key={w} className="text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize" style={{ background:'#DC262612', border:'1px solid #DC262625', color:'#DC2626' }}>{w}</span>)}
-                                                        </div>
-                                                    }
-                                                  </div>
-                                                </div>
-                                              </div>
-                                            </div>
-                                          )}
+                                  <div className="bg-white p-4 space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="rounded-xl overflow-hidden border border-emerald-200">
+                                        <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#064E3B,#059669)' }}>
+                                          <span className="text-white text-sm">😊</span>
+                                          <span className="text-[10px] font-black uppercase tracking-widest text-white">Positive Products</span>
+                                          <span className="ml-auto text-[9px] text-white/70 font-semibold">{positiveProducts.length}</span>
                                         </div>
-                                      );
-                                    })}
+                                        <div className="p-3 flex flex-wrap gap-2">
+                                          {positiveProducts.length === 0
+                                            ? <p className="text-[10px] text-slate-400 italic">No positive products</p>
+                                            : positiveProducts.map(p => (
+                                                <ProductChip key={p.product} product={p.product} count={p.pos} accent="#059669" bg="#06974A12" border="#06974A30" />
+                                              ))
+                                          }
+                                        </div>
+                                      </div>
+                                      <div className="rounded-xl overflow-hidden border border-red-200">
+                                        <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#7F1D1D,#DC2626)' }}>
+                                          <span className="text-white text-sm">😠</span>
+                                          <span className="text-[10px] font-black uppercase tracking-widest text-white">Negative Products</span>
+                                          <span className="ml-auto text-[9px] text-white/70 font-semibold">{negativeProducts.length}</span>
+                                        </div>
+                                        <div className="p-3 flex flex-wrap gap-2">
+                                          {negativeProducts.length === 0
+                                            ? <p className="text-[10px] text-slate-400 italic">No negative products</p>
+                                            : negativeProducts.map(p => (
+                                                <ProductChip key={p.product} product={p.product} count={p.neg} accent="#DC2626" bg="#DC262612" border="#DC262630" />
+                                              ))
+                                          }
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {clapActiveProductVoc && (
+                                      <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Full VOC — {clapActiveProductVoc}</p>
+                                        <VocQuoteList
+                                          positive={clapProductQuotes?.positive ?? []}
+                                          negative={clapProductQuotes?.negative ?? []}
+                                          loading={clapProductQuotesLoading}
+                                        />
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>
