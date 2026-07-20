@@ -1691,6 +1691,11 @@ export default function InboundQualityDashboard() {
   const [clapActiveScenario, setClapActiveScenario] = useState<string | null>(null);
   const [clapVocQuotes, setClapVocQuotes] = useState<{ positive: VocQuote[]; negative: VocQuote[] } | null>(null);
   const [clapVocLoading, setClapVocLoading] = useState(false);
+  const [clapProductSummary, setClapProductSummary] = useState<{ product: string; pos: number; neg: number }[] | null>(null);
+  const [clapProductSummaryLoading, setClapProductSummaryLoading] = useState(false);
+  const [clapActiveProductVoc, setClapActiveProductVoc] = useState<string | null>(null);
+  const [clapProductQuotes, setClapProductQuotes] = useState<{ positive: VocQuote[]; negative: VocQuote[] } | null>(null);
+  const [clapProductQuotesLoading, setClapProductQuotesLoading] = useState(false);
 
   // ── Deep analysis state ──────────────────────────────────────────────────
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
@@ -1870,9 +1875,9 @@ export default function InboundQualityDashboard() {
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
 
-  // Lazily fetch VOC quotes when a CLAP branch is opened
+  // Lazily fetch VOC quotes when the Agent or Logistic branch is opened (Product uses its own product-grouped flow below)
   useEffect(() => {
-    if (!clapActiveBranch) { setClapVocQuotes(null); return; }
+    if (clapActiveBranch !== 'Agent' && clapActiveBranch !== 'Logistic') { setClapVocQuotes(null); return; }
     setClapVocLoading(true);
     api.get<{ data: { positive: VocQuote[]; negative: VocQuote[] } }>(
       `/inbound-quality/clap-voc-quotes?clap=${clapActiveBranch}&clientId=${clientId}&startDate=${sd}&endDate=${ed}`
@@ -1881,6 +1886,30 @@ export default function InboundQualityDashboard() {
       .catch(() => setClapVocQuotes({ positive: [], negative: [] }))
       .finally(() => setClapVocLoading(false));
   }, [clapActiveBranch, clientId, sd, ed]);
+
+  // Product branch: fetch the per-product Positive/Negative summary when opened
+  useEffect(() => {
+    if (clapActiveBranch !== 'Product') { setClapProductSummary(null); setClapActiveProductVoc(null); return; }
+    setClapProductSummaryLoading(true);
+    api.get<{ data: { products: { product: string; pos: number; neg: number }[] } }>(
+      `/inbound-quality/clap-product-voc-summary?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    )
+      .then(r => setClapProductSummary(r.data?.data?.products ?? []))
+      .catch(() => setClapProductSummary([]))
+      .finally(() => setClapProductSummaryLoading(false));
+  }, [clapActiveBranch, clientId, sd, ed]);
+
+  // Product branch: fetch the full VOC quotes for the selected product
+  useEffect(() => {
+    if (!clapActiveProductVoc) { setClapProductQuotes(null); return; }
+    setClapProductQuotesLoading(true);
+    api.get<{ data: { positive: VocQuote[]; negative: VocQuote[] } }>(
+      `/inbound-quality/clap-product-voc-quotes?product=${encodeURIComponent(clapActiveProductVoc)}&clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    )
+      .then(r => setClapProductQuotes(r.data?.data ?? { positive: [], negative: [] }))
+      .catch(() => setClapProductQuotes({ positive: [], negative: [] }))
+      .finally(() => setClapProductQuotesLoading(false));
+  }, [clapActiveProductVoc, clientId, sd, ed]);
 
   // Reset detail caches when date range changes
   useEffect(() => {
@@ -5067,16 +5096,64 @@ export default function InboundQualityDashboard() {
                             }
 
                             /* ── PRODUCT branch ── */
+                            const productList = clapProductSummary ?? [];
                             return (
                               <div className="rounded-xl overflow-hidden border shadow-sm mb-4" style={{ borderColor: `${m.accent}40` }}>
                                 <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
                                   <span>{m.icon}</span>
                                   <span className="text-[11px] font-black uppercase tracking-widest text-white">Product — Customer Sentiment</span>
-                                  <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{bd?.total ?? 0} total calls</span>
+                                  <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{productList.length} products</span>
                                 </div>
-                                <div className="bg-white p-4">
-                                  <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} />
-                                </div>
+                                {clapProductSummaryLoading ? (
+                                  <div className="bg-white p-6 text-center text-sm text-slate-400">Loading products…</div>
+                                ) : productList.length === 0 ? (
+                                  <div className="bg-white p-6 text-center text-sm text-slate-400">No product mentions found.</div>
+                                ) : (
+                                  <div className="bg-white divide-y divide-slate-50">
+                                    {productList.map(prod => {
+                                      const total = prod.pos + prod.neg;
+                                      const posPct = total > 0 ? Math.round(prod.pos / total * 100) : 0;
+                                      const isOpen = clapActiveProductVoc === prod.product;
+                                      return (
+                                        <div key={prod.product}>
+                                          <div onClick={() => setClapActiveProductVoc(isOpen ? null : prod.product)}
+                                            className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors">
+                                            <div className="w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0" style={{ background: `${m.accent}15`, color: m.accent }}>📦</div>
+                                            <div className="flex-1 min-w-0">
+                                              <div className="text-[12px] font-bold text-slate-900 truncate">{prod.product}</div>
+                                              <div className="flex items-center gap-2 mt-0.5">
+                                                <div className="h-1.5 w-20 rounded-full overflow-hidden bg-red-100">
+                                                  <div className="h-full rounded-full bg-emerald-500" style={{ width: `${posPct}%` }} />
+                                                </div>
+                                                <span className="text-[9px] text-emerald-600 font-bold">{posPct}% pos</span>
+                                              </div>
+                                            </div>
+                                            <div className="flex items-center gap-3 shrink-0">
+                                              <div className="text-right">
+                                                <div className="text-[12px] font-black tabular-nums text-slate-900">{total}</div>
+                                                <div className="text-[9px] text-slate-400">quotes</div>
+                                              </div>
+                                              <div className="flex flex-col gap-0.5">
+                                                <span className="text-[10px] font-bold text-emerald-600">✅ {prod.pos}</span>
+                                                <span className="text-[10px] font-bold text-red-500">❌ {prod.neg}</span>
+                                              </div>
+                                              <span className="text-[9px] text-slate-400">{isOpen ? '▲' : '▼'}</span>
+                                            </div>
+                                          </div>
+                                          {isOpen && (
+                                            <div className="px-4 pb-4 pt-1" style={{ background: `${m.accent}06` }}>
+                                              <VocQuoteList
+                                                positive={clapProductQuotes?.positive ?? []}
+                                                negative={clapProductQuotes?.negative ?? []}
+                                                loading={clapProductQuotesLoading}
+                                              />
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </div>
                             );
                           })()}
