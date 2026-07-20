@@ -5097,6 +5097,24 @@ export default function InboundQualityDashboard() {
 
                             /* ── PRODUCT branch ── */
                             const productList = clapProductSummary ?? [];
+                            const positiveProducts = productList.filter(p => p.pos > 0);
+                            const negativeProducts = productList.filter(p => p.neg > 0);
+                            const ProductChip = ({ product, count, accent, bg, border }: { product: string; count: number; accent: string; bg: string; border: string }) => {
+                              const isOpen = clapActiveProductVoc === product;
+                              return (
+                                <span
+                                  onClick={() => setClapActiveProductVoc(isOpen ? null : product)}
+                                  className="cursor-pointer text-[10px] font-semibold px-2.5 py-1 rounded-lg"
+                                  style={{
+                                    background: isOpen ? accent : bg,
+                                    border: `1px solid ${border}`,
+                                    color: isOpen ? '#fff' : accent,
+                                  }}
+                                >
+                                  {product} <span style={{ opacity: 0.7 }}>({count})</span>
+                                </span>
+                              );
+                            };
                             return (
                               <div className="rounded-xl overflow-hidden border shadow-sm mb-4" style={{ borderColor: `${m.accent}40` }}>
                                 <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
@@ -5109,49 +5127,49 @@ export default function InboundQualityDashboard() {
                                 ) : productList.length === 0 ? (
                                   <div className="bg-white p-6 text-center text-sm text-slate-400">No product mentions found.</div>
                                 ) : (
-                                  <div className="bg-white divide-y divide-slate-50">
-                                    {productList.map(prod => {
-                                      const total = prod.pos + prod.neg;
-                                      const posPct = total > 0 ? Math.round(prod.pos / total * 100) : 0;
-                                      const isOpen = clapActiveProductVoc === prod.product;
-                                      return (
-                                        <div key={prod.product}>
-                                          <div onClick={() => setClapActiveProductVoc(isOpen ? null : prod.product)}
-                                            className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors">
-                                            <div className="w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0" style={{ background: `${m.accent}15`, color: m.accent }}>📦</div>
-                                            <div className="flex-1 min-w-0">
-                                              <div className="text-[12px] font-bold text-slate-900 truncate">{prod.product}</div>
-                                              <div className="flex items-center gap-2 mt-0.5">
-                                                <div className="h-1.5 w-20 rounded-full overflow-hidden bg-red-100">
-                                                  <div className="h-full rounded-full bg-emerald-500" style={{ width: `${posPct}%` }} />
-                                                </div>
-                                                <span className="text-[9px] text-emerald-600 font-bold">{posPct}% pos</span>
-                                              </div>
-                                            </div>
-                                            <div className="flex items-center gap-3 shrink-0">
-                                              <div className="text-right">
-                                                <div className="text-[12px] font-black tabular-nums text-slate-900">{total}</div>
-                                                <div className="text-[9px] text-slate-400">quotes</div>
-                                              </div>
-                                              <div className="flex flex-col gap-0.5">
-                                                <span className="text-[10px] font-bold text-emerald-600">✅ {prod.pos}</span>
-                                                <span className="text-[10px] font-bold text-red-500">❌ {prod.neg}</span>
-                                              </div>
-                                              <span className="text-[9px] text-slate-400">{isOpen ? '▲' : '▼'}</span>
-                                            </div>
-                                          </div>
-                                          {isOpen && (
-                                            <div className="px-4 pb-4 pt-1" style={{ background: `${m.accent}06` }}>
-                                              <VocQuoteList
-                                                positive={clapProductQuotes?.positive ?? []}
-                                                negative={clapProductQuotes?.negative ?? []}
-                                                loading={clapProductQuotesLoading}
-                                              />
-                                            </div>
-                                          )}
+                                  <div className="bg-white p-4 space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="rounded-xl overflow-hidden border border-emerald-200">
+                                        <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#064E3B,#059669)' }}>
+                                          <span className="text-white text-sm">😊</span>
+                                          <span className="text-[10px] font-black uppercase tracking-widest text-white">Positive Products</span>
+                                          <span className="ml-auto text-[9px] text-white/70 font-semibold">{positiveProducts.length}</span>
                                         </div>
-                                      );
-                                    })}
+                                        <div className="p-3 flex flex-wrap gap-2">
+                                          {positiveProducts.length === 0
+                                            ? <p className="text-[10px] text-slate-400 italic">No positive products</p>
+                                            : positiveProducts.map(p => (
+                                                <ProductChip key={p.product} product={p.product} count={p.pos} accent="#059669" bg="#06974A12" border="#06974A30" />
+                                              ))
+                                          }
+                                        </div>
+                                      </div>
+                                      <div className="rounded-xl overflow-hidden border border-red-200">
+                                        <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#7F1D1D,#DC2626)' }}>
+                                          <span className="text-white text-sm">😠</span>
+                                          <span className="text-[10px] font-black uppercase tracking-widest text-white">Negative Products</span>
+                                          <span className="ml-auto text-[9px] text-white/70 font-semibold">{negativeProducts.length}</span>
+                                        </div>
+                                        <div className="p-3 flex flex-wrap gap-2">
+                                          {negativeProducts.length === 0
+                                            ? <p className="text-[10px] text-slate-400 italic">No negative products</p>
+                                            : negativeProducts.map(p => (
+                                                <ProductChip key={p.product} product={p.product} count={p.neg} accent="#DC2626" bg="#DC262612" border="#DC262630" />
+                                              ))
+                                          }
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {clapActiveProductVoc && (
+                                      <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Full VOC — {clapActiveProductVoc}</p>
+                                        <VocQuoteList
+                                          positive={clapProductQuotes?.positive ?? []}
+                                          negative={clapProductQuotes?.negative ?? []}
+                                          loading={clapProductQuotesLoading}
+                                        />
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>
