@@ -1474,7 +1474,7 @@ function AgentNameTag({ masId, agentMap, className = '', onSave }: {
 }
 
 // ─── CLAP Branch VOC Quote List ────────────────────────────────────────────────
-function VocQuoteList({ positive, negative, loading }: { positive: VocQuote[]; negative: VocQuote[]; loading: boolean }) {
+function VocQuoteList({ positive, negative, loading, onQuoteClick }: { positive: VocQuote[]; negative: VocQuote[]; loading: boolean; onQuoteClick?: (leadId: string) => void }) {
   const fmtDate = (d: string) => {
     const dt = new Date(d);
     return isNaN(dt.getTime()) ? d : dt.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -1492,7 +1492,12 @@ function VocQuoteList({ positive, negative, loading }: { positive: VocQuote[]; n
         ) : quotes.length === 0 ? (
           <p className="text-[10px] text-slate-400 italic">No {title.toLowerCase()} recorded</p>
         ) : quotes.map((q, i) => (
-          <div key={`${q.leadId}-${i}`} className="rounded-lg border border-slate-100 p-2.5 bg-slate-50">
+          <div
+            key={`${q.leadId}-${i}`}
+            onClick={() => onQuoteClick?.(q.leadId)}
+            title={onQuoteClick ? 'Click to view call transcript' : undefined}
+            className={`rounded-lg border border-slate-100 p-2.5 bg-slate-50 ${onQuoteClick ? 'cursor-pointer hover:bg-slate-100 hover:border-slate-300 transition-colors' : ''}`}
+          >
             <p className="text-[11px] text-slate-700 leading-snug">&ldquo;{q.quote}&rdquo;</p>
             <p className="text-[9px] text-slate-400 font-semibold mt-1">{q.agentName} · {fmtDate(q.callDate)}</p>
           </div>
@@ -1701,16 +1706,6 @@ export default function InboundQualityDashboard() {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [drillModal, setDrillModal] = useState<{ title: string; accent: string; rows: Record<string,unknown>[]; columns: { key: string; label: string }[] } | null>(null);
   const [drillLoading, setDrillLoading] = useState(false);
-  const [clapWordsData, setClapWordsData] = useState<{ clap: string; positive: { word: string; count: number }[]; negative: { word: string; count: number }[] }[]>([]);
-  const [clapWordsLoading, setClapWordsLoading] = useState(false);
-  const [activeClapWord, setActiveClapWord] = useState<string | null>(null);
-  const [clapScenarioPos, setClapScenarioPos] = useState<{ scenario: string; count: number; pct: number }[] | null>(null);
-  const [clapScenarioNeg, setClapScenarioNeg] = useState<{ scenario: string; count: number; pct: number }[] | null>(null);
-  const [clapScenarioWords, setClapScenarioWords] = useState<{ pos: string[]; neg: string[] }>({ pos: [], neg: [] });
-  const [clapWordsVisible, setClapWordsVisible] = useState<{ pos: boolean; neg: boolean }>({ pos: false, neg: false });
-  const [clapScenarioLoading, setClapScenarioLoading] = useState(false);
-  const [clapScenarioDrill, setClapScenarioDrill] = useState<{ type: 'pos' | 'neg'; scenario: string; subScenarios: { subScenario: string; count: number; pct: number }[]; words: string[]; wordsOpen: boolean } | null>(null);
-  const [clapScenarioDrillLoading, setClapScenarioDrillLoading] = useState(false);
   const [clapDrillModal, setClapDrillModal] = useState<{
     clap: string;
     level: 'scenario' | 'sub' | 'feedback' | 'reason';
@@ -1778,28 +1773,6 @@ export default function InboundQualityDashboard() {
         .catch(() => setKwDrill(p => ({ ...p, loading: false })));
       return { ...prev, loading: true };
     });
-  };
-
-  const loadClapScenario = async (clap: string) => {
-    setClapScenarioPos(null);
-    setClapScenarioNeg(null);
-    setClapScenarioDrill(null);
-    setClapScenarioLoading(true);
-    try {
-      const q = `clientId=${clientId}&startDate=${sd}&endDate=${ed}&clap=${encodeURIComponent(clap)}`;
-      const [posRes, negRes] = await Promise.all([
-        api.get<{ data: { scenarios: { scenario: string; count: number; pct: number }[]; words: string[] } }>(`/inbound-quality/clap-keyword-drill?type=pos&${q}`),
-        api.get<{ data: { scenarios: { scenario: string; count: number; pct: number }[]; words: string[] } }>(`/inbound-quality/clap-keyword-drill?type=neg&${q}`),
-      ]);
-      setClapScenarioPos(posRes.data?.data?.scenarios ?? []);
-      setClapScenarioNeg(negRes.data?.data?.scenarios ?? []);
-      setClapScenarioWords({ pos: posRes.data?.data?.words ?? [], neg: negRes.data?.data?.words ?? [] });
-    } catch {
-      setClapScenarioPos([]);
-      setClapScenarioNeg([]);
-    } finally {
-      setClapScenarioLoading(false);
-    }
   };
 
   const toggleExpand = (key: string) => setExpandedSection(prev => prev === key ? null : key);
@@ -2151,11 +2124,6 @@ export default function InboundQualityDashboard() {
     fetchDetailAnalysis();
     fetchRepeatAnalysis();
     fetchClapAnalysis();
-    setClapWordsLoading(true);
-    api.get<{ data: { claps: { clap: string; positive: { word: string; count: number }[]; negative: { word: string; count: number }[] }[] } }>(`/inbound-quality/clap-words?clientId=${clientId}&startDate=${sd}&endDate=${ed}`)
-      .then(r => setClapWordsData(r.data?.data?.claps ?? []))
-      .catch(() => setClapWordsData([]))
-      .finally(() => setClapWordsLoading(false));
     // CLAP Customer product analysis
     setClapCustomerLoading(true);
     setClapCustomerExpanded(false);
@@ -4991,7 +4959,7 @@ export default function InboundQualityDashboard() {
                                     <span className="ml-auto text-[9px] text-white/60 font-semibold">{bd?.total ?? 0} total audits analysed</span>
                                   </div>
                                   <div className="bg-white p-4 space-y-4">
-                                    <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} />
+                                    <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} onQuoteClick={handleLeadClick} />
                                     {/* Scenario drill-down */}
                                     {agScens.length > 0 && (
                                       <div>
@@ -5047,7 +5015,7 @@ export default function InboundQualityDashboard() {
                                     <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{bd?.total ?? 0} total calls</span>
                                   </div>
                                   <div className="bg-white p-4">
-                                    <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} />
+                                    <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} onQuoteClick={handleLeadClick} />
                                   </div>
                                 </div>
                               );
@@ -5125,6 +5093,7 @@ export default function InboundQualityDashboard() {
                                           positive={clapProductQuotes?.positive ?? []}
                                           negative={clapProductQuotes?.negative ?? []}
                                           loading={clapProductQuotesLoading}
+                                          onQuoteClick={handleLeadClick}
                                         />
                                       </div>
                                     )}
@@ -5137,214 +5106,6 @@ export default function InboundQualityDashboard() {
                       );
                     })()}
 
-                    {/* ── Word Frequency reference grid ── */}
-                    <div className="mt-2 mb-3 flex items-center gap-2">
-                      <div className="flex-1 h-px bg-blue-200/60" />
-                      <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Word Frequency by Category</span>
-                      <div className="flex-1 h-px bg-blue-200/60" />
-                    </div>
-                    <div className="grid grid-cols-4 gap-4 mb-4">
-                      {(() => {
-                        const WA = ['Customer', 'Logistic', 'Agent', 'Product'];
-                        const CC: Record<string, { icon: string; accent: string }> = {
-                          Customer: { icon: '👤', accent: '#3B82F6' },
-                          Logistic: { icon: '🚚', accent: '#F59E0B' },
-                          Agent:    { icon: '🎧', accent: '#E11D48' },
-                          Product:  { icon: '📦', accent: '#10B981' },
-                        };
-                        return WA.map(clap => {
-                          const c = CC[clap];
-                          const wa = clapWordsData.find(x => x.clap === clap);
-                          const totalPos = wa?.positive.reduce((s, w) => s + w.count, 0) ?? 0;
-                          const totalNeg = wa?.negative.reduce((s, w) => s + w.count, 0) ?? 0;
-                          const total = totalPos + totalNeg;
-                          const posPct = total > 0 ? (totalPos / total) * 100 : 50;
-                          const isActive = activeClapWord === clap;
-                          return (
-                            <div key={clap} onClick={() => {
-                              if (isActive) { setActiveClapWord(null); setClapScenarioDrill(null); return; }
-                              setActiveClapWord(clap); setClapScenarioDrill(null); loadClapScenario(clap);
-                            }}
-                              className="rounded-2xl overflow-hidden cursor-pointer transition-all duration-200"
-                              style={{
-                                border: isActive ? `2px solid ${c.accent}` : `1.5px solid ${c.accent}40`,
-                                boxShadow: isActive ? `0 4px 20px ${c.accent}30` : '0 1px 4px rgba(0,0,0,0.06)',
-                              }}>
-                              <div className="px-4 py-3" style={{ background: isActive ? `linear-gradient(135deg, ${c.accent}, ${c.accent}BB)` : `${c.accent}12` }}>
-                                <div className="flex items-center gap-2">
-                                  <div className="w-7 h-7 rounded-lg flex items-center justify-center text-base" style={{ backgroundColor: isActive ? 'rgba(255,255,255,0.2)' : `${c.accent}20` }}>{c.icon}</div>
-                                  <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: isActive ? '#fff' : c.accent }}>{clap}</span>
-                                  {isActive && <span className="ml-auto text-[9px] text-white/70 font-semibold">Selected ✓</span>}
-                                </div>
-                              </div>
-                              <div className="bg-white px-4 py-3">
-                              {clapWordsLoading ? (
-                                <div className="space-y-2">
-                                  <div className="h-5 w-16 bg-slate-100 rounded animate-pulse" />
-                                  <div className="h-1.5 w-full bg-slate-100 rounded-full animate-pulse" />
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="flex items-center gap-3 mb-2">
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-base font-black tabular-nums text-emerald-600">{totalPos.toLocaleString()}</span>
-                                      <span className="text-[9px] font-bold text-emerald-600">pos</span>
-                                    </div>
-                                    <span className="text-slate-300">|</span>
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-base font-black tabular-nums text-red-600">{totalNeg.toLocaleString()}</span>
-                                      <span className="text-[9px] font-bold text-red-600">neg</span>
-                                    </div>
-                                  </div>
-                                  <div className="h-2 w-full rounded-full bg-red-100 overflow-hidden">
-                                    <div className="h-full rounded-full transition-all duration-300 bg-emerald-500" style={{ width: `${posPct}%` }} />
-                                  </div>
-                                  <div className="flex justify-between mt-1">
-                                    <span className="text-[9px] font-bold text-emerald-700">😊 {posPct.toFixed(0)}%</span>
-                                    <span className="text-[9px] font-bold text-red-600">😠 {(100 - posPct).toFixed(0)}%</span>
-                                  </div>
-                                </>
-                              )}
-                              </div>
-                            </div>
-                          );
-                        });
-                      })()}
-                    </div>
-
-                    {/* Scenario panel */}
-                    {activeClapWord && clapScenarioDrill ? (
-                      /* Sub-scenario drill level */
-                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                        <div className="px-5 py-4 border-b border-slate-100">
-                          <div className="flex items-center gap-2 mb-1">
-                            <button onClick={() => setClapScenarioDrill(null)}
-                              className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors">{activeClapWord} {clapScenarioDrill.type === 'pos' ? '😊 Positive' : '😠 Negative'} Scenarios</button>
-                            <span className="text-slate-300 text-[10px]">›</span>
-                            <span className="text-[11px] font-bold text-slate-900">{clapScenarioDrill.scenario}</span>
-                          </div>
-                          <p className="text-[10px] text-slate-500">Sub-scenarios for {clapScenarioDrill.scenario}</p>
-                        </div>
-                        <div className="p-4">
-                          {clapScenarioDrill.words.length > 0 && (
-                            <div className="mb-4 pb-4 border-b border-slate-100">
-                              <button onClick={() => setClapScenarioDrill(p => p ? { ...p, wordsOpen: !p.wordsOpen } : null)}
-                                className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-700 transition-colors">
-                                <span className={`inline-block transition-transform duration-200 ${clapScenarioDrill.wordsOpen ? 'rotate-90' : ''}`}>▸</span>
-                                {clapScenarioDrill.wordsOpen ? 'Hide Matched Words' : 'Show Matched Words'} ({clapScenarioDrill.words.length})
-                              </button>
-                              {clapScenarioDrill.wordsOpen && (
-                                <div className="flex flex-wrap gap-1.5 mt-2">
-                                  {clapScenarioDrill.words.map(w => (
-                                    <span key={w} className="text-[10px] font-semibold px-2.5 py-1 rounded-full border capitalize" style={{ backgroundColor: `${clapScenarioDrill.type === 'pos' ? '#059669' : '#DC2626'}0c`, borderColor: `${clapScenarioDrill.type === 'pos' ? '#059669' : '#DC2626'}25`, color: clapScenarioDrill.type === 'pos' ? '#059669' : '#DC2626' }}>{w}</span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          {clapScenarioDrillLoading ? (
-                            <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => (
-                              <div key={i} className="h-12 bg-slate-100 rounded-lg animate-pulse" />
-                            ))}</div>
-                          ) : clapScenarioDrill.subScenarios.length === 0 ? (
-                            <p className="text-sm text-slate-400 text-center py-6">No sub-scenarios found.</p>
-                          ) : (
-                            <div className="space-y-1">
-                              {clapScenarioDrill.subScenarios.map((s, i) => {
-                                const maxCount = Math.max(...clapScenarioDrill.subScenarios.map(x => x.count));
-                                const barPct = maxCount > 0 ? (s.count / maxCount) * 100 : 0;
-                                return (
-                                  <div key={i} className="relative flex items-center justify-between px-4 py-3 rounded-lg bg-slate-50 border border-slate-100 hover:border-slate-200 transition-all overflow-hidden">
-                                    {/* Background bar */}
-                                    <div className="absolute left-0 top-0 bottom-0 rounded-lg opacity-20 transition-all" style={{ width: `${barPct}%`, backgroundColor: clapScenarioDrill.type === 'pos' ? '#059669' : '#DC2626' }} />
-                                    <span className="relative text-sm font-bold text-slate-900 z-10">{s.subScenario}</span>
-                                    <span className="relative text-sm font-extrabold tabular-nums z-10" style={{ color: clapScenarioDrill.type === 'pos' ? '#059669' : '#DC2626' }}>{s.count.toLocaleString()}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : activeClapWord ? (
-                      /* Positive / Negative scenario columns */
-                      <div className="grid grid-cols-2 gap-5">
-                        {[
-                          { type: 'pos' as const, label: '😊 Positive Scenarios', data: clapScenarioPos, color: '#059669', bg: 'bg-emerald-50/50' },
-                          { type: 'neg' as const, label: '😠 Negative Scenarios', data: clapScenarioNeg, color: '#DC2626', bg: 'bg-red-50/50' },
-                        ].map(col => (
-                          <div key={col.type} className="bg-white rounded-xl overflow-hidden shadow-sm" style={{ border: `1px solid ${col.color}40` }}>
-                            <div className="px-4 py-3 flex items-center justify-between"
-                              style={{ background: col.type === 'pos'
-                                ? 'linear-gradient(135deg, #064E3B 0%, #065F46 50%, #059669 100%)'
-                                : 'linear-gradient(135deg, #7F1D1D 0%, #991B1B 50%, #DC2626 100%)' }}>
-                              <div className="flex items-center gap-2">
-                                <div className="w-2.5 h-2.5 rounded-full bg-white/80" />
-                                <span className="text-[11px] font-black uppercase tracking-widest text-white">{col.label}</span>
-                              </div>
-                              {clapScenarioWords[col.type].length > 0 && (
-                                <button onClick={() => setClapWordsVisible(p => ({ ...p, [col.type]: !p[col.type] }))}
-                                  className="text-[9px] font-bold uppercase tracking-widest text-white/70 hover:text-white transition-colors">
-                                  {clapWordsVisible[col.type] ? '− Words' : '+ Words'} ({clapScenarioWords[col.type].length})
-                                </button>
-                              )}
-                            </div>
-                            <div className="p-3">
-                              {/* Words section */}
-                              {clapScenarioWords[col.type].length > 0 && clapWordsVisible[col.type] && (
-                                <div className="mb-3 pb-3 border-b border-slate-100">
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {clapScenarioWords[col.type].map(w => (
-                                      <span key={w} className="text-[10px] font-semibold px-2.5 py-1 rounded-full border capitalize" style={{ backgroundColor: `${col.color}0c`, borderColor: `${col.color}25`, color: col.color }}>{w}</span>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                              {clapScenarioLoading ? (
-                                <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => (
-                                  <div key={i} className="h-14 bg-slate-100 rounded-lg animate-pulse" />
-                                ))}</div>
-                              ) : col.data === null ? (
-                                <p className="text-sm text-slate-400 text-center py-6">Loading...</p>
-                              ) : col.data.length === 0 ? (
-                                <p className="text-sm text-slate-400 text-center py-6">No scenarios found</p>
-                              ) : (
-                                <div className="space-y-1.5">
-                                  {col.data.map((s, i) => (
-                                    <div key={i} onClick={() => {
-                                      setClapScenarioDrillLoading(true);
-                                      setClapScenarioDrill({ type: col.type, scenario: s.scenario, subScenarios: [], words: [], wordsOpen: false });
-                                      api.get<{ data: { subScenarios: { subScenario: string; count: number; pct: number }[]; words: string[] } }>(
-                                        `/inbound-quality/clap-keyword-drill?type=${col.type}&clap=${encodeURIComponent(activeClapWord)}&scenario=${encodeURIComponent(s.scenario)}&clientId=${clientId}&startDate=${sd}&endDate=${ed}`
-                                      ).then(r => {
-                                        setClapScenarioDrill(p => p ? { ...p, subScenarios: r.data?.data?.subScenarios ?? [], words: r.data?.data?.words ?? [] } : null);
-                                      }).catch(() => {
-                                        setClapScenarioDrill(p => p ? { ...p, subScenarios: [] } : null);
-                                      }).finally(() => setClapScenarioDrillLoading(false));
-                                    }}
-                                      className="relative flex items-center justify-between px-3.5 py-3 rounded-lg cursor-pointer transition-all overflow-hidden group hover:shadow-sm"
-                                      style={{ backgroundColor: `${col.color}04`, border: `1px solid ${col.color}15` }}>
-                                      <div className="flex items-center gap-2.5">
-                                        <div className="w-1.5 h-1.5 rounded-full opacity-40 group-hover:opacity-100 transition-opacity" style={{ backgroundColor: col.color }} />
-                                        <span className="text-sm font-bold text-slate-900">{s.scenario}</span>
-                                        {/* Mini bar */}
-                                        <div className="hidden sm:flex h-1.5 w-16 rounded-full bg-slate-100 overflow-hidden">
-                                          <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(s.pct, 100)}%`, backgroundColor: col.color }} />
-                                        </div>
-                                      </div>
-                                      <div className="flex items-center gap-3">
-                                        <span className="text-[10px] font-semibold text-slate-400">{s.pct}%</span>
-                                        <span className="text-sm font-extrabold tabular-nums" style={{ color: col.color }}>{s.count.toLocaleString()}</span>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
                     </div>
                   </div>
 
