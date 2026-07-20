@@ -5039,8 +5039,6 @@ export default function InboundQualityDashboard() {
 
                             /* ── LOGISTIC branch ── */
                             if (clapActiveBranch === 'Logistic') {
-                              const scenBreakdown = bd?.scenarioBreakdown ?? [];
-                              const logTotal = scenBreakdown.reduce((s, r) => s + r.count, 0);
                               return (
                                 <div className="rounded-xl overflow-hidden border shadow-sm mb-4" style={{ borderColor: `${m.accent}40` }}>
                                   <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
@@ -5048,47 +5046,7 @@ export default function InboundQualityDashboard() {
                                     <span className="text-[11px] font-black uppercase tracking-widest text-white">Logistic &amp; Operations — Deep Analysis</span>
                                     <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{bd?.total ?? 0} total calls</span>
                                   </div>
-                                  <div className="bg-white p-4 space-y-4">
-                                    {/* Scenario drill-down */}
-                                    <div>
-                                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Logistic Scenarios — click to expand sub-scenarios</p>
-                                      <div className="space-y-1.5">
-                                        {scenBreakdown.map(s => {
-                                          const clr = scenColor(s.scenario);
-                                          const pct = logTotal > 0 ? Math.round(s.count / logTotal * 100) : 0;
-                                          const isNeg = ['#DC2626','#EF4444'].includes(clr) || ['issue','complaint','fail','wrong','return','refund','reverse','fraud'].some(k => s.scenario.toLowerCase().includes(k));
-                                          const isOpen = clapActiveScenario === `Log:${s.scenario}`;
-                                          return (
-                                            <div key={s.scenario} className="rounded-lg overflow-hidden border" style={{ borderColor: `${clr}30` }}>
-                                              <div
-                                                onClick={() => setClapActiveScenario(isOpen ? null : `Log:${s.scenario}`)}
-                                                className="flex items-center gap-3 px-3 py-2 cursor-pointer"
-                                                style={{ background: isOpen ? `${clr}10` : 'white' }}
-                                              >
-                                                <span className="text-[10px] shrink-0">{isNeg ? '⚠️' : 'ℹ️'}</span>
-                                                <span className="text-[10px] font-bold flex-1 truncate" style={{ color: clr }}>{s.scenario}</span>
-                                                <div className="w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden mx-2">
-                                                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: clr }} />
-                                                </div>
-                                                <span className="text-[10px] font-black tabular-nums w-8 text-right" style={{ color: clr }}>{s.count}</span>
-                                                <span className="text-[9px] text-slate-400 tabular-nums w-7 text-right">{pct}%</span>
-                                                {s.subs.length > 0 && <span className="text-[9px] text-slate-400 ml-1">{isOpen ? '▲' : '▼'}</span>}
-                                              </div>
-                                              {isOpen && s.subs.length > 0 && (
-                                                <div className="px-6 pb-2 pt-1 space-y-1" style={{ background: `${clr}06` }}>
-                                                  {s.subs.map(sub => (
-                                                    <div key={sub.sub} className="flex items-center justify-between gap-2">
-                                                      <span className="text-[9px] text-slate-600 flex-1 truncate">↳ {sub.sub}</span>
-                                                      <span className="text-[9px] font-black tabular-nums" style={{ color: clr }}>{sub.count}</span>
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                              )}
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
+                                  <div className="bg-white p-4">
                                     <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} />
                                   </div>
                                 </div>
