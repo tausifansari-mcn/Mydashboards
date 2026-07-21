@@ -730,10 +730,14 @@ END`;
 export interface Scenario1Item { scenario1: string; count: number; pct: number; }
 export interface ScenarioItem  { scenario: string; count: number; pct: number; children: Scenario1Item[]; }
 
+// Bellavita's ClientId in call_quality_assessment (source: shivamgiri.md_clients.dialdesk_client_id)
+const BELLAVITA_CLIENT_ID = '375';
+
 export async function getScenarios(filters: InboundQualityFilters): Promise<ScenarioItem[]> {
   const { startDate, endDate, clientId } = filters;
   const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
   const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+  const isBellavita = String(clientId) === BELLAVITA_CLIENT_ID;
 
   const rows = await querySource<{ scenario: string; scenario1: string; cnt: number }>(`
     SELECT
@@ -752,7 +756,8 @@ export async function getScenarios(filters: InboundQualityFilters): Promise<Scen
 
   const scenMap: Record<string, { children: Scenario1Item[]; total: number }> = {};
   for (const r of rows) {
-    const scen  = String(r.scenario);
+    // Bellavita audits Repeat calls as a Complaint sub-type — fold into Complaint here.
+    const scen  = isBellavita && String(r.scenario) === 'Repeat' ? 'Complaint' : String(r.scenario);
     const cnt   = Number(r.cnt);
     if (!scenMap[scen]) scenMap[scen] = { children: [], total: 0 };
     scenMap[scen].total += cnt;
@@ -764,10 +769,12 @@ export async function getScenarios(filters: InboundQualityFilters): Promise<Scen
       scenario,
       count: scenTotal,
       pct: total > 0 ? Math.round((scenTotal / total) * 1000) / 10 : 0,
-      children: children.map(c => ({
-        ...c,
-        pct: scenTotal > 0 ? Math.round((c.count / scenTotal) * 1000) / 10 : 0,
-      })),
+      children: children
+        .map(c => ({
+          ...c,
+          pct: scenTotal > 0 ? Math.round((c.count / scenTotal) * 1000) / 10 : 0,
+        }))
+        .sort((a, b) => b.count - a.count),
     }))
     .sort((a, b) => b.count - a.count);
 }
@@ -860,12 +867,14 @@ export async function getSocialMediaThreats(filters: InboundQualityFilters): Pro
 export interface SocialThreatDetailRow {
   lead_id:      string;
   agent_id:     string;
+  mobile_no:    string;
   threat_word:  string;
   threat_type:  'Social Media' | 'Court & Legal';
   scenario:     string;
   scenario1:    string;
   date:         string;
   client_id:    string;
+  transcript:   string;
 }
 
 export async function getSocialThreatDetail(
@@ -876,13 +885,14 @@ export async function getSocialThreatDetail(
   const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
   const rows = await querySource<{
-    lead_id: string; agent_id: string; threat_word: string;
+    lead_id: string; agent_id: string; mobile_no: string; threat_word: string;
     threat_type: string; scenario: string; scenario1: string;
-    date: string; client_id: string;
+    date: string; client_id: string; transcript: string;
   }>(`
     SELECT
       COALESCE(q.lead_id, '')                                                 AS lead_id,
       q.User                                                                  AS agent_id,
+      COALESCE(q.MobileNo, '')                                                AS mobile_no,
       COALESCE(NULLIF(TRIM(q.sensetive_word), ''), '—')                       AS threat_word,
       CASE
         WHEN LOWER(q.sensetive_word) LIKE '%social%' THEN 'Social Media'
@@ -891,7 +901,8 @@ export async function getSocialThreatDetail(
       COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')                     AS scenario,
       COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')                     AS scenario1,
       DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                              AS date,
-      q.ClientId                                                              AS client_id
+      q.ClientId                                                              AS client_id,
+      COALESCE(q.Transcribe_Text, '')                                         AS transcript
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -920,12 +931,14 @@ export async function getSocialThreatDetail(
     rows: rows.map(r => ({
       lead_id:     String(r.lead_id),
       agent_id:    String(r.agent_id),
+      mobile_no:   String(r.mobile_no ?? ''),
       threat_word: String(r.threat_word),
       threat_type: (r.threat_type === 'Social Media' ? 'Social Media' : 'Court & Legal') as SocialThreatDetailRow['threat_type'],
       scenario:    String(r.scenario),
       scenario1:   String(r.scenario1),
       date:        String(r.date),
       client_id:   String(r.client_id),
+      transcript:  String(r.transcript ?? ''),
     })),
   };
 }
@@ -1616,15 +1629,17 @@ function abuseMeaning(word: string): string {
 }
 
 export interface AbuseDetailRow {
-  speaker:   'Agent' | 'Customer';
-  lead_id:   string;
-  agent_id:  string;
-  word:      string;
-  meaning:   string;
-  scenario:  string;
-  scenario1: string;
-  date:      string;
-  client_id: string;
+  speaker:    'Agent' | 'Customer';
+  lead_id:    string;
+  agent_id:   string;
+  mobile_no:  string;
+  word:       string;
+  meaning:    string;
+  scenario:   string;
+  scenario1:  string;
+  date:       string;
+  client_id:  string;
+  transcript: string;
 }
 
 export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ total: number; rows: AbuseDetailRow[] }> {
@@ -1633,7 +1648,7 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
   const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
   const [agentRows, custRows] = await Promise.all([
-    querySource<{ word: string; count: number; scenario: string; scenario1: string; user: string; lead_id: string; date: string; client_id: string }>(`
+    querySource<{ word: string; count: number; scenario: string; scenario1: string; user: string; lead_id: string; mobile_no: string; date: string; client_id: string; transcript: string }>(`
       SELECT
         TRIM(q.agent_hindi_cuss_words)  AS word,
         q.agent_hindi_cuss_count        AS count,
@@ -1641,8 +1656,10 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
         q.User                          AS user,
         COALESCE(q.lead_id, '')         AS lead_id,
+        COALESCE(q.MobileNo, '')        AS mobile_no,
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
-        q.ClientId                      AS client_id
+        q.ClientId                      AS client_id,
+        COALESCE(q.Transcribe_Text, '') AS transcript
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -1658,8 +1675,10 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
         q.User AS user,
         COALESCE(q.lead_id, '') AS lead_id,
+        COALESCE(q.MobileNo, '') AS mobile_no,
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
-        q.ClientId AS client_id
+        q.ClientId AS client_id,
+        COALESCE(q.Transcribe_Text, '') AS transcript
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -1670,7 +1689,7 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
       ORDER BY date DESC
     `, [...params, ...params]),
 
-    querySource<{ word: string; count: number; scenario: string; scenario1: string; user: string; lead_id: string; date: string; client_id: string }>(`
+    querySource<{ word: string; count: number; scenario: string; scenario1: string; user: string; lead_id: string; mobile_no: string; date: string; client_id: string; transcript: string }>(`
       SELECT
         TRIM(q.customer_hindi_cuss_words)  AS word,
         q.customer_hindi_cuss_count        AS count,
@@ -1678,8 +1697,10 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
         q.User AS user,
         COALESCE(q.lead_id, '') AS lead_id,
+        COALESCE(q.MobileNo, '') AS mobile_no,
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
-        q.ClientId AS client_id
+        q.ClientId AS client_id,
+        COALESCE(q.Transcribe_Text, '') AS transcript
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -1695,8 +1716,10 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
         q.User AS user,
         COALESCE(q.lead_id, '') AS lead_id,
+        COALESCE(q.MobileNo, '') AS mobile_no,
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
-        q.ClientId AS client_id
+        q.ClientId AS client_id,
+        COALESCE(q.Transcribe_Text, '') AS transcript
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -1710,26 +1733,30 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
 
   const rows: AbuseDetailRow[] = [
     ...agentRows.map(r => ({
-      speaker:   'Agent' as const,
-      lead_id:   String(r.lead_id ?? ''),
-      agent_id:  String(r.user),
-      word:      String(r.word),
-      meaning:   abuseMeaning(String(r.word)),
-      scenario:  String(r.scenario),
-      scenario1: String(r.scenario1),
-      date:      String(r.date),
-      client_id: String(r.client_id),
+      speaker:    'Agent' as const,
+      lead_id:    String(r.lead_id ?? ''),
+      agent_id:   String(r.user),
+      mobile_no:  String(r.mobile_no ?? ''),
+      word:       String(r.word),
+      meaning:    abuseMeaning(String(r.word)),
+      scenario:   String(r.scenario),
+      scenario1:  String(r.scenario1),
+      date:       String(r.date),
+      client_id:  String(r.client_id),
+      transcript: String(r.transcript ?? ''),
     })),
     ...custRows.map(r => ({
-      speaker:   'Customer' as const,
-      lead_id:   String(r.lead_id ?? ''),
-      agent_id:  String(r.user),
-      word:      String(r.word),
-      meaning:   abuseMeaning(String(r.word)),
-      scenario:  String(r.scenario),
-      scenario1: String(r.scenario1),
-      date:      String(r.date),
-      client_id: String(r.client_id),
+      speaker:    'Customer' as const,
+      lead_id:    String(r.lead_id ?? ''),
+      agent_id:   String(r.user),
+      mobile_no:  String(r.mobile_no ?? ''),
+      word:       String(r.word),
+      meaning:    abuseMeaning(String(r.word)),
+      scenario:   String(r.scenario),
+      scenario1:  String(r.scenario1),
+      date:       String(r.date),
+      client_id:  String(r.client_id),
+      transcript: String(r.transcript ?? ''),
     })),
   ].sort((a, b) => b.date.localeCompare(a.date));
 
@@ -1739,13 +1766,15 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
 // ─── Threat / Frustration Detail ─────────────────────────────────────────────
 
 export interface NegCallDetailRow {
-  lead_id:   string;
-  agent_id:  string;
-  word:      string;
-  scenario:  string;
-  scenario1: string;
-  date:      string;
-  client_id: string;
+  lead_id:    string;
+  agent_id:   string;
+  mobile_no:  string;
+  word:       string;
+  scenario:   string;
+  scenario1:  string;
+  date:       string;
+  client_id:  string;
+  transcript: string;
 }
 
 export async function getNegSignalDetail(
@@ -1761,17 +1790,19 @@ export async function getNegSignalDetail(
   ];
 
   const rows = await querySource<{
-    lead_id: string; agent_id: string; word: string;
-    scenario: string; scenario1: string; date: string; client_id: string;
+    lead_id: string; agent_id: string; mobile_no: string; word: string;
+    scenario: string; scenario1: string; date: string; client_id: string; transcript: string;
   }>(`
     SELECT
       COALESCE(q.lead_id, '') AS lead_id,
       q.User                  AS agent_id,
+      COALESCE(q.MobileNo, '') AS mobile_no,
       q.top_negative_words    AS word,
       COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown') AS scenario,
       COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
       DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
-      q.ClientId              AS client_id
+      q.ClientId              AS client_id,
+      COALESCE(q.Transcribe_Text, '') AS transcript
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -1787,13 +1818,15 @@ export async function getNegSignalDetail(
   return {
     total: rows.length,
     rows: rows.map(r => ({
-      lead_id:   String(r.lead_id),
-      agent_id:  String(r.agent_id),
-      word:      String(r.word),
-      scenario:  String(r.scenario),
-      scenario1: String(r.scenario1),
-      date:      String(r.date),
-      client_id: String(r.client_id),
+      lead_id:    String(r.lead_id),
+      agent_id:   String(r.agent_id),
+      mobile_no:  String(r.mobile_no ?? ''),
+      word:       String(r.word),
+      scenario:   String(r.scenario),
+      scenario1:  String(r.scenario1),
+      date:       String(r.date),
+      client_id:  String(r.client_id),
+      transcript: String(r.transcript ?? ''),
     })),
   };
 }
@@ -1815,15 +1848,17 @@ export interface ScamFlagCounts {
 }
 
 export interface ScamWordRow {
-  word:      string;
-  scenario:  string;
-  scenario1: string;
-  count:     number;
-  pct:       number;
-  lead_id?:  string;
-  agent_id?: string;
-  date?:     string;
-  flag?:     string;
+  word:        string;
+  scenario:    string;
+  scenario1:   string;
+  count:       number;
+  pct:         number;
+  lead_id?:    string;
+  agent_id?:   string;
+  mobile_no?:  string;
+  date?:       string;
+  flag?:       string;
+  transcript?: string;
 }
 
 export interface PotentialScamDetail {
@@ -1857,17 +1892,19 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
         AND ${SCAM_CONDITION}
     `, params),
 
-    querySource<{ lead_id: string; agent_id: string; word: string; scenario: string; scenario1: string; date: string; flag: string }>(`
+    querySource<{ lead_id: string; agent_id: string; mobile_no: string; word: string; scenario: string; scenario1: string; date: string; flag: string; transcript: string }>(`
       SELECT
         COALESCE(q.lead_id, '')       AS lead_id,
         q.User                         AS agent_id,
+        COALESCE(q.MobileNo, '')       AS mobile_no,
         COALESCE(NULLIF(TRIM(q.top_negative_words), ''), '—') AS word,
         COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')    AS scenario,
         COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')    AS scenario1,
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')             AS date,
         CASE WHEN LOWER(TRIM(q.financial_fraud)) = 'yes'
              THEN 'Financial Fraud'
-             ELSE 'Scam' END AS flag
+             ELSE 'Scam' END AS flag,
+        COALESCE(q.Transcribe_Text, '') AS transcript
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -1891,10 +1928,12 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
       scenario1: String(r.scenario1),
       count:     1,
       pct:       0,
-      lead_id:   String(r.lead_id),
-      agent_id:  String(r.agent_id),
-      date:      String(r.date),
-      flag:      String(r.flag),
+      lead_id:    String(r.lead_id),
+      agent_id:   String(r.agent_id),
+      mobile_no:  String(r.mobile_no ?? ''),
+      date:       String(r.date),
+      flag:       String(r.flag),
+      transcript: String(r.transcript ?? ''),
     })),
   };
 }
@@ -3974,7 +4013,7 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   return { overall: { total: Number(overall.total), pos: Number(overall.pos), neg: Number(overall.neg) }, branches };
 }
 
-export interface VocQuote { leadId: string; agentName: string; callDate: string; quote: string; }
+export interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; }
 export interface ClapVocQuotesResponse { positive: VocQuote[]; negative: VocQuote[]; }
 
 const VOC_COLUMNS: Record<'Logistic' | 'Agent' | 'Product', { pos: string; neg: string }> = {
@@ -3992,10 +4031,12 @@ export async function getClapVocQuotes(
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
   const cols = VOC_COLUMNS[clap];
 
-  type Row = { leadId: string; agentName: string; callDate: string; quote: string };
+  type Row = { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string };
   const runQuery = (column: string) => querySource<Row>(`
     SELECT q.lead_id AS leadId,
+           q.User AS agentId,
            COALESCE(am.AgentName, q.User) AS agentName,
+           COALESCE(q.MobileNo, '') AS mobileNo,
            q.CallDate AS callDate,
            q.${column} AS quote
     FROM db_audit.call_quality_assessment q
@@ -4013,7 +4054,9 @@ export async function getClapVocQuotes(
 
   const toQuote = (r: Row): VocQuote => ({
     leadId:    String(r.leadId ?? ''),
+    agentId:   String(r.agentId ?? ''),
     agentName: String(r.agentName ?? 'Unknown'),
+    mobileNo:  String(r.mobileNo ?? ''),
     callDate:  String(r.callDate),
     quote:     String(r.quote),
   });
@@ -4023,7 +4066,7 @@ export async function getClapVocQuotes(
 
 // ─── CLAP Product VOC (product name embedded as "Product Name - quote") ────────
 
-interface RawVocRow { leadId: string; agentName: string; callDate: string; raw: string; }
+interface RawVocRow { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; raw: string; }
 
 function fetchRawProductVocRows(
   column: 'customer_voc_product_positive' | 'customer_voc_product_negative',
@@ -4034,7 +4077,9 @@ function fetchRawProductVocRows(
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
   return querySource<RawVocRow>(`
     SELECT q.lead_id AS leadId,
+           q.User AS agentId,
            COALESCE(am.AgentName, q.User) AS agentName,
+           COALESCE(q.MobileNo, '') AS mobileNo,
            q.CallDate AS callDate,
            q.${column} AS raw
     FROM db_audit.call_quality_assessment q
@@ -4093,10 +4138,17 @@ export async function getClapProductVocQuotes(product: string, filters: InboundQ
 
   const toQuotes = (rows: RawVocRow[]): VocQuote[] =>
     rows
-      .map(r => ({ ...splitProductVoc(String(r.raw)), leadId: String(r.leadId ?? ''), agentName: String(r.agentName ?? 'Unknown'), callDate: String(r.callDate) }))
+      .map(r => ({
+        ...splitProductVoc(String(r.raw)),
+        leadId:    String(r.leadId ?? ''),
+        agentId:   String(r.agentId ?? ''),
+        agentName: String(r.agentName ?? 'Unknown'),
+        mobileNo:  String(r.mobileNo ?? ''),
+        callDate:  String(r.callDate),
+      }))
       .filter(r => r.product === product)
       .slice(0, 50)
-      .map(r => ({ leadId: r.leadId, agentName: r.agentName, callDate: r.callDate, quote: r.quote }));
+      .map(r => ({ leadId: r.leadId, agentId: r.agentId, agentName: r.agentName, mobileNo: r.mobileNo, callDate: r.callDate, quote: r.quote }));
 
   return { positive: toQuotes(posRows), negative: toQuotes(negRows) };
 }

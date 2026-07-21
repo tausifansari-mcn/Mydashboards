@@ -56,7 +56,7 @@ interface DateRow {
   date: string; connected: number; saleCount: number; revenue: number;
   conversionPct: number; dailyTarget: number; cumulativeRevenue: number; cumulativeTarget: number;
 }
-interface DateDetail { date: string; saleCount: number; revenue: number; codCount: number; codRevenue: number; paidCount: number; paidRevenue: number; }
+interface DateDetail { date: string; saleCount: number; revenue: number; codCount: number; codRevenue: number; paidCount: number; paidRevenue: number; paidPct: number; }
 interface DashData   { kpis: Kpis; dateRows: DateRow[]; dateTable: DateDetail[]; }
 
 interface AgentRow {
@@ -121,12 +121,15 @@ function KpiCard({ label, value, sub, icon: Icon, color, gradient }: {
 }
 
 // ── Chart Card ────────────────────────────────────────────────────────────────
-function ChartCard({ title, onExpand, children }: { title: string; onExpand: () => void; children: React.ReactNode }) {
+function ChartCard({ title, subtitle, onExpand, children }: { title: string; subtitle?: string; onExpand: () => void; children: React.ReactNode }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
       <div className="flex items-center justify-between px-5 py-3" style={{ background: NAVY }}>
-        <h3 className="text-sm font-bold text-white">{title}</h3>
-        <button onClick={onExpand} className="p-1.5 rounded-lg transition text-white/70 hover:text-white hover:bg-white/20">
+        <div>
+          <h3 className="text-sm font-bold text-white">{title}</h3>
+          {subtitle && <p className="text-[10px] text-indigo-200 mt-0.5">{subtitle}</p>}
+        </div>
+        <button onClick={onExpand} title="Expand to see the full range" className="p-1.5 rounded-lg transition text-white/70 hover:text-white hover:bg-white/20">
           <Maximize2 size={14} />
         </button>
       </div>
@@ -403,9 +406,8 @@ const DATE_COLS: TableCol<DateDetail>[] = [
   { key: 'saleCount',   label: 'Sale Count',   align: 'right', fmt: fmtNum },
   { key: 'revenue',     label: 'Revenue',      align: 'right', fmt: fmtMoneyFull },
   { key: 'codCount',    label: 'COD Count',    align: 'right', fmt: fmtNum },
-  { key: 'codRevenue',  label: 'COD Revenue',  align: 'right', fmt: fmtMoneyFull },
   { key: 'paidCount',   label: 'Paid Count',   align: 'right', fmt: fmtNum },
-  { key: 'paidRevenue', label: 'Paid Revenue', align: 'right', fmt: fmtMoneyFull },
+  { key: 'paidPct',     label: 'Paid %',       align: 'right', fmt: (v: number) => `${v}%` },
 ];
 
 // ── Export Date Range Modal ───────────────────────────────────────────────────
@@ -1170,24 +1172,22 @@ function AgentDetailsTab({ data, loading, error, onRefresh }: {
             <table className="w-full text-xs">
               <thead>
                 <tr style={{ background: '#EEF2FF' }}>
-                  {['#','Emp ID','Name','LOB','TL','DOJ','FHD','Tenure','Bucket','Status','DOL', ...(isSuperAdmin ? ['Actions'] : [])].map(h => (
+                  {['#','Emp ID','Name','TL','DOJ','FHD','Bucket','Status','DOL', ...(isSuperAdmin ? ['Actions'] : [])].map(h => (
                     <th key={h} className="px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap text-left">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={12} className="text-center py-10 text-slate-400">No agents found</td></tr>
+                  <tr><td colSpan={10} className="text-center py-10 text-slate-400">No agents found</td></tr>
                 ) : filtered.map((a, i) => (
                   <tr key={a.id} className="border-t border-slate-50 hover:bg-slate-50/70 transition-colors">
                     <td className="px-3 py-2.5 text-slate-400">{i + 1}</td>
                     <td className="px-3 py-2.5 font-semibold text-slate-700 whitespace-nowrap">{a.empId}</td>
                     <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap font-medium">{a.name}</td>
-                    <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{a.lob || '—'}</td>
                     <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{a.tl || '—'}</td>
                     <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{a.doj || '—'}</td>
                     <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{a.fhd || '—'}</td>
-                    <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap" style={{ fontVariantNumeric: 'tabular-nums' }}>{a.tenure > 0 ? `${a.tenure}d` : '—'}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: '#EEF2FF', color: NAVY }}>{a.tenureBucket || '—'}</span>
                     </td>
@@ -1470,13 +1470,14 @@ export default function NeemansDashboard() {
   const rows = (data?.dateRows ?? []).map(r => ({
     ...r, label: r.date.replace(/^(\d+)-([A-Za-z]{3}).*$/, '$1-$2'),
   }));
+  const rowsLast7 = rows.slice(-7);
 
-  type ChartDef = { key: ExpandKey; title: string; comp: (h?: number) => React.ReactNode };
+  type ChartDef = { key: ExpandKey; title: string; comp: (h?: number, full?: boolean) => React.ReactNode };
   const OVERALL_CHARTS: ChartDef[] = [
-    { key: 'conversion',  title: 'Date-wise Conversion %',       comp: (h) => <ConversionChart data={rows} height={h} /> },
-    { key: 'revenue',     title: 'Date-wise Revenue',            comp: (h) => <RevenueChart data={rows} height={h} /> },
-    { key: 'saleCount',   title: 'Date-wise Sale Count',         comp: (h) => <SaleCountChart data={rows} height={h} /> },
-    { key: 'achievement', title: 'Cumulative Revenue vs Target', comp: (h) => <AchievementChart data={rows} height={h} /> },
+    { key: 'conversion',  title: 'Date-wise Conversion %',       comp: (h, full) => <ConversionChart data={full ? rows : rowsLast7} height={h} /> },
+    { key: 'revenue',     title: 'Date-wise Revenue',            comp: (h, full) => <RevenueChart data={full ? rows : rowsLast7} height={h} /> },
+    { key: 'saleCount',   title: 'Date-wise Sale Count',         comp: (h, full) => <SaleCountChart data={full ? rows : rowsLast7} height={h} /> },
+    { key: 'achievement', title: 'Cumulative Revenue vs Target', comp: (h, full) => <AchievementChart data={full ? rows : rowsLast7} height={h} /> },
   ];
   const AGENT_CHARTS: ChartDef[] = [
     { key: 'agentRevenue',  title: 'Top 5 Agents — Revenue',    comp: (h) => <AgentTop5RevenueChart data={agentData} height={h} /> },
@@ -1700,10 +1701,10 @@ export default function NeemansDashboard() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-5">
                 {OVERALL_CHARTS.map(ch => (
-                  <ChartCard key={ch.key} title={ch.title} onExpand={() => setExpand(ch.key)}>
+                  <ChartCard key={ch.key} title={ch.title} subtitle="Last 7 days · click ⤢ to expand" onExpand={() => setExpand(ch.key)}>
                     {rows.length === 0
                       ? <div className="flex items-center justify-center h-52 text-sm text-slate-400">No chart data</div>
-                      : ch.comp(240)}
+                      : ch.comp(240, false)}
                   </ChartCard>
                 ))}
               </div>
@@ -1793,7 +1794,7 @@ export default function NeemansDashboard() {
       {/* ── Expand Modal ── */}
       {expand && expandedChart && (
         <ChartModal title={expandedChart.title} onClose={() => setExpand(null)}>
-          {expandedChart.comp(460)}
+          {expandedChart.comp(460, true)}
         </ChartModal>
       )}
 

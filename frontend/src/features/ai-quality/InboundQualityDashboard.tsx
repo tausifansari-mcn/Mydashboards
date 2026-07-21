@@ -12,7 +12,6 @@ import {
   ShieldAlert, AlertOctagon, Download, Maximize2, Minimize2, X, Info, Loader2, Loader, Pencil, Check,
 } from 'lucide-react';
 import api from '@/lib/axios';
-import Clap360Intelligence from './Clap360Intelligence';
 
 function toLocalDT(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -26,39 +25,45 @@ interface ScamFlagCounts {
   scam_words:      number;
 }
 interface ScamWordRow {
-  word:      string;
-  scenario:  string;
-  scenario1: string;
-  count:     number;
-  pct:       number;
-  lead_id?:  string;
-  agent_id?: string;
-  date?:     string;
-  flag?:     string;
+  word:        string;
+  scenario:    string;
+  scenario1:   string;
+  count:       number;
+  pct:         number;
+  lead_id?:    string;
+  agent_id?:   string;
+  mobile_no?:  string;
+  date?:       string;
+  flag?:       string;
+  transcript?: string;
 }
 interface PotentialScamDetail { flags: ScamFlagCounts; wordRows: ScamWordRow[]; }
 
 interface AbuseDetailRow {
-  speaker:   'Agent' | 'Customer';
-  lead_id:   string;
-  agent_id:  string;
-  word:      string;
-  meaning:   string;
-  scenario:  string;
-  scenario1: string;
-  date:      string;
-  client_id: string;
+  speaker:    'Agent' | 'Customer';
+  lead_id:    string;
+  agent_id:   string;
+  mobile_no:  string;
+  word:       string;
+  meaning:    string;
+  scenario:   string;
+  scenario1:  string;
+  date:       string;
+  client_id:  string;
+  transcript: string;
 }
 interface AbuseDetailResponse { total: number; rows: AbuseDetailRow[]; }
 
 interface NegSignalDetailCallRow {
-  lead_id:   string;
-  agent_id:  string;
-  word:      string;
-  scenario:  string;
-  scenario1: string;
-  date:      string;
-  client_id: string;
+  lead_id:    string;
+  agent_id:   string;
+  mobile_no:  string;
+  word:       string;
+  scenario:   string;
+  scenario1:  string;
+  date:       string;
+  client_id:  string;
+  transcript: string;
 }
 interface NegSignalDetailCallResponse { total: number; rows: NegSignalDetailCallRow[]; }
 
@@ -105,12 +110,14 @@ interface FatalCallItem {
 interface SocialThreatDetailRow {
   lead_id:     string;
   agent_id:    string;
+  mobile_no:   string;
   threat_word: string;
   threat_type: 'Social Media' | 'Court & Legal';
   scenario:    string;
   scenario1:   string;
   date:        string;
   client_id:   string;
+  transcript:  string;
 }
 interface SocialThreatDetailResponse { total: number; rows: SocialThreatDetailRow[]; }
 
@@ -182,7 +189,7 @@ interface RepeatPivotRow   { mobile_no: string; by_date: Record<string, number>;
 interface RepeatAnalysis   { grand_unique: number; grand_repeat: number; grand_pct: number; day_wise: DayWiseRepeatRow[]; pivot_dates: string[]; pivot_rows: RepeatPivotRow[]; }
 
 interface AgentMasterRow  { masId: string; agentName: string; lob: string; }
-interface VocQuote { leadId: string; agentName: string; callDate: string; quote: string; }
+interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; }
 
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 function downloadCSV(rows: Record<string, unknown>[], filename: string) {
@@ -855,7 +862,7 @@ function PosSignalDetailModal({
   );
 }
 
-function AbuseDetailModal({ detail, loading, onClose, onLeadClick }: { detail: AbuseDetailResponse | null; loading: boolean; onClose: () => void; onLeadClick: (leadId: string) => void }) {
+function AbuseDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }: { detail: AbuseDetailResponse | null; loading: boolean; onClose: () => void; onLeadClick: (leadId: string) => void; resolveAgent: (masId: string) => string }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', h);
@@ -883,6 +890,13 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick }: { detail: A
             <p className="text-sm font-bold text-slate-900">Abuse Detection — Full Breakdown</p>
             <p className="text-[10px] text-slate-500 font-medium mt-0.5">Agent & customer abusive language detected from call transcripts</p>
           </div>
+          {!loading && visible.length > 0 && (
+            <ExportBtn onClick={() => downloadCSV(visible.map(r => ({
+              'Lead ID': r.lead_id, Speaker: r.speaker, 'Agent Name': resolveAgent(r.agent_id),
+              'Mobile No': r.mobile_no, 'Word Used': r.word, Meaning: r.meaning,
+              Scenario: r.scenario, 'Sub-Scenario': r.scenario1, Date: r.date, Transcript: r.transcript,
+            })), 'abuse-detection.csv')} />
+          )}
           <button onClick={onClose} className="text-slate-400 hover:text-slate-900 transition-colors p-1">
             <X size={18} />
           </button>
@@ -933,7 +947,7 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick }: { detail: A
                   <table className="w-full text-xs">
                     <thead>
                       <tr style={{ background: '#FAF5FF' }}>
-                        {['Lead ID','Speaker','Agent ID','Word Used','Meaning','Scenario','Sub-Scenario','Date'].map(h => (
+                        {['Lead ID','Speaker','Agent Name','Mobile No','Word Used','Meaning','Scenario','Sub-Scenario','Date'].map(h => (
                           <th key={h} className="px-4 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -960,7 +974,8 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick }: { detail: A
                                 {isAgent ? '⚠️ Agent' : '👤 Customer'}
                               </span>
                             </td>
-                            <td className="px-4 py-2.5 border-b border-slate-100 font-mono text-[11px] text-slate-700 font-semibold">{r.agent_id}</td>
+                            <td className="px-4 py-2.5 border-b border-slate-100 text-[11px] text-slate-700 font-semibold">{resolveAgent(r.agent_id)}</td>
+                            <td className="px-4 py-2.5 border-b border-slate-100 font-mono text-[11px] text-slate-500 whitespace-nowrap">{r.mobile_no || '—'}</td>
                             <td className="px-4 py-2.5 border-b border-slate-100">
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-purple-50 text-purple-800 border border-purple-200">
                                 {r.word}
@@ -986,7 +1001,7 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick }: { detail: A
   );
 }
 
-function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: PotentialScamDetail | null; loading: boolean; onClose: () => void; onLeadClick: (leadId: string) => void }) {
+function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }: { detail: PotentialScamDetail | null; loading: boolean; onClose: () => void; onLeadClick: (leadId: string) => void; resolveAgent: (masId: string) => string }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', h);
@@ -1013,6 +1028,13 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: Po
             <p className="text-sm font-bold text-slate-900">Potential Scam Leads — Full Breakdown</p>
             <p className="text-[10px] text-slate-500 font-medium mt-0.5">Flag counts + words used + scenario context</p>
           </div>
+          {!loading && detail && detail.wordRows.length > 0 && (
+            <ExportBtn onClick={() => downloadCSV(detail.wordRows.map(r => ({
+              Flag: r.flag ?? 'Scam', 'Lead ID': r.lead_id ?? '', 'Agent Name': resolveAgent(r.agent_id ?? ''),
+              'Mobile No': r.mobile_no ?? '', 'Word / Phrase': r.word, Scenario: r.scenario,
+              'Sub-Scenario': r.scenario1, Date: r.date ?? '', Transcript: r.transcript ?? '',
+            })), 'potential-scam.csv')} />
+          )}
           <button onClick={onClose} className="text-slate-400 hover:text-slate-900 transition-colors p-1">
             <X size={18} />
           </button>
@@ -1068,7 +1090,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: Po
                       <table className="w-full text-xs border-collapse">
                         <thead>
                           <tr className="bg-slate-50">
-                            {['Flag', 'Lead ID', 'Agent ID', 'Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
+                            {['Flag', 'Lead ID', 'Agent Name', 'Mobile No', 'Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
                               <th key={h} className="px-3 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">
                                 {h}
                               </th>
@@ -1095,7 +1117,8 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: Po
                                   </button>
                                 ) : <span className="text-slate-400 font-mono">—</span>}
                               </td>
-                              <td className="px-3 py-2 font-semibold text-slate-700">{r.agent_id}</td>
+                              <td className="px-3 py-2 font-semibold text-slate-700">{resolveAgent(r.agent_id ?? '')}</td>
+                              <td className="px-3 py-2 font-mono text-slate-500 whitespace-nowrap">{r.mobile_no || '—'}</td>
                               <td className="px-3 py-2">
                                 {r.word && r.word !== '—'
                                   ? <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-medium bg-red-50 text-red-700 border border-red-200">{r.word}</span>
@@ -1123,12 +1146,13 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick }: { detail: Po
 
 // ─── Social Media & Consumer Court Threat Detail Modal ───────────────────────
 function SocialThreatDetailModal({
-  detail, loading, onClose, onLeadClick,
+  detail, loading, onClose, onLeadClick, resolveAgent,
 }: {
   detail: SocialThreatDetailResponse | null;
   loading: boolean;
   onClose: () => void;
   onLeadClick: (leadId: string) => void;
+  resolveAgent: (masId: string) => string;
 }) {
   const [tab, setTab] = useState<'All' | 'Social Media' | 'Court & Legal'>('All');
 
@@ -1166,9 +1190,18 @@ function SocialThreatDetailModal({
               {loading ? 'Loading…' : `${detail?.total ?? 0} calls with threat keywords`}
             </p>
           </div>
-          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700 transition-colors">
-            <X size={18} />
-          </button>
+          <div className="ml-auto flex items-center gap-3">
+            {!loading && visible.length > 0 && (
+              <ExportBtn onClick={() => downloadCSV(visible.map(r => ({
+                Type: r.threat_type, 'Lead ID': r.lead_id, 'Agent Name': resolveAgent(r.agent_id),
+                'Mobile No': r.mobile_no, 'Threat Word / Phrase': r.threat_word,
+                Scenario: r.scenario, 'Sub-Scenario': r.scenario1, Date: r.date, Transcript: r.transcript,
+              })), 'social-court-threat.csv')} />
+            )}
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Summary chips */}
@@ -1221,7 +1254,7 @@ function SocialThreatDetailModal({
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-orange-50">
-                    {['Type', 'Lead ID', 'Agent ID', 'Threat Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
+                    {['Type', 'Lead ID', 'Agent Name', 'Mobile No', 'Threat Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
                       <th key={h} className="text-left px-3 py-2.5 font-semibold text-orange-700 whitespace-nowrap border-b border-orange-100 uppercase tracking-wider text-[10px]">
                         {h}
                       </th>
@@ -1248,7 +1281,8 @@ function SocialThreatDetailModal({
                           </button>
                         ) : <span className="text-slate-400 font-mono">—</span>}
                       </td>
-                      <td className="px-3 py-2 font-semibold text-slate-700">{row.agent_id}</td>
+                      <td className="px-3 py-2 font-semibold text-slate-700">{resolveAgent(row.agent_id)}</td>
+                      <td className="px-3 py-2 font-mono text-slate-500 whitespace-nowrap">{row.mobile_no || '—'}</td>
                       <td className="px-3 py-2">
                         <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-medium bg-orange-50 text-orange-700 border border-orange-200">
                           {row.threat_word}
@@ -1272,13 +1306,14 @@ function SocialThreatDetailModal({
 
 // ─── Neg Signal Detail Modal (Threat / Frustration) ─────────────────────────
 function NegSignalDetailModal({
-  signal, detail, loading, onClose, onLeadClick,
+  signal, detail, loading, onClose, onLeadClick, resolveAgent,
 }: {
   signal: 'Threat' | 'Frustration';
   detail: NegSignalDetailCallResponse | null;
   loading: boolean;
   onClose: () => void;
   onLeadClick: (leadId: string) => void;
+  resolveAgent: (masId: string) => string;
 }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -1305,9 +1340,18 @@ function NegSignalDetailModal({
               {loading ? 'Loading…' : `${detail?.total ?? 0} calls flagged`}
             </p>
           </div>
-          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700 transition-colors">
-            <X size={18} />
-          </button>
+          <div className="ml-auto flex items-center gap-3">
+            {!loading && detail && detail.rows.length > 0 && (
+              <ExportBtn onClick={() => downloadCSV(detail.rows.map(r => ({
+                'Lead ID': r.lead_id, 'Agent Name': resolveAgent(r.agent_id), 'Mobile No': r.mobile_no,
+                'Word / Phrase Used': r.word, Scenario: r.scenario, 'Sub-Scenario': r.scenario1, Date: r.date,
+                Transcript: r.transcript,
+              })), `${signal.toLowerCase()}-signal.csv`)} />
+            )}
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -1332,7 +1376,7 @@ function NegSignalDetailModal({
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-50">
-                    {['Lead ID', 'Agent ID', 'Word / Phrase Used', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
+                    {['Lead ID', 'Agent Name', 'Mobile No', 'Word / Phrase Used', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
                       <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-slate-200">
                         {h}
                       </th>
@@ -1351,8 +1395,9 @@ function NegSignalDetailModal({
                         ) : <span className="text-slate-400 font-mono text-[11px]">—</span>}
                       </td>
                       <td className="px-3 py-2">
-                        <span className="font-semibold text-slate-700">{row.agent_id}</span>
+                        <span className="font-semibold text-slate-700">{resolveAgent(row.agent_id)}</span>
                       </td>
+                      <td className="px-3 py-2 font-mono text-slate-500 whitespace-nowrap">{row.mobile_no || '—'}</td>
                       <td className="px-3 py-2">
                         <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-medium"
                           style={{ backgroundColor: `${accent}20`, color: accent }}>
@@ -1474,7 +1519,7 @@ function AgentNameTag({ masId, agentMap, className = '', onSave }: {
 }
 
 // ─── CLAP Branch VOC Quote List ────────────────────────────────────────────────
-function VocQuoteList({ positive, negative, loading, onQuoteClick }: { positive: VocQuote[]; negative: VocQuote[]; loading: boolean; onQuoteClick?: (leadId: string) => void }) {
+function VocQuoteList({ positive, negative, loading, onQuoteClick, resolveAgent }: { positive: VocQuote[]; negative: VocQuote[]; loading: boolean; onQuoteClick?: (leadId: string) => void; resolveAgent: (masId: string) => string }) {
   const fmtDate = (d: string) => {
     const dt = new Date(d);
     return isNaN(dt.getTime()) ? d : dt.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -1499,7 +1544,9 @@ function VocQuoteList({ positive, negative, loading, onQuoteClick }: { positive:
             className={`rounded-lg border border-slate-100 p-2.5 bg-slate-50 ${onQuoteClick ? 'cursor-pointer hover:bg-slate-100 hover:border-slate-300 transition-colors' : ''}`}
           >
             <p className="text-[11px] text-slate-700 leading-snug">&ldquo;{q.quote}&rdquo;</p>
-            <p className="text-[9px] text-slate-400 font-semibold mt-1">{q.agentName} · {fmtDate(q.callDate)}</p>
+            <p className="text-[9px] text-slate-400 font-semibold mt-1">
+              {resolveAgent(q.agentId)}{q.mobileNo ? ` · 📱 ${q.mobileNo}` : ''} · {fmtDate(q.callDate)}
+            </p>
           </div>
         ))}
       </div>
@@ -1590,9 +1637,8 @@ const SLIDES = [
   { label: 'Fatal Analysis',      color: 'red'     },
   { label: 'Detail Analysis',     color: 'purple'  },
   { label: 'Repeat Analysis',     color: 'teal'    },
-  { label: 'Process Analysis',    color: 'amber'   },
+  { label: 'CLAP Analysis',       color: 'amber'   },
   { label: 'TNI Detection',       color: 'emerald' },
-  { label: 'CLAP 360°',           color: 'blue'    },
 ] as const;
 
 export default function InboundQualityDashboard() {
@@ -4641,194 +4687,6 @@ export default function InboundQualityDashboard() {
               ) : (
                 <div className="flex flex-col gap-6">
 
-                  {/* Customer Interaction Insights */}
-                  <div className="rounded-2xl overflow-hidden border border-sky-200 shadow-sm">
-                    <div className="card-header px-5 py-3 flex items-center gap-2">
-                      <span className="text-base">🔍</span>
-                      <h2 className="text-xs font-bold text-white uppercase tracking-widest">Customer Interaction Insights</h2>
-                    </div>
-                    <div className="p-5 space-y-6" style={{ background: '#F0F9FF' }}>
-
-                      {/* Social Media Threat + Potential Scam */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="flex items-center gap-4 bg-orange-50 border border-orange-200 rounded-2xl px-5 py-4 cursor-pointer hover:bg-orange-100 transition-colors group"
-                          title="Click to view detail breakdown"
-                          onClick={() => openKwDrill('social', 'social', 'Social Media & Consumer Court', '#F97316', '🛡️')}>
-                          <div className="p-3 rounded-2xl bg-orange-500/15 shrink-0">
-                            <ShieldAlert size={22} className="text-orange-600" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[10px] font-bold text-orange-800 uppercase tracking-widest mb-1">Social Media &amp; Consumer Court</p>
-                            {loading ? <div className="h-8 w-20 bg-orange-100 rounded animate-pulse" /> : (
-                              <div className="flex items-baseline gap-2">
-                                <span className="text-3xl font-black text-orange-600 tabular-nums leading-none">{(kpis?.social_media_court_threat ?? 0).toLocaleString()}</span>
-                                <span className="text-xs font-semibold text-orange-700">{kpis && kpis.audit_count > 0 ? ((kpis.social_media_court_threat / kpis.audit_count) * 100).toFixed(1) : 0}% of calls</span>
-                              </div>
-                            )}
-                            <p className="text-[10px] font-medium text-orange-700 mt-1">📱 Social · ⚖️ Consumer Court · Legal / FIR</p>
-                          </div>
-                          <span className="text-orange-400 group-hover:text-orange-600 text-lg shrink-0">›</span>
-                        </div>
-
-                        <div className="flex items-center gap-4 bg-red-50 border border-red-200 rounded-2xl px-5 py-4 cursor-pointer hover:bg-red-100 transition-colors group"
-                          title="Click to view detail breakdown"
-                          onClick={() => openKwDrill('scam', 'scam', 'Potential Scam', '#EF4444', '🚨')}>
-                          <div className="p-3 rounded-2xl bg-red-500/15 shrink-0">
-                            <AlertOctagon size={22} className="text-red-600" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[10px] font-bold text-red-800 uppercase tracking-widest mb-1">Potential Scam</p>
-                            {loading ? <div className="h-8 w-20 bg-red-100 rounded animate-pulse" /> : (
-                              <div className="flex items-baseline gap-2">
-                                <span className="text-3xl font-black text-red-600 tabular-nums leading-none">{(kpis?.potential_scam ?? 0).toLocaleString()}</span>
-                                <span className="text-xs font-semibold text-red-700">{kpis && kpis.audit_count > 0 ? ((kpis.potential_scam / kpis.audit_count) * 100).toFixed(1) : 0}% of calls</span>
-                              </div>
-                            )}
-                            <p className="text-[10px] font-medium text-red-700 mt-1">💸 Financial fraud · Cheat · Loot</p>
-                          </div>
-                          <span className="text-red-400 group-hover:text-red-600 text-lg shrink-0">›</span>
-                        </div>
-                      </div>
-
-                      {/* Golden Words */}
-                      <div>
-                        <div className="flex items-center gap-2 mb-4">
-                          <div className="w-1.5 h-5 rounded-full bg-emerald-500" />
-                          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest">Golden Words</h3>
-                          <span className="ml-auto text-[11px] font-medium text-slate-500">
-                            {posSignals.length > 0 ? `${posSignals.reduce((s, r) => s + r.total, 0).toLocaleString()} total mentions` : 'customer + agent'}
-                          </span>
-                        </div>
-
-                        {(() => {
-                          const CAT_GROUPS: Array<{ emoji: string; name: string; keywords: string[]; color: string }> = [
-                            { emoji: '🤝', name: 'Courtesy & Gratitude',      keywords: ['Thank You','Appreciate'],           color: '#10B981' },
-                            { emoji: '🛟', name: 'Support & Assistance',      keywords: ['Help / Assist','Help','Assist'],    color: '#0EA5E9' },
-                            { emoji: '✅', name: 'Acknowledgement & Underst.', keywords: ['Understanding'],                    color: '#8B5CF6' },
-                            { emoji: '😊', name: 'Positive Reinforcement',    keywords: ['Nice','Good','Great'],               color: '#F59E0B' },
-                            { emoji: '😌', name: 'Customer Satisfaction',     keywords: ['Satisfied'],                         color: '#14B8A6' },
-                          ];
-                          const kwMap = new Map(posSignals.map(r => [r.keyword, r]));
-                          const catData = CAT_GROUPS.map(g => {
-                            const rows = g.keywords.map(kw => kwMap.get(kw)).filter(Boolean) as PosKeywordRow[];
-                            return { ...g, rows, total: rows.reduce((s, r) => s + r.total, 0) };
-                          });
-                          const otherRows = posSignals.filter(r => !CAT_GROUPS.some(g => g.keywords.includes(r.keyword)));
-
-                          if (posSignals.length === 0 && !loading) {
-                            return <p className="text-xs text-slate-500 text-center py-4">No positive signal data for this period.</p>;
-                          }
-                          if (loading) {
-                            return (
-                              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                                {Array.from({ length: 6 }).map((_, i) => (
-                                  <div key={i} className="h-28 rounded-2xl bg-slate-100 animate-pulse" />
-                                ))}
-                              </div>
-                            );
-                          }
-                          return (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                              {catData.map(({ emoji, name, keywords, color, rows, total }) => {
-                                const PATTERNS: Record<string, string> = {
-                                  'Thank You':'thank','Appreciate':'appreciat','Great':'great','Good':'good',
-                                  'Help / Assist':'help','Help':'help','Assist':'help','Understanding':'understand',
-                                  'Patience':'patient','Happy':'happy','Satisfied':'satisf','Excellent':'excellent',
-                                  'Nice':'nice','Wonderful':'wonder',
-                                };
-                                return (
-                                <div key={name}
-                                  className="flex flex-col gap-2 rounded-2xl px-3 py-3 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all"
-                                  style={{ backgroundColor: `${color}10`, border: `1.5px solid ${color}45` }}
-                                  onClick={() => {
-                                    const uniquePats = [...new Set(keywords.map(kw => PATTERNS[kw] ?? kw.toLowerCase()).filter(Boolean))];
-                                    const pat = uniquePats.length > 0 ? uniquePats.join('|') : name.toLowerCase();
-                                    openKwDrill('pos', pat, name, color, emoji);
-                                  }}>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-lg">{emoji}</span>
-                                    <span className="text-[9px] font-bold rounded-full px-1.5 py-0.5"
-                                      style={{ backgroundColor: `${color}25`, color }}>
-                                      {rows.length}w
-                                    </span>
-                                  </div>
-                                  <span className="text-2xl font-black tabular-nums leading-none" style={{ color }}>
-                                    {total > 0 ? total.toLocaleString() : '—'}
-                                  </span>
-                                  <span className="text-[10px] font-bold leading-tight block" style={{ color }}>{name}</span>
-                                </div>
-                                );
-                              })}
-                              {otherRows.length > 0 && (
-                                <div className="flex flex-col gap-2 rounded-2xl px-3 py-3 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all"
-                                  style={{ backgroundColor: '#94A3B810', border: '1.5px solid #94A3B840' }}
-                                  onClick={() => openKwDrill('pos', 'other', 'Other Keywords', '#94A3B8', '📦')}>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-lg">📦</span>
-                                    <span className="text-[9px] font-bold rounded-full px-1.5 py-0.5 bg-slate-200 text-slate-600">
-                                      {otherRows.length}w
-                                    </span>
-                                  </div>
-                                  <span className="text-2xl font-black tabular-nums leading-none text-slate-700">
-                                    {otherRows.reduce((s, r) => s + r.total, 0).toLocaleString()}
-                                  </span>
-                                  <span className="text-[10px] font-bold text-slate-600 leading-tight block">Other</span>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </div>
-
-                      {/* Critical Signals */}
-                      <div>
-                        <div className="flex items-center gap-2 mb-4">
-                          <div className="w-1.5 h-5 rounded-full bg-rose-500" />
-                          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest">Critical Signals</h3>
-                          <span className="ml-auto text-[11px] font-medium text-slate-500">Detected in customer speech</span>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                          {[
-                            { label: 'Frustration', key: 'frustration_count' as const, color: '#F59E0B', icon: '😤' },
-                            { label: 'Threat',      key: 'threat_count'      as const, color: '#EF4444', icon: '⚠️' },
-                            { label: 'Abuse',       key: 'cuss_abuse_count'  as const, color: '#A855F7', icon: '🚫' },
-                            { label: 'Slang',       key: 'slang_count'       as const, color: '#3B82F6', icon: '💬' },
-                            { label: 'Sarcasm',     key: 'sarcasm_count'     as const, color: '#14B8A6', icon: '🙃' },
-                          ].map(({ label, key, color, icon }) => {
-                            const count = kpis?.[key] ?? 0;
-                            const pct   = kpis && kpis.audit_count > 0 ? ((count / kpis.audit_count) * 100).toFixed(1) : '0.0';
-                            const filtered = negSignalDetails.filter(r => r.neg_signal === label);
-                            const handleClick = () => openKwDrill('neg', label.toLowerCase(), label, color, icon);
-                            return (
-                              <div key={label}
-                                className="flex flex-col gap-2 rounded-2xl px-4 py-4 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all"
-                                style={{ backgroundColor: `${color}10`, border: `1.5px solid ${color}45` }}
-                                title={`Click to view ${label} details`}
-                                onClick={handleClick}>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-lg">{icon}</span>
-                                  <span className="text-[10px] font-bold rounded-full px-2 py-0.5"
-                                    style={{ backgroundColor: `${color}25`, color }}>
-                                    {pct}%
-                                  </span>
-                                </div>
-                                {loading ? (
-                                  <div className="h-8 w-14 rounded animate-pulse" style={{ backgroundColor: `${color}20` }} />
-                                ) : (
-                                  <span className="text-2xl font-black tabular-nums" style={{ color }}>
-                                    {count.toLocaleString()}
-                                  </span>
-                                )}
-                                <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color }}>{label}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                    </div>
-                  </div>
-
                   {/* ── CLAP Word Analysis ── */}
                   <div className="rounded-2xl overflow-hidden border border-blue-100 shadow-sm" style={{ order: -1 }}>
                     <div className="card-header px-5 py-3 flex items-center gap-2">
@@ -4959,7 +4817,7 @@ export default function InboundQualityDashboard() {
                                     <span className="ml-auto text-[9px] text-white/60 font-semibold">{bd?.total ?? 0} total audits analysed</span>
                                   </div>
                                   <div className="bg-white p-4 space-y-4">
-                                    <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} onQuoteClick={handleLeadClick} />
+                                    <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} onQuoteClick={handleLeadClick} resolveAgent={resolveAgent} />
                                     {/* Scenario drill-down */}
                                     {agScens.length > 0 && (
                                       <div>
@@ -5015,7 +4873,7 @@ export default function InboundQualityDashboard() {
                                     <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{bd?.total ?? 0} total calls</span>
                                   </div>
                                   <div className="bg-white p-4">
-                                    <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} onQuoteClick={handleLeadClick} />
+                                    <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} onQuoteClick={handleLeadClick} resolveAgent={resolveAgent} />
                                   </div>
                                 </div>
                               );
@@ -5094,6 +4952,7 @@ export default function InboundQualityDashboard() {
                                           negative={clapProductQuotes?.negative ?? []}
                                           loading={clapProductQuotesLoading}
                                           onQuoteClick={handleLeadClick}
+                                          resolveAgent={resolveAgent}
                                         />
                                       </div>
                                     )}
@@ -5163,7 +5022,7 @@ export default function InboundQualityDashboard() {
                                       style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer' }}>
                                       <span className="text-base shrink-0">{rankLabel}</span>
                                       <div className="flex-1 min-w-0">
-                                        <div className="text-sm font-bold text-white truncate">{a.agent_name}</div>
+                                        <div className="text-sm font-bold text-white truncate">{resolveAgent(a.agent_id)}</div>
                                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                           <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.4)' }}>{a.audit_count} audits</span>
                                           {weak.length > 0 && (
@@ -5610,7 +5469,7 @@ export default function InboundQualityDashboard() {
                             {agentGuidancePopup.cq_score < 70 ? '🔴' : agentGuidancePopup.cq_score < 85 ? '🟠' : '🟢'}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h2 className="text-lg font-bold text-white truncate">{agentGuidancePopup.agent_name}</h2>
+                            <h2 className="text-lg font-bold text-white truncate">{resolveAgent(agentGuidancePopup.agent_id)}</h2>
                             <p className="text-[10px] mt-0.5" style={{ color: 'rgba(147,197,253,0.75)' }}>
                               {agentGuidancePopup.audit_count} audits · Coaching dashboard
                             </p>
@@ -6540,15 +6399,6 @@ export default function InboundQualityDashboard() {
           );
         })()}
 
-        {/* ── CLAP 360° Intelligence slide ──────────────────────────────────── */}
-        {activeSlide === 6 && (
-          <Clap360Intelligence
-            clientId={clientId}
-            startDate={startDate.replace('T', ' ')}
-            endDate={endDate.replace('T', ' ')}
-          />
-        )}
-
       </div>
 
       {/* ── Drill-down Modal ─────────────────────────────────────────────────── */}
@@ -6602,6 +6452,7 @@ export default function InboundQualityDashboard() {
           loading={socialThreatLoading}
           onClose={() => { setSocialThreatOpen(false); setSocialThreatDetail(null); }}
           onLeadClick={handleLeadClick}
+          resolveAgent={resolveAgent}
         />
       )}
 
@@ -6611,6 +6462,7 @@ export default function InboundQualityDashboard() {
           loading={scamDetailLoading}
           onClose={() => { setScamDetailOpen(false); setScamDetail(null); }}
           onLeadClick={handleLeadClick}
+          resolveAgent={resolveAgent}
         />
       )}
 
@@ -6620,6 +6472,7 @@ export default function InboundQualityDashboard() {
           loading={abuseDetailLoading}
           onClose={() => { setAbuseDetailOpen(false); setAbuseDetail(null); }}
           onLeadClick={handleLeadClick}
+          resolveAgent={resolveAgent}
         />
       )}
 
@@ -6630,6 +6483,7 @@ export default function InboundQualityDashboard() {
           loading={threatDetailLoading}
           onClose={() => { setThreatDetailOpen(false); setThreatDetail(null); }}
           onLeadClick={handleLeadClick}
+          resolveAgent={resolveAgent}
         />
       )}
 
@@ -6640,6 +6494,7 @@ export default function InboundQualityDashboard() {
           loading={frustDetailLoading}
           onClose={() => { setFrustDetailOpen(false); setFrustDetail(null); }}
           onLeadClick={handleLeadClick}
+          resolveAgent={resolveAgent}
         />
       )}
 

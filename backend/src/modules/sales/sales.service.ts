@@ -1280,15 +1280,20 @@ export async function getNeemansDashboard(yyyyMm: string) {
     };
   });
 
-  const dateTable = (dateDetailRows as any[]).map(r => ({
-    date:        serialToLabel(Number(r.serial)),
-    saleCount:   Number(r.sale_count)   || 0,
-    revenue:     Math.round(Number(r.revenue)     || 0),
-    codCount:    Number(r.cod_count)    || 0,
-    codRevenue:  Math.round(Number(r.cod_revenue)  || 0),
-    paidCount:   Number(r.paid_count)   || 0,
-    paidRevenue: Math.round(Number(r.paid_revenue) || 0),
-  }));
+  const dateTable = (dateDetailRows as any[]).map(r => {
+    const saleCount = Number(r.sale_count) || 0;
+    const paidCount = Number(r.paid_count) || 0;
+    return {
+      date:        serialToLabel(Number(r.serial)),
+      saleCount,
+      revenue:     Math.round(Number(r.revenue)     || 0),
+      codCount:    Number(r.cod_count)    || 0,
+      codRevenue:  Math.round(Number(r.cod_revenue)  || 0),
+      paidCount,
+      paidRevenue: Math.round(Number(r.paid_revenue) || 0),
+      paidPct:     saleCount > 0 ? round1(paidCount / saleCount * 100) : 0,
+    };
+  });
 
   return { kpis, dateRows, dateTable };
 }
