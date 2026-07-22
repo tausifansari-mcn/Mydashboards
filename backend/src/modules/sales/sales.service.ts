@@ -127,6 +127,14 @@ export async function initNeemansTables(): Promise<void> {
         updated_at  DATETIME DEFAULT NOW() ON UPDATE NOW()
       )
     `);
+    // MySQL (unlike MariaDB) has no `ADD COLUMN IF NOT EXISTS` — check information_schema first.
+    const [targetColRows] = await pool.query(`
+      SELECT COUNT(*) AS c FROM information_schema.columns
+      WHERE table_schema = 'db_masmis' AND table_name = 'nms_Agent_Details' AND column_name = 'monthly_target'
+    `);
+    if (((targetColRows as any[])[0]?.c ?? 0) === 0) {
+      await pool.execute(`ALTER TABLE db_masmis.nms_Agent_Details ADD COLUMN monthly_target DECIMAL(15,2) DEFAULT 0`);
+    }
   } catch (err) {
     console.error('[sales] initNeemansTables warning:', (err as Error).message);
   }
@@ -157,6 +165,7 @@ function mapAgentRow(r: any) {
   const { tenure, tenureBucket: bucket } = calcTenure(doj, dol);
   return { id: r.id, empId: r.emp_id, daildeskId: r.daildesk_id, name: r.name,
            lob: r.lob, tl: r.tl, doj, fhd, status: r.status, dol,
+           monthlyTarget: Number(r.monthly_target) || 0,
            tenure, tenureBucket: bucket };
 }
 
@@ -166,22 +175,23 @@ export async function getNmsAgentDetails() {
       DATE_FORMAT(doj,'%Y-%m-%d') AS doj,
       DATE_FORMAT(fhd,'%Y-%m-%d') AS fhd,
       status,
-      DATE_FORMAT(dol,'%Y-%m-%d') AS dol
+      DATE_FORMAT(dol,'%Y-%m-%d') AS dol,
+      monthly_target
     FROM db_masmis.nms_Agent_Details ORDER BY name ASC`);
   return (rows as any[]).map(mapAgentRow);
 }
 
 export async function createNmsAgentDetail(
   d: { empId: string; daildeskId?: string; name: string; lob?: string; tl?: string;
-       doj?: string; fhd?: string; status?: string; dol?: string },
+       doj?: string; fhd?: string; status?: string; dol?: string; monthlyTarget?: number },
   userId: number
 ) {
   const [res] = await getMasmisPool().execute(
     `INSERT INTO db_masmis.nms_Agent_Details
-       (emp_id,daildesk_id,name,lob,tl,doj,fhd,status,dol,created_by,updated_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+       (emp_id,daildesk_id,name,lob,tl,doj,fhd,status,dol,monthly_target,created_by,updated_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     [d.empId, d.daildeskId||null, d.name, d.lob||null, d.tl||null,
-     d.doj||null, d.fhd||null, d.status||'Active', d.dol||null, userId, userId]
+     d.doj||null, d.fhd||null, d.status||'Active', d.dol||null, d.monthlyTarget||0, userId, userId]
   );
   return (res as mysql.ResultSetHeader).insertId;
 }
@@ -189,15 +199,15 @@ export async function createNmsAgentDetail(
 export async function updateNmsAgentDetail(
   id: number,
   d: { empId: string; daildeskId?: string; name: string; lob?: string; tl?: string;
-       doj?: string; fhd?: string; status?: string; dol?: string },
+       doj?: string; fhd?: string; status?: string; dol?: string; monthlyTarget?: number },
   userId: number
 ) {
   await getMasmisPool().execute(
     `UPDATE db_masmis.nms_Agent_Details
-     SET emp_id=?,daildesk_id=?,name=?,lob=?,tl=?,doj=?,fhd=?,status=?,dol=?,updated_by=?
+     SET emp_id=?,daildesk_id=?,name=?,lob=?,tl=?,doj=?,fhd=?,status=?,dol=?,monthly_target=?,updated_by=?
      WHERE id=?`,
     [d.empId, d.daildeskId||null, d.name, d.lob||null, d.tl||null,
-     d.doj||null, d.fhd||null, d.status||'Active', d.dol||null, userId, id]
+     d.doj||null, d.fhd||null, d.status||'Active', d.dol||null, d.monthlyTarget||0, userId, id]
   );
 }
 
@@ -1167,13 +1177,6 @@ export async function getNeemansDashboard(yyyyMm: string) {
   const daysInMo    = new Date(yr, mo + 1, 0).getDate();
   const dailyTarget = target / daysInMo;
 
-  // Prorated target: for the current month use days elapsed so far,
-  // for past months use the full month (all days elapsed).
-  const now          = new Date();
-  const isCurrentMo  = now.getFullYear() === yr && now.getMonth() === mo;
-  const daysElapsed  = isCurrentMo ? now.getDate() : daysInMo;
-  const proratedTarget = Math.round(dailyTarget * daysElapsed);
-
   // Excel serial range for the selected month
   const startSerial = dateToSerial(yr, mo, 1);
   const endSerial   = dateToSerial(yr, mo, daysInMo);
@@ -1223,13 +1226,23 @@ export async function getNeemansDashboard(yyyyMm: string) {
   }
 
   let totalOrders = 0, revenue = 0, paidOrders = 0, codOrders = 0, rtoCount = 0;
+  let lastDataSerial = 0;
   for (const row of dateDetailRows as any[]) {
     totalOrders += Number(row.sale_count) || 0;
     revenue     += Number(row.revenue)    || 0;
     paidOrders  += Number(row.paid_count) || 0;
     codOrders   += Number(row.cod_count)  || 0;
     rtoCount    += Number(row.rto_count)  || 0;
+    lastDataSerial = Math.max(lastDataSerial, Number(row.serial) || 0);
   }
+
+  // Prorated target: for the current month, prorate against the last date the sale_raw upload
+  // actually has data for (uploads lag behind today) — not the calendar day — so Achievement %
+  // isn't diluted by days that simply haven't been uploaded yet. Past months use the full month.
+  const now          = new Date();
+  const isCurrentMo   = now.getFullYear() === yr && now.getMonth() === mo;
+  const daysElapsed   = isCurrentMo ? (lastDataSerial > 0 ? serialToDate(lastDataSerial).getUTCDate() : 0) : daysInMo;
+  const proratedTarget = Math.round(dailyTarget * daysElapsed);
 
   const kpis = {
     workable, connected,
@@ -1300,6 +1313,14 @@ export async function getNeemansDashboard(yyyyMm: string) {
 
 // ─── Neemans Agent Data (date-range filtered, separate from main dashboard) ────
 
+// Stack ranking: >90% = TQ (Top Quartile), >75%–90% = MQ (Mid Quartile), <=75% = BQ (Bottom Quartile).
+function stackRank(achievementPct: number, hasTarget: boolean): string {
+  if (!hasTarget) return '-';
+  if (achievementPct > 90) return 'TQ';
+  if (achievementPct > 75) return 'MQ';
+  return 'BQ';
+}
+
 export async function getNeemansAgentData(startDate: string, endDate: string) {
   // Convert calendar dates to Excel serial numbers
   const [sy, sm, sd] = startDate.split('-').map(Number);
@@ -1307,7 +1328,7 @@ export async function getNeemansAgentData(startDate: string, endDate: string) {
   const startSerial = dateToSerial(sy, sm - 1, sd);
   const endSerial   = dateToSerial(ey, em - 1, ed);
 
-  const [agentRows, cdrRows] = await Promise.all([
+  const [agentRows, cdrRows, targetRows, maxDateRows] = await Promise.all([
     queryMasmis(`
       SELECT
         COALESCE(NULLIF(TRIM(name), ''), 'Unknown') AS agent,
@@ -1332,6 +1353,13 @@ export async function getNeemansAgentData(startDate: string, endDate: string) {
         AND Agent IS NOT NULL AND Agent != ''
       GROUP BY Agent
     `, [startDate, endDate]),
+
+    queryMasmis(`SELECT emp_id, monthly_target FROM db_masmis.nms_Agent_Details`),
+
+    queryMasmis(`
+      SELECT MAX(CAST(date AS UNSIGNED)) AS mx FROM db_masmis.neemans_sale_raw
+      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ? AND CAST(date AS UNSIGNED) > 0
+    `, [startSerial, endSerial]),
   ]);
 
   const cdrMap = new Map<string, number>();
@@ -1340,25 +1368,122 @@ export async function getNeemansAgentData(startDate: string, endDate: string) {
     if (key) cdrMap.set(key, Number(row.total_calls) || 0);
   }
 
+  const targetMap = new Map<string, number>();
+  for (const row of targetRows as any[]) {
+    const key = String(row.emp_id).toUpperCase().trim();
+    if (key) targetMap.set(key, Number(row.monthly_target) || 0);
+  }
+
+  // Target is prorated to the last date the sale_raw upload actually has data for (uploads lag
+  // behind today), same as the overall Achievement % — otherwise Achi% looks artificially low
+  // while the month is still in progress.
+  const daysInMo      = new Date(sy, sm, 0).getDate();
+  const maxSerial     = Number((maxDateRows as any[])[0]?.mx) || 0;
+  const now           = new Date();
+  const isCurrentMo   = now.getFullYear() === sy && now.getMonth() === sm - 1;
+  const daysElapsed   = isCurrentMo ? (maxSerial > 0 ? serialToDate(maxSerial).getUTCDate() : 0) : daysInMo;
+  const targetFactor  = daysInMo > 0 ? daysElapsed / daysInMo : 0;
+
   return (agentRows as any[]).map(r => {
     const masid      = String(r.emp_id).toUpperCase().trim();
     const saleCount  = Number(r.sale_count) || 0;
     const codCount   = Number(r.cod_count)  || 0;
     const paidCount  = Number(r.paid_count) || 0;
+    const revenue    = Math.round(Number(r.revenue) || 0);
+    const target     = Math.round((targetMap.get(masid) ?? 0) * targetFactor);
+    const achievementPct = target > 0 ? round1(revenue / target * 100) : 0;
     return {
       agent:       String(r.agent),
       empId:       masid,
       totalCalls:  cdrMap.get(masid) ?? 0,
       saleCount,
-      revenue:     Math.round(Number(r.revenue)      || 0),
+      revenue,
       codCount,
       codRevenue:  Math.round(Number(r.cod_revenue)  || 0),
       paidCount,
       paidRevenue: Math.round(Number(r.paid_revenue) || 0),
       codPct:      saleCount > 0 ? round1(codCount  / saleCount * 100) : 0,
       paidPct:     saleCount > 0 ? round1(paidCount / saleCount * 100) : 0,
+      target,
+      achievementPct,
+      stackRank:   stackRank(achievementPct, target > 0),
     };
   });
+}
+
+// ─── Neemans Agent Weekly Achievement % + Stack Ranking ──────────────────────
+// Weekly target = monthly target ÷ days in month × (calendar days that fell under that week
+// label in the selected range) — same proration logic used for the overall monthly Achievement %.
+
+export async function getNeemansAgentWeeklyAchievement(startDate: string, endDate: string) {
+  const [sy, sm, sd] = startDate.split('-').map(Number);
+  const [ey, em, ed] = endDate.split('-').map(Number);
+  const startSerial = dateToSerial(sy, sm - 1, sd);
+  const endSerial   = dateToSerial(ey, em - 1, ed);
+  const daysInMo    = new Date(sy, sm, 0).getDate();
+
+  const [weekRevenueRows, weekDaysRows, targetRows] = await Promise.all([
+    queryMasmis(`
+      SELECT
+        COALESCE(NULLIF(TRIM(emp_id), ''), '')      AS emp_id,
+        COALESCE(NULLIF(TRIM(name), ''), 'Unknown') AS name,
+        COALESCE(NULLIF(TRIM(week), ''), 'Unknown') AS week,
+        COALESCE(SUM(amount), 0) AS revenue
+      FROM db_masmis.neemans_sale_raw
+      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
+        AND CAST(date AS UNSIGNED) > 0
+      GROUP BY emp_id, name, week
+    `, [startSerial, endSerial]),
+
+    queryMasmis(`
+      SELECT COALESCE(NULLIF(TRIM(week), ''), 'Unknown') AS week,
+        COUNT(DISTINCT CAST(date AS UNSIGNED)) AS days,
+        MIN(CAST(date AS UNSIGNED)) AS min_serial
+      FROM db_masmis.neemans_sale_raw
+      WHERE CAST(date AS UNSIGNED) BETWEEN ? AND ?
+        AND CAST(date AS UNSIGNED) > 0
+      GROUP BY week
+    `, [startSerial, endSerial]),
+
+    queryMasmis(`SELECT emp_id, monthly_target FROM db_masmis.nms_Agent_Details`),
+  ]);
+
+  const weeksOrdered = (weekDaysRows as any[])
+    .slice()
+    .sort((a, b) => Number(a.min_serial) - Number(b.min_serial))
+    .map(r => String(r.week));
+
+  const daysPerWeek = new Map<string, number>();
+  for (const row of weekDaysRows as any[]) daysPerWeek.set(String(row.week), Number(row.days) || 0);
+
+  const targetMap = new Map<string, number>();
+  for (const row of targetRows as any[]) {
+    const key = String(row.emp_id).toUpperCase().trim();
+    if (key) targetMap.set(key, Number(row.monthly_target) || 0);
+  }
+
+  const agentMap = new Map<string, { empId: string; name: string; cells: Record<string, number> }>();
+  for (const row of weekRevenueRows as any[]) {
+    const empId = String(row.emp_id).toUpperCase().trim();
+    const key   = empId || String(row.name);
+    if (!agentMap.has(key)) agentMap.set(key, { empId, name: String(row.name), cells: {} });
+    agentMap.get(key)!.cells[String(row.week)] = Math.round(Number(row.revenue) || 0);
+  }
+
+  const rows = [...agentMap.values()].map(a => {
+    const target = targetMap.get(a.empId) ?? 0;
+    const weekly: Record<string, { revenue: number; target: number; achievementPct: number; rank: string }> = {};
+    for (const week of weeksOrdered) {
+      const revenue    = a.cells[week] ?? 0;
+      const days       = daysPerWeek.get(week) ?? 0;
+      const weekTarget = target > 0 && daysInMo > 0 ? Math.round(target / daysInMo * days) : 0;
+      const achievementPct = weekTarget > 0 ? round1(revenue / weekTarget * 100) : 0;
+      weekly[week] = { revenue, target: weekTarget, achievementPct, rank: stackRank(achievementPct, weekTarget > 0) };
+    }
+    return { empId: a.empId, name: a.name, weekly };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+
+  return { weeks: weeksOrdered, rows };
 }
 
 // ─── Sale Raw export — all columns for a calendar date range ─────────────────
@@ -1565,11 +1690,11 @@ export async function getNeemansAprDashboard(startDate: string, endDate: string)
     totalNetLoginSec: number; totalBreakSec: number;
     totalAcht: number; ashtCount: number;
     totalOccu: number; occuCount: number;
-    attendance: number;
+    attendance: number; dayCount: number;
     minLoginSec: number; maxLogoutSec: number;
   }>();
 
-  const dateMap = new Map<string, { date: string; calls: number; agents: number }>();
+  const dateMap = new Map<string, { date: string; calls: number; agents: number; totalAcht: number; achtCount: number }>();
   const lobMap  = new Map<string, number>();
 
   for (const r of rows as any[]) {
@@ -1582,7 +1707,7 @@ export async function getNeemansAprDashboard(startDate: string, endDate: string)
         empName: String(r.emp_name), empId: String(r.emp_id), lob: String(r.lob || ''),
         totalCalls: 0, totalUca: 0, totalTalkSec: 0, totalWaitSec: 0, totalPauseSec: 0,
         totalNetLoginSec: 0, totalBreakSec: 0, totalAcht: 0, ashtCount: 0,
-        totalOccu: 0, occuCount: 0, attendance: 0,
+        totalOccu: 0, occuCount: 0, attendance: 0, dayCount: 0,
         minLoginSec: Infinity, maxLogoutSec: 0,
       });
     }
@@ -1590,6 +1715,7 @@ export async function getNeemansAprDashboard(startDate: string, endDate: string)
     a.totalCalls += Number(r.total_calls) || 0;
     a.totalUca   += Number(r.total_uca)   || 0;
     a.attendance += Number(r.attendance)  || 0;
+    a.dayCount   += 1;
     a.totalTalkSec  += hmsToSec(String(r.talk  || '0:00:00'));
     a.totalWaitSec  += hmsToSec(String(r.wait  || '0:00:00'));
     a.totalPauseSec += hmsToSec(String(r.pause || '0:00:00'));
@@ -1603,16 +1729,20 @@ export async function getNeemansAprDashboard(startDate: string, endDate: string)
     if (logoutSec > 0 && logoutSec > a.maxLogoutSec) a.maxLogoutSec = logoutSec;
 
     // Date aggregation
-    if (!dateMap.has(date)) dateMap.set(date, { date, calls: 0, agents: 0 });
+    if (!dateMap.has(date)) dateMap.set(date, { date, calls: 0, agents: 0, totalAcht: 0, achtCount: 0 });
     const d = dateMap.get(date)!;
     d.calls  += Number(r.total_calls) || 0;
     d.agents += 1;
+    if (r.avg_acht) { d.totalAcht += Number(r.avg_acht); d.achtCount++; }
 
     // LOB aggregation
     const lob = String(r.lob || 'Unknown');
     lobMap.set(lob, (lobMap.get(lob) || 0) + (Number(r.total_calls) || 0));
   }
 
+  // Talk/Wait/Pause/Net Login/Total Break are averaged per day worked (total seconds ÷ number of
+  // daily APR rows for that agent) — matching a pivot-table "Average of X" over the raw daily data,
+  // not the Attendance column (which can under/over-count vs. actual APR rows for a few agents).
   const agentRows = [...agentMap.values()].map(a => ({
     empName:    a.empName,
     empId:      a.empId,
@@ -1620,18 +1750,24 @@ export async function getNeemansAprDashboard(startDate: string, endDate: string)
     calls:      a.totalCalls,
     uca:        a.totalUca,
     attendance: a.attendance,
-    talk:       secToHms(a.totalTalkSec),
-    wait:       secToHms(a.totalWaitSec),
-    pause:      secToHms(a.totalPauseSec),
-    netLogin:   secToHms(a.totalNetLoginSec),
-    totalBreak: secToHms(a.totalBreakSec),
+    aprDays:    a.dayCount,
+    talk:       secToHms(a.dayCount > 0 ? Math.round(a.totalTalkSec  / a.dayCount) : 0),
+    wait:       secToHms(a.dayCount > 0 ? Math.round(a.totalWaitSec  / a.dayCount) : 0),
+    pause:      secToHms(a.dayCount > 0 ? Math.round(a.totalPauseSec / a.dayCount) : 0),
+    netLogin:   secToHms(a.dayCount > 0 ? Math.round(a.totalNetLoginSec / a.dayCount) : 0),
+    totalBreak: secToHms(a.dayCount > 0 ? Math.round(a.totalBreakSec   / a.dayCount) : 0),
     avgAcht:    a.ashtCount > 0 ? Math.round(a.totalAcht / a.ashtCount) : 0,
     avgOccu:    a.occuCount > 0 ? Math.round((a.totalOccu / a.occuCount) * 10) / 10 : 0,
     firstLogin:  a.minLoginSec  < Infinity ? secToHms(a.minLoginSec)  : '-',
     lastLogout:  a.maxLogoutSec > 0        ? secToHms(a.maxLogoutSec) : '-',
   })).sort((a, b) => b.calls - a.calls);
 
-  const dateRows = [...dateMap.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const dateRows = [...dateMap.values()]
+    .map(d => ({
+      date: d.date, calls: d.calls, agents: d.agents,
+      avgAcht: d.achtCount > 0 ? Math.round(d.totalAcht / d.achtCount) : 0,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
   const lobRows  = [...lobMap.entries()].map(([lob, calls]) => ({ lob, calls })).sort((a, b) => b.calls - a.calls);
 
   // KPIs

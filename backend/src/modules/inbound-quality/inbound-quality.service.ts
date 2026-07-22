@@ -3928,20 +3928,26 @@ function groupScenWithSubs(rows: { scenario: string; sub_scenario: string; cnt: 
     }));
 }
 
+// Customer VOC (top_positive_words / top_negative_words) only started being populated on this
+// date — audits before it are always blank, so the Customer root card must not count them.
+const CUSTOMER_VOC_START = '2026-07-17 00:00:00';
+
 export async function getClapCustomerAnalysis(filters: InboundQualityFilters): Promise<ClapCustomerAnalysis> {
   const { startDate, endDate, clientId } = filters;
   const cf = clientId ? ' AND q.ClientId = ?' : '';
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+  const overallStartDate = startDate < CUSTOMER_VOC_START ? CUSTOMER_VOC_START : startDate;
+  const overallBase: (string | number)[] = [overallStartDate, endDate, ...(clientId ? [clientId] : [])];
 
   const [overallRows, branchTotalRows, vocCountRows, branchScenRows, productSummary] = await Promise.all([
-    // 1. Overall totals (Customer root node — unchanged)
+    // 1. Overall totals (Customer root node) — clamped to CUSTOMER_VOC_START, see above.
     querySource<{ total: number; pos: number; neg: number }>(`
       SELECT COUNT(*) AS total,
         SUM(CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END) AS pos,
         SUM(CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END) AS neg
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
-    `, base),
+    `, overallBase),
 
     // 2. Per-branch call totals — scenario classification (used for the "N total calls" label in the detail panel)
     querySource<{ clap: string; total: number }>(`
@@ -4013,7 +4019,7 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   return { overall: { total: Number(overall.total), pos: Number(overall.pos), neg: Number(overall.neg) }, branches };
 }
 
-export interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; }
+export interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; transcript: string; }
 export interface ClapVocQuotesResponse { positive: VocQuote[]; negative: VocQuote[]; }
 
 const VOC_COLUMNS: Record<'Logistic' | 'Agent' | 'Product', { pos: string; neg: string }> = {
@@ -4031,14 +4037,15 @@ export async function getClapVocQuotes(
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
   const cols = VOC_COLUMNS[clap];
 
-  type Row = { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string };
+  type Row = { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; transcript: string };
   const runQuery = (column: string) => querySource<Row>(`
     SELECT q.lead_id AS leadId,
            q.User AS agentId,
            COALESCE(am.AgentName, q.User) AS agentName,
            COALESCE(q.MobileNo, '') AS mobileNo,
            q.CallDate AS callDate,
-           q.${column} AS quote
+           q.${column} AS quote,
+           COALESCE(q.Transcribe_Text, '') AS transcript
     FROM db_audit.call_quality_assessment q
     LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
@@ -4053,12 +4060,13 @@ export async function getClapVocQuotes(
   ]);
 
   const toQuote = (r: Row): VocQuote => ({
-    leadId:    String(r.leadId ?? ''),
-    agentId:   String(r.agentId ?? ''),
-    agentName: String(r.agentName ?? 'Unknown'),
-    mobileNo:  String(r.mobileNo ?? ''),
-    callDate:  String(r.callDate),
-    quote:     String(r.quote),
+    leadId:     String(r.leadId ?? ''),
+    agentId:    String(r.agentId ?? ''),
+    agentName:  String(r.agentName ?? 'Unknown'),
+    mobileNo:   String(r.mobileNo ?? ''),
+    callDate:   String(r.callDate),
+    quote:      String(r.quote),
+    transcript: String(r.transcript ?? ''),
   });
 
   return { positive: positiveRows.map(toQuote), negative: negativeRows.map(toQuote) };
@@ -4066,7 +4074,7 @@ export async function getClapVocQuotes(
 
 // ─── CLAP Product VOC (product name embedded as "Product Name - quote") ────────
 
-interface RawVocRow { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; raw: string; }
+interface RawVocRow { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; raw: string; transcript: string; }
 
 function fetchRawProductVocRows(
   column: 'customer_voc_product_positive' | 'customer_voc_product_negative',
@@ -4081,7 +4089,8 @@ function fetchRawProductVocRows(
            COALESCE(am.AgentName, q.User) AS agentName,
            COALESCE(q.MobileNo, '') AS mobileNo,
            q.CallDate AS callDate,
-           q.${column} AS raw
+           q.${column} AS raw,
+           COALESCE(q.Transcribe_Text, '') AS transcript
     FROM db_audit.call_quality_assessment q
     LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
@@ -4100,7 +4109,7 @@ function splitProductVoc(raw: string): { product: string; quote: string } {
   return { product: product || OTHER_PRODUCT, quote };
 }
 
-export interface ClapProductSummaryItem { product: string; pos: number; neg: number; }
+export interface ClapProductSummaryItem { product: string; pos: number; neg: number; lastDate: string; }
 export interface ClapProductVocSummary { products: ClapProductSummaryItem[]; }
 
 export async function getClapProductVocSummary(filters: InboundQualityFilters): Promise<ClapProductVocSummary> {
@@ -4109,22 +4118,23 @@ export async function getClapProductVocSummary(filters: InboundQualityFilters): 
     fetchRawProductVocRows('customer_voc_product_negative', filters),
   ]);
 
-  const counts = new Map<string, { pos: number; neg: number }>();
-  for (const r of posRows) {
-    const { product } = splitProductVoc(String(r.raw));
-    const entry = counts.get(product) ?? { pos: 0, neg: 0 };
-    entry.pos += 1;
+  const counts = new Map<string, { pos: number; neg: number; lastDateMs: number }>();
+  const bump = (raw: string, callDate: unknown, field: 'pos' | 'neg') => {
+    const { product } = splitProductVoc(raw);
+    const entry = counts.get(product) ?? { pos: 0, neg: 0, lastDateMs: 0 };
+    entry[field] += 1;
+    const t = new Date(callDate as string).getTime();
+    if (!isNaN(t) && t > entry.lastDateMs) entry.lastDateMs = t;
     counts.set(product, entry);
-  }
-  for (const r of negRows) {
-    const { product } = splitProductVoc(String(r.raw));
-    const entry = counts.get(product) ?? { pos: 0, neg: 0 };
-    entry.neg += 1;
-    counts.set(product, entry);
-  }
+  };
+  for (const r of posRows) bump(String(r.raw), r.callDate, 'pos');
+  for (const r of negRows) bump(String(r.raw), r.callDate, 'neg');
 
   const products = Array.from(counts.entries())
-    .map(([product, c]) => ({ product, pos: c.pos, neg: c.neg }))
+    .map(([product, c]) => ({
+      product, pos: c.pos, neg: c.neg,
+      lastDate: c.lastDateMs > 0 ? new Date(c.lastDateMs).toISOString().slice(0, 10) : '',
+    }))
     .sort((a, b) => (b.pos + b.neg) - (a.pos + a.neg));
 
   return { products };
@@ -4140,15 +4150,16 @@ export async function getClapProductVocQuotes(product: string, filters: InboundQ
     rows
       .map(r => ({
         ...splitProductVoc(String(r.raw)),
-        leadId:    String(r.leadId ?? ''),
-        agentId:   String(r.agentId ?? ''),
-        agentName: String(r.agentName ?? 'Unknown'),
-        mobileNo:  String(r.mobileNo ?? ''),
-        callDate:  String(r.callDate),
+        leadId:     String(r.leadId ?? ''),
+        agentId:    String(r.agentId ?? ''),
+        agentName:  String(r.agentName ?? 'Unknown'),
+        mobileNo:   String(r.mobileNo ?? ''),
+        callDate:   String(r.callDate),
+        transcript: String(r.transcript ?? ''),
       }))
       .filter(r => r.product === product)
       .slice(0, 50)
-      .map(r => ({ leadId: r.leadId, agentId: r.agentId, agentName: r.agentName, mobileNo: r.mobileNo, callDate: r.callDate, quote: r.quote }));
+      .map(r => ({ leadId: r.leadId, agentId: r.agentId, agentName: r.agentName, mobileNo: r.mobileNo, callDate: r.callDate, quote: r.quote, transcript: r.transcript }));
 
   return { positive: toQuotes(posRows), negative: toQuotes(negRows) };
 }

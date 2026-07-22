@@ -64,7 +64,12 @@ interface AgentRow {
   saleCount: number; revenue: number;
   codCount: number; codRevenue: number; codPct: number;
   paidCount: number; paidRevenue: number; paidPct: number;
+  target: number; achievementPct: number; stackRank: string;
 }
+
+interface WeeklyCell { revenue: number; target: number; achievementPct: number; rank: string; }
+interface WeeklyAgentRow { empId: string; name: string; weekly: Record<string, WeeklyCell>; }
+interface WeeklyAchievementResponse { weeks: string[]; rows: WeeklyAgentRow[]; }
 
 interface NmsAgent {
   id: number;
@@ -77,6 +82,7 @@ interface NmsAgent {
   fhd: string | null;
   status: string;
   dol: string | null;
+  monthlyTarget: number;
   tenure: number;
   tenureBucket: string;
 }
@@ -114,7 +120,7 @@ function KpiCard({ label, value, sub, icon: Icon, color, gradient }: {
           <p className="text-[9.5px] font-semibold text-slate-500 uppercase tracking-wide leading-tight">{label}</p>
         </div>
         <p className="text-lg font-black leading-none" style={{ color }}>{value}</p>
-        {sub && <p className="text-[9px] text-slate-400 mt-0.5 truncate">{sub}</p>}
+        {sub && <p className="text-[9px] text-slate-600 font-semibold mt-0.5 truncate">{sub}</p>}
       </div>
     </div>
   );
@@ -138,16 +144,47 @@ function ChartCard({ title, subtitle, onExpand, children }: { title: string; sub
   );
 }
 
+// ── Duration (H:MM:SS) helpers — for averaging Talk/Wait/Pause/Login/Logout columns ──
+function hmsToSeconds(hms: string): number {
+  const parts = String(hms ?? '').split(':').map(Number);
+  if (parts.length < 2 || parts.some(isNaN)) return NaN;
+  return parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
+}
+function secondsToHms(totalSeconds: number): string {
+  const s = Math.round(totalSeconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+function avgHms(values: string[]): string {
+  const secs = values.map(hmsToSeconds).filter(n => !isNaN(n));
+  return secs.length === 0 ? '' : secondsToHms(secs.reduce((s, n) => s + n, 0) / secs.length);
+}
+// Each agent's Talk/Wait/etc. value is already a per-day average (total seconds ÷ days worked,
+// computed server-side). The Total row must weight each agent's average by their day count —
+// i.e. reconstruct sum(seconds)/sum(days) — otherwise agents with fewer days worked get the same
+// pull on the Total as agents with a full month, which drifts from a true pivot-table average.
+function avgHmsWeighted(pairs: { value: string; weight: number }[]): string {
+  let totalSec = 0, totalWeight = 0;
+  for (const p of pairs) {
+    const sec = hmsToSeconds(p.value);
+    if (!isNaN(sec) && p.weight > 0) { totalSec += sec * p.weight; totalWeight += p.weight; }
+  }
+  return totalWeight === 0 ? '' : secondsToHms(totalSec / totalWeight);
+}
+
 // ── Data Table ────────────────────────────────────────────────────────────────
-interface TableCol<T> { key: keyof T; label: string; fmt?: (v: any) => string; align?: 'left' | 'right'; aggregate?: 'avg' | 'sum' | 'none'; }
+interface TableCol<T> { key: keyof T; label: string; fmt?: (v: any) => React.ReactNode; align?: 'left' | 'right'; aggregate?: 'avg' | 'sum' | 'none'; aggregateFn?: (rows: T[]) => string; }
 function DataTable<T extends Record<string, any>>({
   cols, rows, title, accent,
-  dateFrom, dateTo, onDateFrom, onDateTo, onDateRefresh, dateLoading,
+  dateFrom, dateTo, onDateFrom, onDateTo, onDateRefresh, dateLoading, rowHighlight,
 }: {
   cols: TableCol<T>[]; rows: T[]; title: string; accent: string;
   dateFrom?: string; dateTo?: string;
   onDateFrom?: (v: string) => void; onDateTo?: (v: string) => void;
   onDateRefresh?: () => void; dateLoading?: boolean;
+  rowHighlight?: (row: T) => boolean;
 }) {
   const [search, setSearch] = useState('');
   const [page, setPage]     = useState(1);
@@ -196,7 +233,8 @@ function DataTable<T extends Record<string, any>>({
             {slice.length === 0
               ? <tr><td colSpan={cols.length} className="text-center py-8 text-slate-400">No data</td></tr>
               : slice.map((row, i) => (
-                <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/70 transition-colors">
+                <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/70 transition-colors"
+                  style={rowHighlight?.(row) ? { background: '#FEF2F2' } : undefined}>
                   {cols.map(c => (
                     <td key={String(c.key)} className="px-4 py-2.5 text-slate-700 whitespace-nowrap"
                         style={{ textAlign: c.align ?? 'left', fontVariantNumeric: 'tabular-nums' }}>
@@ -219,6 +257,7 @@ function DataTable<T extends Record<string, any>>({
                     <td key={String(c.key)} className="px-4 py-2 font-bold text-slate-700 whitespace-nowrap"
                         style={{ textAlign: c.align ?? 'left', fontVariantNumeric: 'tabular-nums' }}>
                       {ci === 0 ? 'Total'
+                        : c.aggregateFn ? c.aggregateFn(rows)
                         : isNone ? ''
                         : isAvg  ? (avg > 0 ? `${avg}%` : '')
                         : (tot > 0 ? (c.fmt ? c.fmt(tot) : fmtNum(tot)) : '')}
@@ -386,6 +425,92 @@ function AgentCodPaidPctChart({ data, height = 300 }: { data: AgentRow[]; height
   );
 }
 
+// Stack ranking badge: TQ (>90% achievement) / MQ (>75%–90%) / BQ (<=75%) / '-' (no target set).
+const RANK_COLORS: Record<string, { bg: string; text: string }> = {
+  TQ:  { bg: '#DCFCE7', text: '#166534' },
+  MQ:  { bg: '#FEF3C7', text: '#92400E' },
+  BQ:  { bg: '#FEE2E2', text: '#991B1B' },
+  '-': { bg: '#F1F5F9', text: '#64748B' },
+};
+function RankBadge({ rank }: { rank: string }) {
+  const c = RANK_COLORS[rank] ?? RANK_COLORS['-'];
+  return (
+    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: c.bg, color: c.text }}>
+      {rank}
+    </span>
+  );
+}
+
+// ── Weekly Achievement % / Stack Ranking Table ────────────────────────────────
+function WeeklyAchievementTable({ data, loading, error }: {
+  data: WeeklyAchievementResponse | null; loading: boolean; error: string | null;
+}) {
+  const [search, setSearch] = useState('');
+  const rows = (data?.rows ?? []).filter(r =>
+    [r.empId, r.name].some(s => s.toLowerCase().includes(search.toLowerCase()))
+  );
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3" style={{ background: NAVY }}>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-bold text-white">Agent-wise Weekly Achievement % &amp; Stack Ranking</h3>
+          <span className="text-xs text-indigo-200">({rows.length} agents)</span>
+        </div>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
+          className="text-xs rounded-lg px-3 py-1.5 w-36 focus:outline-none bg-white/20 text-white placeholder-indigo-200 border border-white/30" />
+      </div>
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="h-8 w-8 border-4 rounded-full animate-spin" style={{ borderTopColor: NAVY, borderColor: '#E2E8F0' }} />
+        </div>
+      ) : error ? (
+        <div className="text-center py-12 text-red-500 text-sm font-semibold">{error}</div>
+      ) : !data || data.weeks.length === 0 ? (
+        <div className="text-center py-12 text-slate-400 text-sm">No weekly data for this period.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ background: '#EEF2FF' }}>
+                <th className="px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap text-left">Agent</th>
+                <th className="px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap text-left">MAS ID</th>
+                {data.weeks.map(w => (
+                  <th key={w} className="px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap text-right">{w}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan={2 + data.weeks.length} className="text-center py-10 text-slate-400">No agents found</td></tr>
+              ) : rows.map(r => (
+                <tr key={r.empId || r.name} className="border-t border-slate-50 hover:bg-slate-50/70 transition-colors">
+                  <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap font-medium">{r.name}</td>
+                  <td className="px-3 py-2.5 font-semibold text-slate-700 whitespace-nowrap">{r.empId || '—'}</td>
+                  {data.weeks.map(w => {
+                    const cell = r.weekly[w];
+                    return (
+                      <td key={w} className="px-3 py-2.5 whitespace-nowrap text-right">
+                        {!cell || cell.target === 0 ? (
+                          <span className="text-slate-300">—</span>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span className="font-semibold text-slate-700 tabular-nums">{cell.achievementPct}%</span>
+                            <RankBadge rank={cell.rank} />
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Table Columns ─────────────────────────────────────────────────────────────
 const AGENT_COLS: TableCol<AgentRow>[] = [
   { key: 'agent',       label: 'Agent',        align: 'left' },
@@ -397,8 +522,18 @@ const AGENT_COLS: TableCol<AgentRow>[] = [
   { key: 'paidRevenue', label: 'Paid Revenue', align: 'right', fmt: fmtMoneyFull },
   { key: 'paidPct',     label: 'Paid %',       align: 'right', fmt: (v: number) => `${v}%` },
   { key: 'codCount',    label: 'COD Count',    align: 'right', fmt: fmtNum },
-  { key: 'codRevenue',  label: 'COD Revenue',  align: 'right', fmt: fmtMoneyFull },
-  { key: 'codPct',      label: 'COD %',        align: 'right', fmt: (v: number) => `${v}%` },
+  { key: 'target',      label: 'Target',       align: 'right', fmt: (v: number) => v > 0 ? fmtMoneyFull(v) : '—' },
+  { key: 'achievementPct', label: 'Achi %',    align: 'right', fmt: (v: number) => `${v}%` },
+  {
+    key: 'stackRank', label: 'Stack Rank', align: 'right',
+    fmt: (v: string) => <RankBadge rank={v} />,
+    aggregateFn: rows => {
+      const tq = rows.filter(r => r.stackRank === 'TQ').length;
+      const mq = rows.filter(r => r.stackRank === 'MQ').length;
+      const bq = rows.filter(r => r.stackRank === 'BQ').length;
+      return `TQ ${tq} · MQ ${mq} · BQ ${bq}`;
+    },
+  },
 ];
 
 const DATE_COLS: TableCol<DateDetail>[] = [
@@ -621,18 +756,16 @@ function SetTargetModal({ currentMonth, onClose, onSaved }: {
 // ── APR Types & Charts ────────────────────────────────────────────────────────
 interface AprAgentRow {
   empName: string; empId: string; lob: string;
-  calls: number; uca: number; attendance: number;
+  calls: number; uca: number; attendance: number; aprDays: number;
   talk: string; wait: string; pause: string;
   netLogin: string; totalBreak: string;
   avgAcht: number; avgOccu: number;
   firstLogin: string; lastLogout: string;
 }
-interface AprDateRow  { date: string; calls: number; agents: number; }
+interface AprDateRow  { date: string; calls: number; agents: number; avgAcht: number; }
 interface AprLobRow   { lob: string; calls: number; }
 interface AprKpis     { totalCalls: number; totalAgents: number; avgOccu: number; avgAcht: number; totalAttendance: number; }
 interface AprDashData { kpis: AprKpis; agentRows: AprAgentRow[]; dateRows: AprDateRow[]; lobRows: AprLobRow[]; }
-
-const LOB_COLORS = ['#6366F1','#10B981','#F59E0B','#EF4444','#06B6D4','#8B5CF6','#F97316','#84CC16'];
 
 function AprCallsByDateChart({ data, height = 260 }: { data: AprDateRow[]; height?: number }) {
   return (
@@ -650,6 +783,23 @@ function AprCallsByDateChart({ data, height = 260 }: { data: AprDateRow[]; heigh
   );
 }
 
+function AprAchtByDateChart({ data, height = 260 }: { data: AprDateRow[]; height?: number }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={data} margin={{ top: 28, right: 12, bottom: 0, left: -18 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+        <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#94A3B8' }} interval={0} angle={-35} textAnchor="end" height={44} tickLine={false} axisLine={false} />
+        <YAxis tick={{ fontSize: 10, fill: '#94A3B8' }} allowDecimals={false} tickLine={false} axisLine={false} />
+        <Tooltip content={<ChartTooltip />} />
+        <Line type="monotone" dataKey="avgAcht" name="ACHT (sec)" stroke="#F59E0B" strokeWidth={2.5}
+          dot={{ r: 4, fill: '#fff', stroke: '#F59E0B', strokeWidth: 2 }} activeDot={{ r: 6 }}>
+          <LabelList dataKey="avgAcht" position="top" style={{ fontSize: 9, fill: '#B45309', fontWeight: 700 }} />
+        </Line>
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
 function AprOccuByAgentChart({ data, height = 280 }: { data: AprAgentRow[]; height?: number }) {
   const top10 = [...data].sort((a, b) => b.avgOccu - a.avgOccu).slice(0, 10);
   return (
@@ -663,22 +813,6 @@ function AprOccuByAgentChart({ data, height = 280 }: { data: AprAgentRow[]; heig
           <LabelList dataKey="avgOccu" position="right" formatter={(v: any) => `${v}%`} style={{ fontSize: 9, fill: '#059669', fontWeight: 700 }} />
         </Bar>
       </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-function AprLobPieChart({ data, height = 260 }: { data: AprLobRow[]; height?: number }) {
-  const total = data.reduce((s, r) => s + r.calls, 0) || 1;
-  return (
-    <ResponsiveContainer width="100%" height={height}>
-      <PieChart>
-        <Pie data={data} dataKey="calls" nameKey="lob" cx="50%" cy="50%" outerRadius={90} innerRadius={45} paddingAngle={2}
-          label={(entry: any) => `${entry.lob}: ${Math.round(entry.calls / total * 100)}%`} labelLine={false}>
-          {data.map((_, i) => <Cell key={i} fill={LOB_COLORS[i % LOB_COLORS.length]} />)}
-        </Pie>
-        <Tooltip formatter={(v: any) => [fmtNum(Number(v)), 'Calls']} />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
-      </PieChart>
     </ResponsiveContainer>
   );
 }
@@ -705,19 +839,18 @@ function AprAchtByAgentChart({ data, height = 280 }: { data: AprAgentRow[]; heig
 const APR_AGENT_COLS: TableCol<AprAgentRow>[] = [
   { key: 'empName',    label: 'Agent',        align: 'left',  aggregate: 'none' },
   { key: 'empId',      label: 'EMP ID',       align: 'left',  aggregate: 'none' },
-  { key: 'lob',        label: 'LOB',          align: 'left',  aggregate: 'none' },
   { key: 'calls',      label: 'Calls',        align: 'right', fmt: fmtNum },
   { key: 'uca',        label: 'UCA OB',       align: 'right', fmt: fmtNum },
   { key: 'attendance', label: 'Attend.',      align: 'right', fmt: fmtNum },
   { key: 'avgOccu',    label: 'Occu %',       align: 'right', fmt: (v: number) => `${v}%`, aggregate: 'avg' },
   { key: 'avgAcht',    label: 'ACHT (s)',     align: 'right', fmt: fmtNum,                  aggregate: 'avg' },
-  { key: 'talk',       label: 'Talk',         align: 'right', aggregate: 'none' },
-  { key: 'wait',       label: 'Wait',         align: 'right', aggregate: 'none' },
-  { key: 'pause',      label: 'Pause',        align: 'right', aggregate: 'none' },
-  { key: 'netLogin',   label: 'Net Login',    align: 'right', aggregate: 'none' },
-  { key: 'totalBreak', label: 'Total Break',  align: 'right', aggregate: 'none' },
-  { key: 'firstLogin', label: 'First Login',  align: 'right', aggregate: 'none' },
-  { key: 'lastLogout', label: 'Last Logout',  align: 'right', aggregate: 'none' },
+  { key: 'talk',       label: 'Talk',         align: 'right', aggregateFn: rows => avgHmsWeighted(rows.map(r => ({ value: r.talk,       weight: r.aprDays }))) },
+  { key: 'wait',       label: 'Wait',         align: 'right', aggregateFn: rows => avgHmsWeighted(rows.map(r => ({ value: r.wait,       weight: r.aprDays }))) },
+  { key: 'pause',      label: 'Pause',        align: 'right', aggregateFn: rows => avgHmsWeighted(rows.map(r => ({ value: r.pause,      weight: r.aprDays }))) },
+  { key: 'netLogin',   label: 'Net Login',    align: 'right', aggregateFn: rows => avgHmsWeighted(rows.map(r => ({ value: r.netLogin,   weight: r.aprDays }))) },
+  { key: 'totalBreak', label: 'Total Break',  align: 'right', aggregateFn: rows => avgHmsWeighted(rows.map(r => ({ value: r.totalBreak, weight: r.aprDays }))) },
+  { key: 'firstLogin', label: 'First Login',  align: 'right', aggregateFn: rows => avgHms(rows.map(r => r.firstLogin)) },
+  { key: 'lastLogout', label: 'Last Logout',  align: 'right', aggregateFn: rows => avgHms(rows.map(r => r.lastLogout)) },
 ];
 
 // ── ABC Cart Snap Component ────────────────────────────────────────────────────
@@ -1095,7 +1228,7 @@ function AgentDetailsTab({ data, loading, error, onRefresh }: {
   const [saving,    setSaving]    = useState(false);
   const [deleting,  setDeleting]  = useState(false);
 
-  const emptyForm = { emp_id: '', daildesk_id: '', name: '', lob: '', tl: '', doj: '', fhd: '', status: 'Active', dol: '' };
+  const emptyForm = { empId: '', daildeskId: '', name: '', lob: '', tl: '', doj: '', fhd: '', status: 'Active', dol: '', monthlyTarget: '' };
   const [form, setForm] = useState(emptyForm);
 
   const tenurePreview = calcTenurePreview(form.doj, form.dol);
@@ -1103,19 +1236,21 @@ function AgentDetailsTab({ data, loading, error, onRefresh }: {
   function openAdd() { setForm(emptyForm); setEditAgent(null); setModalOpen(true); }
   function openEdit(a: NmsAgent) {
     setForm({
-      emp_id: a.empId, daildesk_id: a.daildeskId ?? '', name: a.name,
+      empId: a.empId, daildeskId: a.daildeskId ?? '', name: a.name,
       lob: a.lob ?? '', tl: a.tl ?? '', doj: a.doj ?? '',
       fhd: a.fhd ?? '', status: a.status, dol: a.dol ?? '',
+      monthlyTarget: a.monthlyTarget ? String(a.monthlyTarget) : '',
     });
     setEditAgent(a); setModalOpen(true);
   }
 
   async function handleSave() {
-    if (!form.emp_id.trim() || !form.name.trim()) { alert('Emp ID and Name are required'); return; }
+    if (!form.empId.trim() || !form.name.trim()) { alert('Emp ID and Name are required'); return; }
     setSaving(true);
     try {
-      if (editAgent) await api.put(`/sales/nms-agent-details/${editAgent.id}`, form);
-      else            await api.post('/sales/nms-agent-details', form);
+      const payload = { ...form, monthlyTarget: Number(form.monthlyTarget) || 0 };
+      if (editAgent) await api.put(`/sales/nms-agent-details/${editAgent.id}`, payload);
+      else            await api.post('/sales/nms-agent-details', payload);
       setModalOpen(false); onRefresh();
     } catch (err: any) { alert(err?.response?.data?.message || err?.message || 'Failed to save'); }
     finally { setSaving(false); }
@@ -1135,6 +1270,16 @@ function AgentDetailsTab({ data, loading, error, onRefresh }: {
     )
   );
 
+  function handleExport() {
+    if (!data.length) { alert('No agent data to export'); return; }
+    const headers = ['Emp ID', 'Name', 'TL', 'DOJ', 'FHD', 'Tenure (days)', 'Bucket', 'Status', 'DOL', 'Monthly Target'];
+    const rows = data.map(a => [
+      a.empId, a.name, a.tl ?? '', a.doj ?? '', a.fhd ?? '',
+      String(a.tenure), a.tenureBucket ?? '', a.status, a.dol ?? '', String(a.monthlyTarget ?? 0),
+    ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+    downloadCsv(`neemans-agent-details-${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
+  }
+
   const FIELD_CLS = 'w-full text-xs rounded-lg border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300';
   const LABEL_CLS = 'block text-xs font-semibold text-slate-600 mb-1';
 
@@ -1150,6 +1295,10 @@ function AgentDetailsTab({ data, loading, error, onRefresh }: {
           <div className="flex items-center gap-2">
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
               className="text-xs rounded-lg px-3 py-1.5 w-36 focus:outline-none bg-white/20 text-white placeholder-indigo-200 border border-white/30" />
+            <button onClick={handleExport} title="Download all agent details as CSV"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl text-white border border-white/30 hover:bg-white/20 transition">
+              <Download size={13} /> Download
+            </button>
             {isSuperAdmin && (
               <button onClick={openAdd}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl text-white border border-white/30 hover:bg-white/20 transition">
@@ -1172,14 +1321,14 @@ function AgentDetailsTab({ data, loading, error, onRefresh }: {
             <table className="w-full text-xs">
               <thead>
                 <tr style={{ background: '#EEF2FF' }}>
-                  {['#','Emp ID','Name','TL','DOJ','FHD','Bucket','Status','DOL', ...(isSuperAdmin ? ['Actions'] : [])].map(h => (
+                  {['#','Emp ID','Name','TL','DOJ','FHD','Bucket','Status','DOL','Target', ...(isSuperAdmin ? ['Actions'] : [])].map(h => (
                     <th key={h} className="px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap text-left">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={10} className="text-center py-10 text-slate-400">No agents found</td></tr>
+                  <tr><td colSpan={11} className="text-center py-10 text-slate-400">No agents found</td></tr>
                 ) : filtered.map((a, i) => (
                   <tr key={a.id} className="border-t border-slate-50 hover:bg-slate-50/70 transition-colors">
                     <td className="px-3 py-2.5 text-slate-400">{i + 1}</td>
@@ -1196,6 +1345,7 @@ function AgentDetailsTab({ data, loading, error, onRefresh }: {
                         style={{ background: a.status === 'Active' ? '#10B981' : '#EF4444' }}>{a.status}</span>
                     </td>
                     <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{a.dol || '—'}</td>
+                    <td className="px-3 py-2.5 text-slate-700 font-semibold whitespace-nowrap">{a.monthlyTarget ? fmtMoneyFull(a.monthlyTarget) : '—'}</td>
                     {isSuperAdmin && (
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
@@ -1233,11 +1383,11 @@ function AgentDetailsTab({ data, loading, error, onRefresh }: {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={LABEL_CLS}>Emp ID *</label>
-                  <input className={FIELD_CLS} value={form.emp_id} onChange={e => setForm(f => ({ ...f, emp_id: e.target.value }))} placeholder="EMP001" />
+                  <input className={FIELD_CLS} value={form.empId} onChange={e => setForm(f => ({ ...f, empId: e.target.value }))} placeholder="EMP001" />
                 </div>
                 <div>
                   <label className={LABEL_CLS}>DialDesk ID</label>
-                  <input className={FIELD_CLS} value={form.daildesk_id} onChange={e => setForm(f => ({ ...f, daildesk_id: e.target.value }))} placeholder="DialDesk-EMP001" />
+                  <input className={FIELD_CLS} value={form.daildeskId} onChange={e => setForm(f => ({ ...f, daildeskId: e.target.value }))} placeholder="DialDesk-EMP001" />
                 </div>
                 <div className="col-span-2">
                   <label className={LABEL_CLS}>Name *</label>
@@ -1269,6 +1419,10 @@ function AgentDetailsTab({ data, loading, error, onRefresh }: {
                 <div>
                   <label className={LABEL_CLS}>DOL (Date of Leaving)</label>
                   <input type="date" className={FIELD_CLS} value={form.dol} onChange={e => setForm(f => ({ ...f, dol: e.target.value }))} />
+                </div>
+                <div>
+                  <label className={LABEL_CLS}>Monthly Target</label>
+                  <input type="number" className={FIELD_CLS} value={form.monthlyTarget} onChange={e => setForm(f => ({ ...f, monthlyTarget: e.target.value }))} placeholder="494000" />
                 </div>
               </div>
               {/* Auto-calculated Tenure Preview */}
@@ -1336,7 +1490,7 @@ function AgentDetailsTab({ data, loading, error, onRefresh }: {
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 type Tab       = 'overall' | 'agent' | 'apr' | 'snap' | 'agentdetails';
 type ExpandKey = 'conversion' | 'revenue' | 'saleCount' | 'achievement' | 'agentRevenue' | 'agentCodPaid' |
-                 'aprCalls' | 'aprOccu' | 'aprLob' | 'aprAcht' | null;
+                 'aprCalls' | 'aprOccu' | 'aprAchtDate' | 'aprAcht' | null;
 
 export default function NeemansDashboard() {
   const { user } = useAuthStore();
@@ -1355,6 +1509,9 @@ export default function NeemansDashboard() {
   const [agentData,    setAgentData]    = useState<AgentRow[]>([]);
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentError,   setAgentError]   = useState<string | null>(null);
+  const [weeklyData,    setWeeklyData]    = useState<WeeklyAchievementResponse | null>(null);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [weeklyError,   setWeeklyError]   = useState<string | null>(null);
 
   // APR tab state
   const [aprRange,    setAprRange]    = useState(monthToRange(currentMonth));
@@ -1396,11 +1553,22 @@ export default function NeemansDashboard() {
       .finally(() => setAgentLoading(false));
   }
 
+  function fetchWeeklyData(start: string, end: string) {
+    setWeeklyLoading(true); setWeeklyError(null);
+    api.get('/sales/neemans-agent-weekly', { params: { startDate: start, endDate: end } })
+      .then(r => { if (r.data?.data) setWeeklyData(r.data.data); else setWeeklyError('No data'); })
+      .catch(err => setWeeklyError(err?.response?.data?.message || err?.message || 'Failed'))
+      .finally(() => setWeeklyLoading(false));
+  }
+
   useEffect(() => { fetchMain(month); }, [month]);
 
   // Fetch agent data when switching to agent tab or when range changes
   useEffect(() => {
-    if (tab === 'agent') fetchAgentData(agentRange.start, agentRange.end);
+    if (tab === 'agent') {
+      fetchAgentData(agentRange.start, agentRange.end);
+      fetchWeeklyData(agentRange.start, agentRange.end);
+    }
   }, [tab, agentRange.start, agentRange.end]);
 
   function fetchAprData(start: string, end: string) {
@@ -1435,9 +1603,11 @@ export default function NeemansDashboard() {
       .finally(() => setAgentDetailsLoading(false));
   }
 
+  // Fetched once on mount (not gated to the Agent Details tab) so Active/Inactive status is
+  // available to highlight rows in the Agent-wise and APR breakdown tables too.
   useEffect(() => {
-    if (tab === 'agentdetails') fetchAgentDetails();
-  }, [tab]);
+    fetchAgentDetails();
+  }, []);
 
   async function handleSaleRawExport(start: string, end: string) {
     const res  = await api.get('/sales/neemans-sale-raw-export', { params: { startDate: start, endDate: end } });
@@ -1466,6 +1636,11 @@ export default function NeemansDashboard() {
     downloadCsv(`neemans-cdr-${start}-${end}.csv`, headers, csvRows);
   }
 
+  const inactiveEmpIds = new Set(
+    agentDetailsList.filter(a => a.status === 'Inactive').map(a => a.empId.toUpperCase().trim())
+  );
+  const isInactiveAgent = (empId: string) => inactiveEmpIds.has(String(empId ?? '').toUpperCase().trim());
+
   const k    = data?.kpis;
   const rows = (data?.dateRows ?? []).map(r => ({
     ...r, label: r.date.replace(/^(\d+)-([A-Za-z]{3}).*$/, '$1-$2'),
@@ -1486,7 +1661,7 @@ export default function NeemansDashboard() {
   const APR_CHARTS: ChartDef[] = [
     { key: 'aprCalls', title: 'Date-wise Calls',         comp: (h) => <AprCallsByDateChart data={aprData?.dateRows ?? []} height={h} /> },
     { key: 'aprOccu',  title: 'Top 10 — Occupancy %',    comp: (h) => <AprOccuByAgentChart  data={aprData?.agentRows ?? []} height={h} /> },
-    { key: 'aprLob',   title: 'Calls by LOB',             comp: (h) => <AprLobPieChart       data={aprData?.lobRows ?? []} height={h} /> },
+    { key: 'aprAchtDate', title: 'Date-wise ACHT',         comp: (h) => <AprAchtByDateChart   data={aprData?.dateRows ?? []} height={h} /> },
     { key: 'aprAcht',  title: 'Top 10 — ACHT (sec)',      comp: (h) => <AprAchtByAgentChart  data={aprData?.agentRows ?? []} height={h} /> },
   ];
   const ALL_CHARTS = [...OVERALL_CHARTS, ...AGENT_CHARTS, ...APR_CHARTS];
@@ -1617,10 +1792,10 @@ export default function NeemansDashboard() {
                     ? <div className="flex items-center justify-center h-52 text-sm text-slate-400">No data — upload APR first</div>
                     : <AprCallsByDateChart data={aprData.dateRows} height={260} />}
                 </ChartCard>
-                <ChartCard title="Calls by LOB" onExpand={() => setExpand('aprLob')}>
-                  {aprData.lobRows.length === 0
-                    ? <div className="flex items-center justify-center h-52 text-sm text-slate-400">No data</div>
-                    : <AprLobPieChart data={aprData.lobRows} height={260} />}
+                <ChartCard title="Date-wise ACHT" onExpand={() => setExpand('aprAchtDate')}>
+                  {aprData.dateRows.length === 0
+                    ? <div className="flex items-center justify-center h-52 text-sm text-slate-400">No data — upload APR first</div>
+                    : <AprAchtByDateChart data={aprData.dateRows} height={260} />}
                 </ChartCard>
                 <ChartCard title="Top 10 Agents — Occupancy %" onExpand={() => setExpand('aprOccu')}>
                   {aprData.agentRows.length === 0
@@ -1639,6 +1814,7 @@ export default function NeemansDashboard() {
                 accent="#6366F1"
                 cols={APR_AGENT_COLS}
                 rows={aprData.agentRows}
+                rowHighlight={row => isInactiveAgent(row.empId)}
                 dateFrom={aprRange.start}
                 dateTo={aprRange.end}
                 onDateFrom={v => setAprRange(r => ({ ...r, start: v }))}
@@ -1677,7 +1853,7 @@ export default function NeemansDashboard() {
           {tab === 'overall' && (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-9 gap-2">
-                <KpiCard label="Workable Data"  value={fmtNum(k!.workable)}       sub="Allocation"
+                <KpiCard label="Workable Data"  value={fmtNum(k!.workable)}       sub={`Allocation · ${fmtNum(k!.connected)} connected`}
                   icon={Users}       color={G}        gradient="linear-gradient(135deg,#F0FAF4,#D8F3DC)" />
                 <KpiCard label="Connected %"    value={fmtPct(k!.connectedPct)}   sub={`${fmtNum(k!.connected)} calls`}
                   icon={PhoneCall}   color="#0EA5E9"  gradient="linear-gradient(135deg,#F0F9FF,#BAE6FD)" />
@@ -1750,7 +1926,11 @@ export default function NeemansDashboard() {
                     accent={NAVY}
                     cols={AGENT_COLS}
                     rows={agentData}
+                    rowHighlight={row => isInactiveAgent(row.empId)}
                   />
+
+                  {/* Weekly achievement % / stack ranking */}
+                  <WeeklyAchievementTable data={weeklyData} loading={weeklyLoading} error={weeklyError} />
                 </>
               )}
             </>

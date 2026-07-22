@@ -37,6 +37,7 @@ router.get('/neemans-targets',          ctrl.getNeemansTargets);
 router.post('/neemans-targets',         requireRole('super_admin'), ctrl.setNeemansTarget);
 router.get('/neemans-dashboard',        ctrl.getNeemansDashboard);
 router.get('/neemans-agent-data',       ctrl.getNeemansAgentData);
+router.get('/neemans-agent-weekly',     ctrl.getNeemansAgentWeeklyAchievement);
 router.get('/neemans-sale-raw-export',  ctrl.getNeemansSaleRawExport);
 router.get('/neemans-cdr-export',       ctrl.getNeemansCdrExport);
 router.post('/upload-neemans-apr',      upload.single('file'), ctrl.uploadNeemansApr);

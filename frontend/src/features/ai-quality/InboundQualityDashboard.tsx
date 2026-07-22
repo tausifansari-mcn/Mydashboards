@@ -10,6 +10,7 @@ import {
   ChevronLeft, ChevronDown, Phone, ClipboardCheck, TrendingUp, Star,
   ThumbsUp, ThumbsDown, Minus, AlertTriangle, Trophy, Target,
   ShieldAlert, AlertOctagon, Download, Maximize2, Minimize2, X, Info, Loader2, Loader, Pencil, Check,
+  Eye, EyeOff,
 } from 'lucide-react';
 import api from '@/lib/axios';
 
@@ -189,7 +190,7 @@ interface RepeatPivotRow   { mobile_no: string; by_date: Record<string, number>;
 interface RepeatAnalysis   { grand_unique: number; grand_repeat: number; grand_pct: number; day_wise: DayWiseRepeatRow[]; pivot_dates: string[]; pivot_rows: RepeatPivotRow[]; }
 
 interface AgentMasterRow  { masId: string; agentName: string; lob: string; }
-interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; }
+interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; transcript: string; }
 
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 function downloadCSV(rows: Record<string, unknown>[], filename: string) {
@@ -1524,12 +1525,27 @@ function VocQuoteList({ positive, negative, loading, onQuoteClick, resolveAgent 
     const dt = new Date(d);
     return isNaN(dt.getTime()) ? d : dt.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
   };
+  const handleDownload = (title: string, quotes: VocQuote[]) => {
+    downloadCSV(quotes.map(q => ({
+      'Agent ID':     q.agentId,
+      'Agent Name':   resolveAgent(q.agentId),
+      'Mobile No':    q.mobileNo,
+      'Customer VOC': q.quote,
+      Transcript:     q.transcript,
+    })), `${title.toLowerCase().replace(/\s+/g, '-')}.csv`);
+  };
   const Column = ({ title, icon, quotes, borderColor, headerBg }: { title: string; icon: string; quotes: VocQuote[]; borderColor: string; headerBg: string }) => (
     <div className="rounded-xl overflow-hidden border" style={{ borderColor }}>
       <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: headerBg }}>
         <span className="text-white text-sm">{icon}</span>
         <span className="text-[10px] font-black uppercase tracking-widest text-white">{title}</span>
         <span className="ml-auto text-[9px] text-white/70 font-semibold">{quotes.length}</span>
+        {quotes.length > 0 && (
+          <button onClick={() => handleDownload(title, quotes)} title={`Download ${title} CSV`}
+            className="text-white/70 hover:text-white transition-colors">
+            <Download size={12} />
+          </button>
+        )}
       </div>
       <div className="bg-white p-3 space-y-2 max-h-80 overflow-y-auto">
         {loading ? (
@@ -1742,9 +1758,10 @@ export default function InboundQualityDashboard() {
   const [clapActiveScenario, setClapActiveScenario] = useState<string | null>(null);
   const [clapVocQuotes, setClapVocQuotes] = useState<{ positive: VocQuote[]; negative: VocQuote[] } | null>(null);
   const [clapVocLoading, setClapVocLoading] = useState(false);
-  const [clapProductSummary, setClapProductSummary] = useState<{ product: string; pos: number; neg: number }[] | null>(null);
+  const [clapProductSummary, setClapProductSummary] = useState<{ product: string; pos: number; neg: number; lastDate: string }[] | null>(null);
   const [clapProductSummaryLoading, setClapProductSummaryLoading] = useState(false);
   const [clapActiveProductVoc, setClapActiveProductVoc] = useState<string | null>(null);
+  const [clapProductShowAll, setClapProductShowAll] = useState(false);
   const [clapProductQuotes, setClapProductQuotes] = useState<{ positive: VocQuote[]; negative: VocQuote[] } | null>(null);
   const [clapProductQuotesLoading, setClapProductQuotesLoading] = useState(false);
 
@@ -1910,7 +1927,7 @@ export default function InboundQualityDashboard() {
   useEffect(() => {
     if (clapActiveBranch !== 'Product') { setClapProductSummary(null); setClapActiveProductVoc(null); return; }
     setClapProductSummaryLoading(true);
-    api.get<{ data: { products: { product: string; pos: number; neg: number }[] } }>(
+    api.get<{ data: { products: { product: string; pos: number; neg: number; lastDate: string }[] } }>(
       `/inbound-quality/clap-product-voc-summary?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
     )
       .then(r => setClapProductSummary(r.data?.data?.products ?? []))
@@ -4881,8 +4898,12 @@ export default function InboundQualityDashboard() {
 
                             /* ── PRODUCT branch ── */
                             const productList = clapProductSummary ?? [];
-                            const positiveProducts = productList.filter(p => p.pos > 0);
-                            const negativeProducts = productList.filter(p => p.neg > 0);
+                            const overallLastDate = productList.reduce((max, p) => p.lastDate > max ? p.lastDate : max, '');
+                            const visibleProductList = clapProductShowAll
+                              ? productList
+                              : productList.filter(p => p.lastDate === overallLastDate);
+                            const positiveProducts = visibleProductList.filter(p => p.pos > 0);
+                            const negativeProducts = visibleProductList.filter(p => p.neg > 0);
                             const ProductChip = ({ product, count, accent, bg, border }: { product: string; count: number; accent: string; bg: string; border: string }) => {
                               const isOpen = clapActiveProductVoc === product;
                               return (
@@ -4904,7 +4925,18 @@ export default function InboundQualityDashboard() {
                                 <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
                                   <span>{m.icon}</span>
                                   <span className="text-[11px] font-black uppercase tracking-widest text-white">Product — Customer Sentiment</span>
-                                  <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{productList.length} products</span>
+                                  <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                                    {visibleProductList.length} of {productList.length} products{!clapProductShowAll && overallLastDate ? ` · ${overallLastDate}` : ''}
+                                  </span>
+                                  <button
+                                    onClick={() => setClapProductShowAll(v => !v)}
+                                    title={clapProductShowAll ? 'Show only the latest date' : 'Unhide — show all products'}
+                                    className="flex items-center gap-1 text-[9px] font-semibold px-2 py-1 rounded-lg text-white/90 hover:text-white transition-colors"
+                                    style={{ background: 'rgba(255,255,255,0.15)' }}
+                                  >
+                                    {clapProductShowAll ? <EyeOff size={11} /> : <Eye size={11} />}
+                                    {clapProductShowAll ? 'Hide older' : 'Unhide all'}
+                                  </button>
                                 </div>
                                 {clapProductSummaryLoading ? (
                                   <div className="bg-white p-6 text-center text-sm text-slate-400">Loading products…</div>
@@ -4981,52 +5013,51 @@ export default function InboundQualityDashboard() {
                     const { agents, team_params } = guidanceData;
 
                     return (
-                      <div className="mt-0 rounded-2xl overflow-hidden shadow-xl" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
+                      <div className="mt-0 rounded-2xl overflow-hidden border border-blue-100 shadow-sm">
                         {/* Header */}
-                        <div className="px-6 py-5 flex items-center gap-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-                          <div className="w-11 h-11 rounded-2xl flex items-center justify-center text-2xl shrink-0" style={{ background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(8px)' }}>🎯</div>
+                        <div className="card-header px-6 py-4 gap-4">
+                          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 bg-white/20">🎯</div>
                           <div className="flex-1 min-w-0">
                             <h2 className="text-sm font-bold text-white uppercase tracking-widest">Agent Guidance &amp; Parameter Focus</h2>
-                            <p className="text-[10px] mt-0.5" style={{ color: 'rgba(147,197,253,0.8)' }}>AI-powered coaching · Bottom 5 agents · 19 QA parameters</p>
+                            <p className="text-[10px] text-white/70 mt-0.5">AI-powered coaching · Bottom 5 agents · 19 QA parameters</p>
                           </div>
-                          <span className="shrink-0 text-[9px] font-semibold px-3 py-1 rounded-full" style={{ background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)' }}>Click agent for details</span>
+                          <span className="ignore-header-style shrink-0 text-[9px] font-semibold px-3 py-1 rounded-full bg-white/15 text-white/80">Click agent for details</span>
                         </div>
 
                         {/* Two-section grid */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2">
+                        <div className="grid grid-cols-1 lg:grid-cols-2" style={{ background: '#EFF8FF' }}>
                           {/* ── Section 1: Agents Who Need Guidance ── */}
-                          <div className="p-5" style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }}>
+                          <div className="p-5" style={{ borderRight: '1px solid #DBEAFE' }}>
                             <div className="flex items-center gap-2 mb-4">
-                              <div className="w-6 h-6 rounded-lg flex items-center justify-center text-sm shrink-0" style={{ background: 'rgba(239,68,68,0.25)' }}>👤</div>
-                              <h3 className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.9)' }}>Agents Who Need Guidance</h3>
-                              <span className="ml-auto text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgba(239,68,68,0.2)', color: '#FCA5A5', border: '1px solid rgba(239,68,68,0.3)' }}>
+                              <div className="w-6 h-6 rounded-lg flex items-center justify-center text-sm shrink-0 bg-red-100">👤</div>
+                              <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-700">Agents Who Need Guidance</h3>
+                              <span className="ml-auto text-[9px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200">
                                 {agents.length} agent{agents.length !== 1 ? 's' : ''}
                               </span>
                             </div>
 
                             {agents.length === 0 ? (
-                              <div className="flex flex-col items-center py-10" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                              <div className="flex flex-col items-center py-10 text-slate-400">
                                 <span className="text-3xl mb-2">🏆</span>
                                 <p className="text-sm font-medium">All agents performing well!</p>
                               </div>
                             ) : (
                               <div className="space-y-2">
                                 {agents.map((a, rank) => {
-                                  const scoreColor = a.cq_score < 70 ? '#FCA5A5' : a.cq_score < 85 ? '#FCD34D' : '#86EFAC';
+                                  const scoreColor = a.cq_score < 70 ? '#DC2626' : a.cq_score < 85 ? '#D97706' : '#059669';
                                   const rankLabel = ['🔴','🟠','🟡','🔵','⚪'][rank] ?? '⚪';
                                   const weak = a.params.filter(p => p.pct < p.team_avg - 5 || p.pct < 70);
                                   return (
                                     <button key={a.agent_id}
                                       onClick={() => setAgentGuidancePopup(a)}
-                                      className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all hover:scale-[1.01] active:scale-[0.99]"
-                                      style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer' }}>
+                                      className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all hover:-translate-y-0.5 hover:shadow-md bg-white border border-blue-100">
                                       <span className="text-base shrink-0">{rankLabel}</span>
                                       <div className="flex-1 min-w-0">
-                                        <div className="text-sm font-bold text-white truncate">{resolveAgent(a.agent_id)}</div>
+                                        <div className="text-sm font-bold text-slate-900 truncate">{resolveAgent(a.agent_id)}</div>
                                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                          <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.4)' }}>{a.audit_count} audits</span>
+                                          <span className="text-[9px] text-slate-400">{a.audit_count} audits</span>
                                           {weak.length > 0 && (
-                                            <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(239,68,68,0.2)', color: '#FCA5A5' }}>
+                                            <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-600">
                                               {weak.length} param{weak.length !== 1 ? 's' : ''} need focus
                                             </span>
                                           )}
@@ -5034,10 +5065,10 @@ export default function InboundQualityDashboard() {
                                       </div>
                                       <div className="shrink-0 text-right">
                                         <div className="text-base font-extrabold tabular-nums leading-none" style={{ color: scoreColor }}>{a.cq_score}%</div>
-                                        <div className="text-[9px] mt-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>CQ Score</div>
+                                        <div className="text-[9px] text-slate-400 mt-0.5">CQ Score</div>
                                       </div>
-                                      <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: 'rgba(255,255,255,0.1)' }}>
-                                        <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px' }}>›</span>
+                                      <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 bg-slate-100">
+                                        <span className="text-slate-400" style={{ fontSize: '12px' }}>›</span>
                                       </div>
                                     </button>
                                   );
@@ -5047,35 +5078,35 @@ export default function InboundQualityDashboard() {
                           </div>
 
                           {/* ── Section 2: Which Parameters Need Team-Wide Improvement ── */}
-                          <div className="p-5" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                          <div className="p-5 bg-white">
                             <div className="flex items-center gap-2 mb-4">
-                              <div className="w-6 h-6 rounded-lg flex items-center justify-center text-sm shrink-0" style={{ background: 'rgba(245,158,11,0.25)' }}>📊</div>
-                              <h3 className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.9)' }}>Which Parameters Need Team-Wide Improvement</h3>
+                              <div className="w-6 h-6 rounded-lg flex items-center justify-center text-sm shrink-0 bg-amber-100">📊</div>
+                              <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-700">Which Parameters Need Team-Wide Improvement</h3>
                             </div>
                             <div className="space-y-2 overflow-y-auto pr-1" style={{ maxHeight: '320px' }}>
                               {team_params.map((p, i) => {
-                                const barColor = p.avg >= 90 ? '#86EFAC' : p.avg >= 80 ? '#FCD34D' : '#FCA5A5';
-                                const catCol = CAT_COLOR[p.category] ?? '#94A3B8';
+                                const barColor = p.avg >= 90 ? '#059669' : p.avg >= 80 ? '#D97706' : '#DC2626';
+                                const catCol = CAT_COLOR[p.category] ?? '#64748B';
                                 const isPriority = i < 3;
                                 return (
-                                  <div key={p.column} className="rounded-xl px-3 py-2.5"
-                                    style={{ background: isPriority ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.05)', border: `1px solid ${isPriority ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.08)'}` }}>
+                                  <div key={p.column} className="rounded-xl px-3 py-2.5 border"
+                                    style={{ background: isPriority ? '#FEF2F2' : '#F8FAFC', borderColor: isPriority ? '#FECACA' : '#E2E8F0' }}>
                                     <div className="flex items-center justify-between mb-1">
                                       <div className="flex items-center gap-1.5 min-w-0">
-                                        {i === 0 && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full shrink-0" style={{ background: 'rgba(239,68,68,0.25)', color: '#FCA5A5' }}>⚠ #1</span>}
-                                        {i === 1 && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full shrink-0" style={{ background: 'rgba(249,115,22,0.25)', color: '#FDBA74' }}>#2</span>}
-                                        {i === 2 && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full shrink-0" style={{ background: 'rgba(245,158,11,0.25)', color: '#FCD34D' }}>#3</span>}
-                                        <span className="text-[10px] font-semibold truncate" style={{ color: 'rgba(255,255,255,0.8)' }}>{p.label}</span>
+                                        {i === 0 && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full shrink-0 bg-red-100 text-red-700">⚠ #1</span>}
+                                        {i === 1 && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full shrink-0 bg-orange-100 text-orange-700">#2</span>}
+                                        {i === 2 && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full shrink-0 bg-amber-100 text-amber-700">#3</span>}
+                                        <span className="text-[10px] font-semibold truncate text-slate-700">{p.label}</span>
                                       </div>
                                       <span className="text-xs font-extrabold tabular-nums shrink-0 ml-2" style={{ color: barColor }}>{p.avg}%</span>
                                     </div>
-                                    <div className="h-1.5 w-full rounded-full overflow-hidden mb-1" style={{ background: 'rgba(255,255,255,0.1)' }}>
+                                    <div className="h-1.5 w-full rounded-full overflow-hidden mb-1 bg-slate-100">
                                       <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(p.avg, 100)}%`, backgroundColor: barColor }} />
                                     </div>
                                     <div className="flex items-center justify-between">
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: `${catCol}25`, color: catCol }}>{p.category}</span>
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: `${catCol}18`, color: catCol }}>{p.category}</span>
                                       {isPriority && PARAM_TIPS[p.column] && (
-                                        <span className="text-[8px] italic truncate max-w-[55%] text-right" style={{ color: 'rgba(255,255,255,0.3)' }}>{PARAM_TIPS[p.column]?.substring(0, 45)}…</span>
+                                        <span className="text-[8px] italic truncate max-w-[55%] text-right text-slate-400">{PARAM_TIPS[p.column]?.substring(0, 45)}…</span>
                                       )}
                                     </div>
                                   </div>

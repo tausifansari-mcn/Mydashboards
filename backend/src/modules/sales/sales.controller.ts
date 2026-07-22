@@ -767,6 +767,24 @@ export async function getNeemansAgentData(req: Request, res: Response) {
   }
 }
 
+export async function getNeemansAgentWeeklyAchievement(req: Request, res: Response) {
+  try {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const y = now.getFullYear(), m = now.getMonth() + 1;
+    const lastDay = new Date(y, m, 0).getDate();
+    const defaultStart = `${y}-${pad(m)}-01`;
+    const defaultEnd   = `${y}-${pad(m)}-${pad(lastDay)}`;
+    const startDate = (req.query.startDate as string) || defaultStart;
+    const endDate   = (req.query.endDate   as string) || defaultEnd;
+    const data = await svc.getNeemansAgentWeeklyAchievement(startDate, endDate);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[neemans-agent-weekly] error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch weekly achievement data' });
+  }
+}
+
 // ─── Neemans Sale Raw Export ──────────────────────────────────────────────────
 
 export async function getNeemansSaleRawExport(req: Request, res: Response) {
