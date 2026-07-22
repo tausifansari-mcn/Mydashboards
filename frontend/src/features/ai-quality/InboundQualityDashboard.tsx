@@ -1746,7 +1746,7 @@ export default function InboundQualityDashboard() {
   // ── CLAP Customer Product Analysis ──────────────────────────────────────
   type ClapScenWithSubs = { scenario: string; count: number; subs: { sub: string; count: number }[] };
   const [clapCustomer, setClapCustomer] = useState<{
-    overall: { total: number; pos: number; neg: number };
+    overall: { total: number; pos: number; neg: number; dataStartNote: string | null };
     branches: {
       clap: string; total: number; pos: number; neg: number;
       scenarioBreakdown: ClapScenWithSubs[];
@@ -4761,7 +4761,19 @@ export default function InboundQualityDashboard() {
                               ) : (
                                 <>
                                   <div className="text-2xl font-black tabular-nums" style={{ color: clapCustomerExpanded ? '#fff' : '#0F172A' }}>{ovTotal.toLocaleString()}</div>
-                                  <div className="text-[9px] font-semibold mb-2" style={{ color: clapCustomerExpanded ? 'rgba(255,255,255,0.55)' : '#64748B' }}>Total Audits</div>
+                                  <div className={`text-[9px] font-semibold ${ov?.dataStartNote ? '' : 'mb-2'}`} style={{ color: clapCustomerExpanded ? 'rgba(255,255,255,0.55)' : '#64748B' }}>Total Audits</div>
+                                  {ov?.dataStartNote && (
+                                    <div
+                                      title={ov.dataStartNote}
+                                      className="inline-flex items-center gap-1 mt-1 mb-2 px-2 py-0.5 rounded-full text-[8px] font-bold cursor-help"
+                                      style={{
+                                        background: clapCustomerExpanded ? 'rgba(255,255,255,0.2)' : '#FEF3C7',
+                                        color: clapCustomerExpanded ? '#FDE68A' : '#92400E',
+                                      }}
+                                    >
+                                      ⚠ Counted from 17 Jul
+                                    </div>
+                                  )}
                                   <div className="flex gap-3 justify-center">
                                     <span className="text-[11px] font-bold" style={{ color: clapCustomerExpanded ? '#86EFAC' : '#16A34A' }}>✅ {ovPos.toLocaleString()}</span>
                                     <span className="text-[11px] font-bold" style={{ color: clapCustomerExpanded ? '#FCA5A5' : '#DC2626' }}>❌ {ovNeg.toLocaleString()}</span>

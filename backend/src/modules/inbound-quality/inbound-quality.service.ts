@@ -3905,7 +3905,7 @@ export interface ClapCustomerBranch {
   scenarioBreakdown: ClapScenWithSubs[];
 }
 export interface ClapCustomerAnalysis {
-  overall: { total: number; pos: number; neg: number };
+  overall: { total: number; pos: number; neg: number; dataStartNote: string | null };
   branches: ClapCustomerBranch[];
 }
 
@@ -4016,7 +4016,17 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
     ),
   }));
 
-  return { overall: { total: Number(overall.total), pos: Number(overall.pos), neg: Number(overall.neg) }, branches };
+  // Only surface the note when the selected range actually got clamped — i.e. it starts before
+  // data collection began. Once the range starts on/after CUSTOMER_VOC_START (e.g. next month),
+  // this is null and the card shows a plain, unqualified total.
+  const dataStartNote = startDate < CUSTOMER_VOC_START
+    ? `Customer VOC tracked from 17 Jul 2026 — audits before that aren't counted here`
+    : null;
+
+  return {
+    overall: { total: Number(overall.total), pos: Number(overall.pos), neg: Number(overall.neg), dataStartNote },
+    branches,
+  };
 }
 
 export interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; transcript: string; }
