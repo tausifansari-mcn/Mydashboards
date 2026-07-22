@@ -12,6 +12,7 @@ router.get('/clients',            ctrl.getClients);
 router.get('/clients-summary',    ctrl.getClientsSummary);
 router.get('/kpis',               ctrl.getKPIs);
 router.get('/detail-analysis',    ctrl.getDetailAnalysis);
+router.get('/customer-interaction-insights', ctrl.getCustomerInteractionInsights);
 router.get('/objection-analysis', ctrl.getObjectionAnalysis);
 router.get('/agent-nps-csat',     ctrl.getAgentNPSCSAT);
 router.get('/clap-analysis',     ctrl.getClapAnalysis);

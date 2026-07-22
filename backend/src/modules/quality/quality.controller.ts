@@ -46,6 +46,17 @@ export async function getDetailAnalysis(req: Request, res: Response) {
   }
 }
 
+export async function getCustomerInteractionInsights(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getCustomerInteractionInsights(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
 export async function getObjectionAnalysis(req: Request, res: Response) {
   try {
     const filters = parseDateRange(req);

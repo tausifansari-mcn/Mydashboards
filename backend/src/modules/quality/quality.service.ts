@@ -1519,3 +1519,108 @@ export async function getMagicalScript(filters: QualityFilters) {
     objections,
   };
 }
+
+// ─── Customer Interaction Insights (Outbound) ─────────────────────────────────
+// Same idea as the Inbound "Customer Interaction Insights" panel, but Outbound's
+// CallDetails table has no pre-computed sentiment/VOC columns — everything here is
+// derived by keyword-matching the raw TranscribeText column directly.
+
+// FULLTEXT + MATCH...AGAINST(... IN BOOLEAN MODE) instead of LIKE '%...%' — TranscribeText holds
+// full call transcripts (multi-KB each) and unindexed substring scans over ~400K rows were taking
+// 70s+ for a single keyword group. BOOLEAN MODE with a trailing `*` gives prefix matching (so
+// 'frustrat*' still catches frustrated/frustrating, same recall as the old LIKE version); quoted
+// "multi word" terms match adjacent-word phrases.
+const against = (terms: string[]) => `MATCH(cd.TranscribeText) AGAINST('${terms.join(' ')}' IN BOOLEAN MODE)`;
+
+const OUTBOUND_SOCIAL_COURT_COND = against([
+  '"social media"', '"consumer court"', '"consumer forum"', '"legal action"',
+  'lawyer*', 'fir', '"police complaint"', 'blackmail*', '"court case"', '"legal notice"',
+]);
+
+const OUTBOUND_SCAM_COND = against(['scam*', 'fraud*', 'cheat*', 'fake*', 'loot*']);
+
+const OUTBOUND_GOLDEN_WORDS: { category: string; keywords: string[] }[] = [
+  { category: 'Courtesy & Gratitude',      keywords: ['thank', 'appreciat'] },
+  { category: 'Support & Assistance',      keywords: ['help', 'assist'] },
+  { category: 'Acknowledgement & Underst.', keywords: ['understand'] },
+  { category: 'Positive Reinforcement',    keywords: ['nice', 'good', 'great'] },
+  { category: 'Customer Satisfaction',     keywords: ['satisf'] },
+  { category: 'Other Keywords',            keywords: ['patient', 'happy', 'excellent', 'wonder'] },
+];
+
+// First-match-wins, mirroring the Inbound NEG_CAT_EXPR priority ordering.
+const OUTBOUND_CRITICAL_SIGNAL_CASE = `CASE
+  WHEN ${against(['abusive*', 'insult*', 'offensive*', 'rude*', 'misbehave*', 'harass*'])}
+    THEN 'Abuse'
+  WHEN ${against(['fraud*', 'scam*', 'cheat*', '"legal action"', '"consumer court"', '"police complaint"', 'blackmail*', 'lawyer*', '"social media"'])}
+    THEN 'Threat'
+  WHEN ${against(['bakvaas*', 'ghatiya*', 'bullshit*', 'farzi*', 'paagal*', 'barbaad*', 'nonsense*'])}
+    THEN 'Slang'
+  WHEN ${against(['sarcastic*', '"yeah right"', 'whatever*'])}
+    THEN 'Sarcasm'
+  WHEN ${against(['frustrat*', 'disappoint*', 'dissatisf*', 'pathetic*', 'terrible*', 'horrible*',
+    'awful*', 'worst*', 'angry*', '"not happy"', '"not satisfied"', 'pareshaan*', 'inconvenien*',
+    'irritat*', 'annoying*'])}
+    THEN 'Frustration'
+  ELSE 'No'
+END`;
+
+export interface OutboundCustomerInsights {
+  audit_count: number;
+  social_media_court_threat: number;
+  potential_scam: number;
+  frustration_count: number;
+  threat_count: number;
+  cuss_abuse_count: number;
+  slang_count: number;
+  sarcasm_count: number;
+  golden_words: { category: string; count: number; keywords: string[] }[];
+}
+
+export async function getCustomerInteractionInsights(filters: QualityFilters): Promise<OutboundCustomerInsights> {
+  const { startDate, endDate } = filters;
+  const { sql: cf, params: cfParams } = clientClause(filters);
+  const params = [startDate, endDate, ...cfParams];
+  const whereBase = `cd.TranscribeText IS NOT NULL AND cd.TranscribeText != '' AND cd.CallDate BETWEEN ? AND ? ${cf}`;
+
+  const goldenSelect = OUTBOUND_GOLDEN_WORDS
+    .map((g, i) => `SUM(CASE WHEN ${against(g.keywords.map(k => `${k}*`))} THEN 1 ELSE 0 END) AS gw_${i}`)
+    .join(',\n      ');
+
+  const [[summary], signalRows] = await Promise.all([
+    querySource<{ audit_count: number; social_media_court_threat: number; potential_scam: number } & Record<string, number>>(`
+      SELECT
+        COUNT(*) AS audit_count,
+        SUM(CASE WHEN ${OUTBOUND_SOCIAL_COURT_COND} THEN 1 ELSE 0 END) AS social_media_court_threat,
+        SUM(CASE WHEN ${OUTBOUND_SCAM_COND} THEN 1 ELSE 0 END) AS potential_scam,
+        ${goldenSelect}
+      FROM db_external.CallDetails cd
+      WHERE ${whereBase}
+    `, params),
+
+    querySource<{ sig_category: string; cnt: number }>(`
+      SELECT ${OUTBOUND_CRITICAL_SIGNAL_CASE} AS sig_category, COUNT(*) AS cnt
+      FROM db_external.CallDetails cd
+      WHERE ${whereBase}
+      GROUP BY sig_category
+    `, params),
+  ]);
+
+  const signalMap = new Map(signalRows.map(r => [String(r.sig_category), Number(r.cnt)]));
+
+  return {
+    audit_count:                Number(summary?.audit_count ?? 0),
+    social_media_court_threat:  Number(summary?.social_media_court_threat ?? 0),
+    potential_scam:              Number(summary?.potential_scam ?? 0),
+    frustration_count:          signalMap.get('Frustration') ?? 0,
+    threat_count:                signalMap.get('Threat')      ?? 0,
+    cuss_abuse_count:            signalMap.get('Abuse')       ?? 0,
+    slang_count:                signalMap.get('Slang')       ?? 0,
+    sarcasm_count:                signalMap.get('Sarcasm')     ?? 0,
+    golden_words: OUTBOUND_GOLDEN_WORDS.map((g, i) => ({
+      category: g.category,
+      count:    Number(summary?.[`gw_${i}`] ?? 0),
+      keywords: g.keywords,
+    })),
+  };
+}

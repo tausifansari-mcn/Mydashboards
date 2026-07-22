@@ -10,6 +10,7 @@ import {
 import {
   BarChart3, ChevronLeft, PhoneCall, PhoneOff,
   Target, TrendingUp, Users, XCircle, AlertTriangle, ThumbsDown, Info, Download, X, Pencil,
+  ShieldAlert, AlertOctagon,
 } from 'lucide-react';
 import api from '@/lib/axios';
 
@@ -155,6 +156,18 @@ interface AgentNPSRow {
 interface OutboundMissingAgentRow {
   agentId:     string;
   total_count: number;
+}
+
+interface OutboundCustomerInsights {
+  audit_count: number;
+  social_media_court_threat: number;
+  potential_scam: number;
+  frustration_count: number;
+  threat_count: number;
+  cuss_abuse_count: number;
+  slang_count: number;
+  sarcasm_count: number;
+  golden_words: { category: string; count: number; keywords: string[] }[];
 }
 
 interface KPIResponse {
@@ -593,6 +606,7 @@ export default function ProcessQualityDashboard() {
   );
   const [endDate, setEndDate] = useState(toLocalDT(now));
   const [kpi, setKpi] = useState<KPIResponse | null>(null);
+  const [customerInsights, setCustomerInsights] = useState<OutboundCustomerInsights | null>(null);
   const [detailAnalysis, setDetailAnalysis] = useState<DetailAnalysisResponse | null>(null);
   const [objectionAnalysis, setObjectionAnalysis] = useState<ObjectionAnalysisResponse | null>(null);
   const [agentNPS, setAgentNPS] = useState<AgentNPSRow[]>([]);
@@ -619,10 +633,12 @@ export default function ProcessQualityDashboard() {
     Promise.all([
       api.get<{ data: KPIResponse }>(`/quality/kpis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`),
       api.get<{ data: { client_id: number; client_name: string; calls: number }[] }>(`/quality/clients?startDate=${sd}&endDate=${ed}`),
-    ]).then(([kR, cR]) => {
+      api.get<{ data: OutboundCustomerInsights }>(`/quality/customer-interaction-insights?startDate=${sd}&endDate=${ed}&clientId=${clientId}`),
+    ]).then(([kR, cR, ciR]) => {
       setKpi(kR.data?.data ?? null);
       const match = (cR.data?.data ?? []).find(c => String(c.client_id) === clientId);
       setClientName(match?.client_name ?? `Process #${clientId}`);
+      setCustomerInsights(ciR.data?.data ?? null);
     }).catch(() => {}).finally(() => setLoading(false));
   }, [clientId, sd, ed]);
 
@@ -861,6 +877,111 @@ export default function ProcessQualityDashboard() {
             )}
           </div>
         )}
+
+        {/* ─── Customer Interaction Insights ─────────────────────────────── */}
+        {customerInsights && (() => {
+          const ci = customerInsights;
+          const pct = (n: number) => ci.audit_count > 0 ? `${((n / ci.audit_count) * 100).toFixed(1)}%` : '0.0%';
+          const CRITICAL_SIGNALS: { label: string; count: number; color: string; bg: string; border: string; icon: string }[] = [
+            { label: 'Frustration', count: ci.frustration_count, color: '#D97706', bg: '#FFFBEB', border: '#FDE68A', icon: '😤' },
+            { label: 'Threat',      count: ci.threat_count,      color: '#DC2626', bg: '#FEF2F2', border: '#FECACA', icon: '⚠️' },
+            { label: 'Abuse',       count: ci.cuss_abuse_count,  color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE', icon: '🚫' },
+            { label: 'Slang',       count: ci.slang_count,       color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE', icon: '💬' },
+            { label: 'Sarcasm',     count: ci.sarcasm_count,     color: '#059669', bg: '#ECFDF5', border: '#A7F3D0', icon: '😏' },
+          ];
+          const totalGolden = ci.golden_words.reduce((s, g) => s + g.count, 0);
+          return (
+            <div className="rounded-2xl px-5 py-5" style={{ background: 'linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 60%, #7DD3FC 100%)', border: '1px solid #7DD3FC' }}>
+              <div className="flex items-center gap-2 mb-5">
+                <div className="w-1 h-5 rounded-full bg-violet-500" />
+                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest">Customer Interaction Insights</h2>
+                <span className="ml-auto text-[10px] text-slate-500">Derived from TranscribeText keyword matching</span>
+              </div>
+
+              {/* Threat + Scam */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+                <div className="relative flex items-center gap-4 bg-white border border-orange-500/20 rounded-xl px-5 py-4 overflow-hidden">
+                  <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-orange-500" />
+                  <div className="p-3 rounded-xl bg-orange-500/10 shrink-0">
+                    <ShieldAlert size={22} className="text-orange-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] font-semibold text-slate-700 uppercase tracking-widest leading-tight mb-1">Social Media &amp; Consumer Court Threat</p>
+                    <div className="flex items-end gap-2">
+                      <span className="text-3xl font-bold text-orange-500 tabular-nums leading-none">{ci.social_media_court_threat.toLocaleString()}</span>
+                      <span className="text-xs text-slate-600 mb-0.5">calls ({pct(ci.social_media_court_threat)})</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">📱 Social Media &nbsp;·&nbsp; ⚖️ Consumer Court &nbsp;·&nbsp; Legal / FIR</p>
+                  </div>
+                </div>
+
+                <div className="relative flex items-center gap-4 bg-white border border-red-500/20 rounded-xl px-5 py-4 overflow-hidden">
+                  <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-red-500" />
+                  <div className="p-3 rounded-xl bg-red-500/10 shrink-0">
+                    <AlertOctagon size={22} className="text-red-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] font-semibold text-slate-700 uppercase tracking-widest leading-tight mb-1">Potential Scam</p>
+                    <div className="flex items-end gap-2">
+                      <span className="text-3xl font-bold text-red-500 tabular-nums leading-none">{ci.potential_scam.toLocaleString()}</span>
+                      <span className="text-xs text-slate-600 mb-0.5">calls ({pct(ci.potential_scam)})</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600 mt-1">Financial fraud</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Golden Words */}
+              <div className="mb-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-1 h-4 rounded-full bg-emerald-500" />
+                  <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">Golden Words</h3>
+                  <span className="ml-auto text-[10px] text-slate-400">{totalGolden.toLocaleString()} total mentions</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  {ci.golden_words.map(g => (
+                    <div key={g.category}
+                      className="relative flex flex-col gap-1.5 rounded-xl px-3 py-3 overflow-hidden"
+                      style={{ backgroundColor: '#ffffff', border: '2px solid #05966930', boxShadow: '0 2px 8px #05966915' }}
+                      title={g.keywords.join(', ')}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-bold rounded-full px-1.5 py-0.5" style={{ backgroundColor: '#05966920', color: '#059669' }}>
+                          {g.keywords.length} word{g.keywords.length > 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <span className="text-xl font-bold tabular-nums leading-none" style={{ color: '#059669' }}>{g.count.toLocaleString()}</span>
+                      <span className="text-[10px] font-bold text-slate-700 leading-tight block truncate">{g.category}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Critical Signals */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-1 h-4 rounded-full bg-rose-500" />
+                  <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">Critical Signals</h3>
+                  <span className="ml-auto text-[10px] text-slate-400">Keyword-matched from TranscribeText</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {CRITICAL_SIGNALS.map(s => (
+                    <div key={s.label}
+                      className="relative flex flex-col gap-2 rounded-xl px-4 py-4 overflow-hidden"
+                      style={{ backgroundColor: '#ffffff', border: `2px solid ${s.color}60`, boxShadow: `0 2px 8px ${s.color}25` }}>
+                      <div className="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style={{ backgroundColor: s.color }} />
+                      <div className="flex items-center justify-between">
+                        <span className="text-base">{s.icon}</span>
+                        <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: `${s.color}25`, color: s.color }}>{pct(s.count)}</span>
+                      </div>
+                      <span className="text-2xl font-bold tabular-nums" style={{ color: s.color }}>{s.count.toLocaleString()}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-700">{s.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ─── Funnels side by side ─────────────────────────────────────── */}
         <div className="flex flex-row gap-6">
