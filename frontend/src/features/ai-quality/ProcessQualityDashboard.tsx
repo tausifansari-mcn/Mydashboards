@@ -33,6 +33,14 @@ function downloadCSV(rows: Record<string, unknown>[], filename: string) {
   URL.revokeObjectURL(url);
 }
 
+// dd-mm-yyyy hh:mm:ss, no timezone text — used for raw SQL date/datetime strings from the API.
+function fmtDateTime(raw: string): string {
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 // ─── Export Button ────────────────────────────────────────────────────────────
 function ExportBtn({ onClick, title = 'Export CSV' }: { onClick: () => void; title?: string }) {
   return (
@@ -168,7 +176,11 @@ interface OutboundCustomerInsights {
   slang_count: number;
   sarcasm_count: number;
   golden_words: { category: string; count: number; keywords: string[] }[];
+  cached_through: string | null;
 }
+
+interface OutboundInsightLead { callId: number; leadId: string; agentName: string; mobileNo: string; callDate: string; type: string; matchedWord: string; }
+interface OutboundCallTranscript { callId: number; leadId: string; agentName: string; mobileNo: string; callDate: string; transcript: string; }
 
 interface KPIResponse {
   cst: CSTData;
@@ -618,6 +630,10 @@ export default function ProcessQualityDashboard() {
   const [editingAgentName, setEditingAgentName] = useState('');
   const [clientName, setClientName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [customerInsightsLoading, setCustomerInsightsLoading] = useState(false);
+  const [customerInsightsError, setCustomerInsightsError] = useState(false);
+  const [ciDrill, setCiDrill] = useState<{ title: string; category: string; leads: OutboundInsightLead[]; loading: boolean } | null>(null);
+  const [ciTranscript, setCiTranscript] = useState<{ loading: boolean; data: OutboundCallTranscript | null } | null>(null);
   const [magicalScript, setMagicalScript] = useState<MagicalScriptData | null>(null);
   const [magicalLoading, setMagicalLoading] = useState(false);
 
@@ -633,16 +649,40 @@ export default function ProcessQualityDashboard() {
     Promise.all([
       api.get<{ data: KPIResponse }>(`/quality/kpis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`),
       api.get<{ data: { client_id: number; client_name: string; calls: number }[] }>(`/quality/clients?startDate=${sd}&endDate=${ed}`),
-      api.get<{ data: OutboundCustomerInsights }>(`/quality/customer-interaction-insights?startDate=${sd}&endDate=${ed}&clientId=${clientId}`),
-    ]).then(([kR, cR, ciR]) => {
+    ]).then(([kR, cR]) => {
       setKpi(kR.data?.data ?? null);
       const match = (cR.data?.data ?? []).find(c => String(c.client_id) === clientId);
       setClientName(match?.client_name ?? `Process #${clientId}`);
-      setCustomerInsights(ciR.data?.data ?? null);
     }).catch(() => {}).finally(() => setLoading(false));
   }, [clientId, sd, ed]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Customer Interaction Insights: fetched independently of fetchData() so a slow/failed transcript
+  // scan can never block or break the rest of the page (KPIs etc. load on their own regardless).
+  useEffect(() => {
+    if (!clientId) return;
+    setCustomerInsightsLoading(true);
+    setCustomerInsightsError(false);
+    api.get<{ data: OutboundCustomerInsights }>(`/quality/customer-interaction-insights?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      .then(r => setCustomerInsights(r.data?.data ?? null))
+      .catch(() => { setCustomerInsights(null); setCustomerInsightsError(true); })
+      .finally(() => setCustomerInsightsLoading(false));
+  }, [clientId, sd, ed]);
+
+  const openCiDrill = (category: string, title: string) => {
+    setCiDrill({ title, category, leads: [], loading: true });
+    api.get<{ data: { leads: OutboundInsightLead[] } }>(`/quality/customer-interaction-insights/drill?category=${encodeURIComponent(category)}&startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      .then(r => setCiDrill({ title, category, leads: r.data?.data?.leads ?? [], loading: false }))
+      .catch(() => setCiDrill({ title, category, leads: [], loading: false }));
+  };
+
+  const openCiTranscript = (callId: number) => {
+    setCiTranscript({ loading: true, data: null });
+    api.get<{ data: OutboundCallTranscript | null }>(`/quality/customer-interaction-insights/transcript?callId=${callId}`)
+      .then(r => setCiTranscript({ loading: false, data: r.data?.data ?? null }))
+      .catch(() => setCiTranscript({ loading: false, data: null }));
+  };
 
   // Lazy load data per slide
   useEffect(() => {
@@ -879,7 +919,18 @@ export default function ProcessQualityDashboard() {
         )}
 
         {/* ─── Customer Interaction Insights ─────────────────────────────── */}
-        {customerInsights && (() => {
+        {customerInsightsLoading && (
+          <div className="rounded-2xl px-5 py-8 flex flex-col items-center justify-center gap-2" style={{ background: 'linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 60%, #7DD3FC 100%)', border: '1px solid #7DD3FC' }}>
+            <div className="w-6 h-6 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs font-semibold text-slate-700">Loading Customer Interaction Insights…</p>
+          </div>
+        )}
+        {customerInsightsError && !customerInsightsLoading && (
+          <div className="rounded-2xl px-5 py-5 text-center text-xs font-medium text-red-600 bg-red-50 border border-red-200">
+            Couldn't load Customer Interaction Insights for this period.
+          </div>
+        )}
+        {customerInsights && !customerInsightsLoading && (() => {
           const ci = customerInsights;
           const pct = (n: number) => ci.audit_count > 0 ? `${((n / ci.audit_count) * 100).toFixed(1)}%` : '0.0%';
           const CRITICAL_SIGNALS: { label: string; count: number; color: string; bg: string; border: string; icon: string }[] = [
@@ -890,17 +941,22 @@ export default function ProcessQualityDashboard() {
             { label: 'Sarcasm',     count: ci.sarcasm_count,     color: '#059669', bg: '#ECFDF5', border: '#A7F3D0', icon: '😏' },
           ];
           const totalGolden = ci.golden_words.reduce((s, g) => s + g.count, 0);
+          const cacheNote = ci.cached_through
+            ? `Updated ${new Date(ci.cached_through).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} · Click any card for details`
+            : 'Click any card for details';
           return (
             <div className="rounded-2xl px-5 py-5" style={{ background: 'linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 60%, #7DD3FC 100%)', border: '1px solid #7DD3FC' }}>
               <div className="flex items-center gap-2 mb-5">
                 <div className="w-1 h-5 rounded-full bg-violet-500" />
                 <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest">Customer Interaction Insights</h2>
-                <span className="ml-auto text-[10px] text-slate-500">Derived from TranscribeText keyword matching</span>
+                <span className="ml-auto text-[10px] text-slate-500">{cacheNote}</span>
               </div>
 
               {/* Threat + Scam */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
-                <div className="relative flex items-center gap-4 bg-white border border-orange-500/20 rounded-xl px-5 py-4 overflow-hidden">
+                <div onClick={() => openCiDrill('social', 'Social Media & Consumer Court Threat')}
+                  className="relative flex items-center gap-4 bg-white border border-orange-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
+                  title="Click to view calls">
                   <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-orange-500" />
                   <div className="p-3 rounded-xl bg-orange-500/10 shrink-0">
                     <ShieldAlert size={22} className="text-orange-400" />
@@ -915,7 +971,9 @@ export default function ProcessQualityDashboard() {
                   </div>
                 </div>
 
-                <div className="relative flex items-center gap-4 bg-white border border-red-500/20 rounded-xl px-5 py-4 overflow-hidden">
+                <div onClick={() => openCiDrill('scam', 'Potential Scam')}
+                  className="relative flex items-center gap-4 bg-white border border-red-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
+                  title="Click to view calls">
                   <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-red-500" />
                   <div className="p-3 rounded-xl bg-red-500/10 shrink-0">
                     <AlertOctagon size={22} className="text-red-400" />
@@ -931,22 +989,23 @@ export default function ProcessQualityDashboard() {
                 </div>
               </div>
 
-              {/* Golden Words */}
+              {/* Golden Phrases */}
               <div className="mb-5">
                 <div className="flex items-center gap-2 mb-3">
                   <div className="w-1 h-4 rounded-full bg-emerald-500" />
-                  <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">Golden Words</h3>
+                  <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">Golden Phrases</h3>
                   <span className="ml-auto text-[10px] text-slate-400">{totalGolden.toLocaleString()} total mentions</span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                  {ci.golden_words.map(g => (
+                  {ci.golden_words.map((g, i) => (
                     <div key={g.category}
-                      className="relative flex flex-col gap-1.5 rounded-xl px-3 py-3 overflow-hidden"
+                      onClick={() => openCiDrill(`golden:${i}`, g.category)}
+                      className="relative flex flex-col gap-1.5 rounded-xl px-3 py-3 overflow-hidden cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all"
                       style={{ backgroundColor: '#ffffff', border: '2px solid #05966930', boxShadow: '0 2px 8px #05966915' }}
                       title={g.keywords.join(', ')}>
                       <div className="flex items-center justify-between">
                         <span className="text-[9px] font-bold rounded-full px-1.5 py-0.5" style={{ backgroundColor: '#05966920', color: '#059669' }}>
-                          {g.keywords.length} word{g.keywords.length > 1 ? 's' : ''}
+                          {g.keywords.length} phrase{g.keywords.length > 1 ? 's' : ''}
                         </span>
                       </div>
                       <span className="text-xl font-bold tabular-nums leading-none" style={{ color: '#059669' }}>{g.count.toLocaleString()}</span>
@@ -966,7 +1025,8 @@ export default function ProcessQualityDashboard() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                   {CRITICAL_SIGNALS.map(s => (
                     <div key={s.label}
-                      className="relative flex flex-col gap-2 rounded-xl px-4 py-4 overflow-hidden"
+                      onClick={() => openCiDrill(`signal:${s.label}`, `${s.label} Signal`)}
+                      className="relative flex flex-col gap-2 rounded-xl px-4 py-4 overflow-hidden cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all"
                       style={{ backgroundColor: '#ffffff', border: `2px solid ${s.color}60`, boxShadow: `0 2px 8px ${s.color}25` }}>
                       <div className="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style={{ backgroundColor: s.color }} />
                       <div className="flex items-center justify-between">
@@ -982,6 +1042,106 @@ export default function ProcessQualityDashboard() {
             </div>
           );
         })()}
+
+        {/* ─── Customer Interaction Insights: drill-down modal ───────────── */}
+        {ciDrill && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+            onClick={() => setCiDrill(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
+                <div>
+                  <h2 className="text-base font-bold text-slate-800">{ciDrill.title}</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">{ciDrill.loading ? 'Loading…' : `${ciDrill.leads.length} calls`}</p>
+                </div>
+                {!ciDrill.loading && ciDrill.leads.length > 0 && (
+                  <button
+                    onClick={() => downloadCSV(ciDrill.leads.map(l => ({
+                      Type: l.type || '—', 'Lead ID': l.leadId, 'Agent Name': l.agentName, 'Mobile No': l.mobileNo,
+                      'Threat Phrase': l.matchedWord || '—', 'Call Date': fmtDateTime(l.callDate),
+                    })), `${ciDrill.title.toLowerCase().replace(/\s+/g, '-')}.csv`)}
+                    title="Download CSV"
+                    className="ml-auto flex items-center gap-1 px-2 py-1 rounded text-[10px] text-slate-500 hover:text-emerald-600 border border-slate-200 hover:border-emerald-500/30 transition-colors">
+                    <Download size={11} /> CSV
+                  </button>
+                )}
+                <button onClick={() => setCiDrill(null)} className={`${ciDrill.leads.length > 0 ? '' : 'ml-auto'} text-slate-400 hover:text-slate-700 transition-colors`}><X size={18} /></button>
+              </div>
+              <div className="overflow-auto flex-1 p-6">
+                {ciDrill.loading ? (
+                  <div className="flex flex-col gap-2">
+                    {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-9 rounded-lg bg-slate-100 animate-pulse" />)}
+                  </div>
+                ) : ciDrill.leads.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 gap-3 text-slate-400">
+                    <span className="text-4xl">🔍</span>
+                    <p className="text-sm font-medium">No calls found for this period.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50">
+                          {['Type', 'Lead ID', 'Agent Name', 'Mobile No', 'Threat Phrase', 'Date'].map(h => (
+                            <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-slate-200">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ciDrill.leads.map((l, i) => (
+                          <tr key={i} className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0">
+                            <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{l.type || '—'}</td>
+                            <td className="px-3 py-2">
+                              <button onClick={() => openCiTranscript(l.callId)}
+                                className="font-mono text-[11px] text-blue-600 hover:text-blue-800 hover:underline font-semibold transition-colors">
+                                {l.leadId || `Call #${l.callId}`}
+                              </button>
+                            </td>
+                            <td className="px-3 py-2 font-semibold text-slate-700">{l.agentName}</td>
+                            <td className="px-3 py-2 font-mono text-slate-500 whitespace-nowrap">{l.mobileNo || '—'}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{l.matchedWord || '—'}</td>
+                            <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{fmtDateTime(l.callDate)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Customer Interaction Insights: transcript modal ───────────── */}
+        {ciTranscript && (
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+            onClick={() => setCiTranscript(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
+                <div>
+                  <p className="text-sm font-bold text-slate-900">Call Transcript</p>
+                  {ciTranscript.data && (
+                    <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                      {ciTranscript.data.agentName} · {ciTranscript.data.mobileNo} · {fmtDateTime(ciTranscript.data.callDate)}
+                    </p>
+                  )}
+                </div>
+                <button onClick={() => setCiTranscript(null)} className="ml-auto text-slate-400 hover:text-slate-900 transition-colors p-1"><X size={18} /></button>
+              </div>
+              <div className="overflow-auto flex-1 p-6">
+                {ciTranscript.loading ? (
+                  <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+                    <div className="w-5 h-5 border-2 border-slate-300 border-t-blue-500 rounded-full animate-spin" />
+                    <span className="text-sm">Loading transcript…</span>
+                  </div>
+                ) : !ciTranscript.data?.transcript ? (
+                  <p className="text-center text-slate-400 text-sm py-10">No transcript available for this call.</p>
+                ) : (
+                  <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{ciTranscript.data.transcript}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ─── Funnels side by side ─────────────────────────────────────── */}
         <div className="flex flex-row gap-6">

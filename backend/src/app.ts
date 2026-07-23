@@ -16,6 +16,7 @@ import salesRoutes from './modules/sales/sales.routes';
 import { initNeemansTables } from './modules/sales/sales.service';
 import inboundRoutes from './modules/inbound/inbound.routes';
 import qualityRoutes from './modules/quality/quality.routes';
+import { initOutboundInsightsTables, startOutboundInsightsJob } from './modules/quality/quality.service';
 import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.routes';
 
 const app = express();
@@ -51,6 +52,9 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 app.listen(PORT, () => {
   logger.info(`Backend running on port ${PORT}`);
   initNeemansTables().catch(err => logger.error('[startup] initNeemansTables failed:', err.message));
+  initOutboundInsightsTables()
+    .then(() => startOutboundInsightsJob())
+    .catch(err => logger.error('[startup] initOutboundInsightsTables failed:', err.message));
 });
 
 export default app;

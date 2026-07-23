@@ -1,4 +1,5 @@
 import { querySource, getSourcePool } from '../../lib/sourceDb';
+import { queryMasmis, getMasmisPool } from '../../lib/masmisDb';
 
 export interface QualityFilters {
   startDate: string;
@@ -1525,19 +1526,23 @@ export async function getMagicalScript(filters: QualityFilters) {
 // CallDetails table has no pre-computed sentiment/VOC columns — everything here is
 // derived by keyword-matching the raw TranscribeText column directly.
 
-// FULLTEXT + MATCH...AGAINST(... IN BOOLEAN MODE) instead of LIKE '%...%' — TranscribeText holds
-// full call transcripts (multi-KB each) and unindexed substring scans over ~400K rows were taking
-// 70s+ for a single keyword group. BOOLEAN MODE with a trailing `*` gives prefix matching (so
-// 'frustrat*' still catches frustrated/frustrating, same recall as the old LIKE version); quoted
-// "multi word" terms match adjacent-word phrases.
-const against = (terms: string[]) => `MATCH(cd.TranscribeText) AGAINST('${terms.join(' ')}' IN BOOLEAN MODE)`;
+// Plain LIKE '%...%' substring matching — no FULLTEXT index exists on TranscribeText (a live
+// insert pipeline writes to this table and building one caused real contention; see project notes).
+// Terms may carry MATCH...AGAINST-style decoration ("phrase", word*) from when this used FULLTEXT —
+// stripped here so the keyword lists below didn't need to change.
+const against = (terms: string[]) => {
+  const clean = terms.map(t => t.replace(/^"|"$/g, '').replace(/\*$/, '').toLowerCase());
+  return '(' + clean.map(k => `LOWER(cd.TranscribeText) LIKE '%${k}%'`).join(' OR ') + ')';
+};
 
-const OUTBOUND_SOCIAL_COURT_COND = against([
-  '"social media"', '"consumer court"', '"consumer forum"', '"legal action"',
-  'lawyer*', 'fir', '"police complaint"', 'blackmail*', '"court case"', '"legal notice"',
-]);
+const SOCIAL_COURT_KEYWORDS = [
+  'social media', 'consumer court', 'consumer forum', 'legal action',
+  'lawyer', 'fir', 'police complaint', 'blackmail', 'court case', 'legal notice',
+];
+const OUTBOUND_SOCIAL_COURT_COND = against(SOCIAL_COURT_KEYWORDS.map(k => `"${k}"`));
 
-const OUTBOUND_SCAM_COND = against(['scam*', 'fraud*', 'cheat*', 'fake*', 'loot*']);
+const SCAM_KEYWORDS = ['scam', 'fraud', 'cheat', 'fake', 'loot'];
+const OUTBOUND_SCAM_COND = against(SCAM_KEYWORDS.map(k => `${k}*`));
 
 const OUTBOUND_GOLDEN_WORDS: { category: string; keywords: string[] }[] = [
   { category: 'Courtesy & Gratitude',      keywords: ['thank', 'appreciat'] },
@@ -1549,21 +1554,153 @@ const OUTBOUND_GOLDEN_WORDS: { category: string; keywords: string[] }[] = [
 ];
 
 // First-match-wins, mirroring the Inbound NEG_CAT_EXPR priority ordering.
+const CRITICAL_SIGNAL_GROUPS: { label: string; keywords: string[] }[] = [
+  { label: 'Abuse',       keywords: ['abusive', 'insult', 'offensive', 'rude', 'misbehave', 'harass'] },
+  { label: 'Threat',      keywords: ['fraud', 'scam', 'cheat', 'legal action', 'consumer court', 'police complaint', 'blackmail', 'lawyer', 'social media'] },
+  { label: 'Slang',       keywords: ['bakvaas', 'ghatiya', 'bullshit', 'farzi', 'paagal', 'barbaad', 'nonsense'] },
+  { label: 'Sarcasm',     keywords: ['sarcastic', 'yeah right', 'whatever'] },
+  { label: 'Frustration', keywords: ['frustrat', 'disappoint', 'dissatisf', 'pathetic', 'terrible', 'horrible',
+    'awful', 'worst', 'angry', 'not happy', 'not satisfied', 'pareshaan', 'inconvenien', 'irritat', 'annoying'] },
+];
+
 const OUTBOUND_CRITICAL_SIGNAL_CASE = `CASE
-  WHEN ${against(['abusive*', 'insult*', 'offensive*', 'rude*', 'misbehave*', 'harass*'])}
-    THEN 'Abuse'
-  WHEN ${against(['fraud*', 'scam*', 'cheat*', '"legal action"', '"consumer court"', '"police complaint"', 'blackmail*', 'lawyer*', '"social media"'])}
-    THEN 'Threat'
-  WHEN ${against(['bakvaas*', 'ghatiya*', 'bullshit*', 'farzi*', 'paagal*', 'barbaad*', 'nonsense*'])}
-    THEN 'Slang'
-  WHEN ${against(['sarcastic*', '"yeah right"', 'whatever*'])}
-    THEN 'Sarcasm'
-  WHEN ${against(['frustrat*', 'disappoint*', 'dissatisf*', 'pathetic*', 'terrible*', 'horrible*',
-    'awful*', 'worst*', 'angry*', '"not happy"', '"not satisfied"', 'pareshaan*', 'inconvenien*',
-    'irritat*', 'annoying*'])}
-    THEN 'Frustration'
+  ${CRITICAL_SIGNAL_GROUPS.map(g => `WHEN ${against(g.keywords.map(k => k.includes(' ') ? `"${k}"` : `${k}*`))}\n    THEN '${g.label}'`).join('\n  ')}
   ELSE 'No'
 END`;
+
+const GOLDEN_COLS = ['golden_courtesy', 'golden_support', 'golden_ack', 'golden_positive', 'golden_satisfaction', 'golden_other'];
+
+// ─── Cache tables (db_masmis — ours, safe to index/write freely) ──────────────
+// Classifying every request live against raw TranscribeText was measured at 70s+ even for a single
+// modest client/month — CallDetails has no usable index for keyword search, and building one
+// (FULLTEXT) contended badly with the live insert pipeline. Instead, a background job below
+// incrementally classifies new calls in small batches and stores per-call flags here; the
+// dashboard reads only from this small, fully-indexed cache table, so it's fast regardless of
+// how big CallDetails gets.
+export async function initOutboundInsightsTables(): Promise<void> {
+  const pool = getMasmisPool();
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.outbound_call_insights (
+        call_id             INT PRIMARY KEY,
+        client_id           INT NOT NULL,
+        call_date           DATETIME NOT NULL,
+        lead_id             VARCHAR(100),
+        agent_name          VARCHAR(100),
+        mobile_no           VARCHAR(50),
+        social_court_flag   TINYINT(1) NOT NULL DEFAULT 0,
+        scam_flag           TINYINT(1) NOT NULL DEFAULT 0,
+        golden_courtesy     TINYINT(1) NOT NULL DEFAULT 0,
+        golden_support      TINYINT(1) NOT NULL DEFAULT 0,
+        golden_ack          TINYINT(1) NOT NULL DEFAULT 0,
+        golden_positive     TINYINT(1) NOT NULL DEFAULT 0,
+        golden_satisfaction TINYINT(1) NOT NULL DEFAULT 0,
+        golden_other        TINYINT(1) NOT NULL DEFAULT 0,
+        critical_signal     VARCHAR(20) NOT NULL DEFAULT 'No',
+        computed_at         DATETIME DEFAULT NOW(),
+        INDEX idx_client_date   (client_id, call_date),
+        INDEX idx_client_social (client_id, social_court_flag),
+        INDEX idx_client_scam   (client_id, scam_flag),
+        INDEX idx_client_signal (client_id, critical_signal)
+      )
+    `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.outbound_insights_cursor (
+        id TINYINT PRIMARY KEY DEFAULT 1,
+        last_call_id INT NOT NULL DEFAULT 0
+      )
+    `);
+    const [cursorRows] = await pool.execute(`SELECT last_call_id FROM db_masmis.outbound_insights_cursor WHERE id = 1`);
+    if ((cursorRows as any[]).length === 0) {
+      // Seed ~30 days back so recent (dashboard-relevant) data backfills first, instead of
+      // starting the catch-up from the oldest row in a 400K+ row table.
+      const seedRows = await querySource<{ minId: number }>(
+        `SELECT COALESCE(MIN(id), 0) AS minId FROM db_external.CallDetails WHERE CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
+      );
+      const seedId = Math.max(0, Number(seedRows[0]?.minId ?? 0) - 1);
+      await pool.execute(`INSERT INTO db_masmis.outbound_insights_cursor (id, last_call_id) VALUES (1, ?)`, [seedId]);
+    }
+  } catch (err) {
+    console.error('[quality] initOutboundInsightsTables warning:', (err as Error).message);
+  }
+}
+
+async function processOutboundInsightsBatch(batchSize = 300): Promise<number> {
+  const [cursorRow] = await queryMasmis<{ last_call_id: number }>(
+    `SELECT last_call_id FROM db_masmis.outbound_insights_cursor WHERE id = 1`
+  );
+  const lastId = cursorRow?.last_call_id ?? 0;
+
+  const goldenSelect = OUTBOUND_GOLDEN_WORDS
+    .map((g, i) => `${against(g.keywords.map(k => `${k}*`))} AS golden_${i}`)
+    .join(',\n      ');
+
+  type Row = {
+    id: number; client_id: number; CallDate: string; LeadID: string | null;
+    AgentName: string | null; MobileNo: string | null;
+    social_court: number; scam: number; critical_signal: string;
+  } & Record<string, number>;
+
+  const rows = await querySource<Row>(`
+    SELECT cd.id, cd.client_id, cd.CallDate, cd.LeadID, cd.AgentName, cd.MobileNo,
+      ${OUTBOUND_SOCIAL_COURT_COND} AS social_court,
+      ${OUTBOUND_SCAM_COND} AS scam,
+      ${goldenSelect},
+      ${OUTBOUND_CRITICAL_SIGNAL_CASE} AS critical_signal
+    FROM db_external.CallDetails cd
+    WHERE cd.id > ? AND cd.TranscribeText IS NOT NULL AND cd.TranscribeText != ''
+    ORDER BY cd.id ASC
+    LIMIT ${Number(batchSize)}
+  `, [lastId]);
+
+  if (rows.length === 0) return 0;
+
+  const placeholders = rows.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())').join(',');
+  const flat = rows.flatMap(r => [
+    r.id, r.client_id, r.CallDate, r.LeadID, r.AgentName, r.MobileNo,
+    r.social_court, r.scam,
+    r.golden_0, r.golden_1, r.golden_2, r.golden_3, r.golden_4, r.golden_5,
+    r.critical_signal,
+  ]);
+
+  await queryMasmis(`
+    INSERT INTO db_masmis.outbound_call_insights
+      (call_id, client_id, call_date, lead_id, agent_name, mobile_no,
+       social_court_flag, scam_flag,
+       golden_courtesy, golden_support, golden_ack, golden_positive, golden_satisfaction, golden_other,
+       critical_signal, computed_at)
+    VALUES ${placeholders}
+    ON DUPLICATE KEY UPDATE computed_at = VALUES(computed_at)
+  `, flat);
+
+  const newLastId = rows[rows.length - 1].id;
+  await queryMasmis(`UPDATE db_masmis.outbound_insights_cursor SET last_call_id = ? WHERE id = 1`, [newLastId]);
+
+  return rows.length;
+}
+
+let outboundInsightsRunning = false;
+async function runOutboundInsightsCatchUp(): Promise<void> {
+  if (outboundInsightsRunning) return;
+  outboundInsightsRunning = true;
+  try {
+    let processed = 0;
+    do {
+      processed = await processOutboundInsightsBatch(300);
+      if (processed > 0) await new Promise(r => setTimeout(r, 500)); // be a good citizen on a shared DB
+    } while (processed > 0);
+  } catch (err) {
+    console.error('[quality] outbound insights batch error:', (err as Error).message);
+  } finally {
+    outboundInsightsRunning = false;
+  }
+}
+
+export function startOutboundInsightsJob(): void {
+  runOutboundInsightsCatchUp().catch(() => {});
+  const timer = setInterval(() => { runOutboundInsightsCatchUp().catch(() => {}); }, 5 * 60 * 1000);
+  if (typeof timer.unref === 'function') timer.unref();
+}
 
 export interface OutboundCustomerInsights {
   audit_count: number;
@@ -1575,43 +1712,45 @@ export interface OutboundCustomerInsights {
   slang_count: number;
   sarcasm_count: number;
   golden_words: { category: string; count: number; keywords: string[] }[];
+  cached_through: string | null;
 }
 
 export async function getCustomerInteractionInsights(filters: QualityFilters): Promise<OutboundCustomerInsights> {
-  const { startDate, endDate } = filters;
-  const { sql: cf, params: cfParams } = clientClause(filters);
-  const params = [startDate, endDate, ...cfParams];
-  const whereBase = `cd.TranscribeText IS NOT NULL AND cd.TranscribeText != '' AND cd.CallDate BETWEEN ? AND ? ${cf}`;
+  const { startDate, endDate, clientId } = filters;
+  const cf = clientId ? ' AND client_id = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [Number(clientId)] : [])];
 
-  const goldenSelect = OUTBOUND_GOLDEN_WORDS
-    .map((g, i) => `SUM(CASE WHEN ${against(g.keywords.map(k => `${k}*`))} THEN 1 ELSE 0 END) AS gw_${i}`)
-    .join(',\n      ');
+  const goldenSelect = GOLDEN_COLS.map((c, i) => `SUM(${c}) AS gw_${i}`).join(',\n      ');
 
-  const [[summary], signalRows] = await Promise.all([
-    querySource<{ audit_count: number; social_media_court_threat: number; potential_scam: number } & Record<string, number>>(`
+  const [[summary], signalRows, cursorRows] = await Promise.all([
+    queryMasmis<{ audit_count: number; social: number; scam: number } & Record<string, number>>(`
       SELECT
         COUNT(*) AS audit_count,
-        SUM(CASE WHEN ${OUTBOUND_SOCIAL_COURT_COND} THEN 1 ELSE 0 END) AS social_media_court_threat,
-        SUM(CASE WHEN ${OUTBOUND_SCAM_COND} THEN 1 ELSE 0 END) AS potential_scam,
+        SUM(social_court_flag) AS social,
+        SUM(scam_flag) AS scam,
         ${goldenSelect}
-      FROM db_external.CallDetails cd
-      WHERE ${whereBase}
+      FROM db_masmis.outbound_call_insights
+      WHERE call_date BETWEEN ? AND ? ${cf}
     `, params),
 
-    querySource<{ sig_category: string; cnt: number }>(`
-      SELECT ${OUTBOUND_CRITICAL_SIGNAL_CASE} AS sig_category, COUNT(*) AS cnt
-      FROM db_external.CallDetails cd
-      WHERE ${whereBase}
-      GROUP BY sig_category
+    queryMasmis<{ critical_signal: string; cnt: number }>(`
+      SELECT critical_signal, COUNT(*) AS cnt
+      FROM db_masmis.outbound_call_insights
+      WHERE call_date BETWEEN ? AND ? ${cf}
+      GROUP BY critical_signal
     `, params),
+
+    queryMasmis<{ last_computed: string | null }>(`
+      SELECT MAX(computed_at) AS last_computed FROM db_masmis.outbound_call_insights
+    `),
   ]);
 
-  const signalMap = new Map(signalRows.map(r => [String(r.sig_category), Number(r.cnt)]));
+  const signalMap = new Map(signalRows.map(r => [String(r.critical_signal), Number(r.cnt)]));
 
   return {
     audit_count:                Number(summary?.audit_count ?? 0),
-    social_media_court_threat:  Number(summary?.social_media_court_threat ?? 0),
-    potential_scam:              Number(summary?.potential_scam ?? 0),
+    social_media_court_threat:  Number(summary?.social ?? 0),
+    potential_scam:              Number(summary?.scam ?? 0),
     frustration_count:          signalMap.get('Frustration') ?? 0,
     threat_count:                signalMap.get('Threat')      ?? 0,
     cuss_abuse_count:            signalMap.get('Abuse')       ?? 0,
@@ -1622,5 +1761,108 @@ export async function getCustomerInteractionInsights(filters: QualityFilters): P
       count:    Number(summary?.[`gw_${i}`] ?? 0),
       keywords: g.keywords,
     })),
+    cached_through: cursorRows[0]?.last_computed ? String(cursorRows[0].last_computed) : null,
+  };
+}
+
+export interface OutboundInsightLead {
+  callId: number; leadId: string; agentName: string; mobileNo: string; callDate: string;
+  type: string; matchedWord: string;
+}
+export interface OutboundInsightDrillResponse { leads: OutboundInsightLead[]; }
+
+function keywordsForCategory(category: string): string[] {
+  if (category === 'social') return SOCIAL_COURT_KEYWORDS;
+  if (category === 'scam') return SCAM_KEYWORDS;
+  if (category.startsWith('golden:')) {
+    const idx = Number(category.split(':')[1]);
+    return OUTBOUND_GOLDEN_WORDS[idx]?.keywords ?? [];
+  }
+  if (category.startsWith('signal:')) {
+    const label = category.slice('signal:'.length);
+    return CRITICAL_SIGNAL_GROUPS.find(g => g.label === label)?.keywords ?? [];
+  }
+  return [];
+}
+
+// category: 'social' | 'scam' | 'golden:0'..'golden:5' | 'signal:Frustration'|'signal:Threat'|...
+export async function getOutboundInsightDrill(filters: QualityFilters, category: string): Promise<OutboundInsightDrillResponse> {
+  const { startDate, endDate, clientId } = filters;
+  const cf = clientId ? ' AND client_id = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [Number(clientId)] : [])];
+
+  let whereExtra = '1=0';
+  const extraParams: (string | number)[] = [];
+  if (category === 'social') whereExtra = 'social_court_flag = 1';
+  else if (category === 'scam') whereExtra = 'scam_flag = 1';
+  else if (category.startsWith('golden:')) {
+    const idx = Number(category.split(':')[1]);
+    if (GOLDEN_COLS[idx]) whereExtra = `${GOLDEN_COLS[idx]} = 1`;
+  } else if (category.startsWith('signal:')) {
+    whereExtra = 'critical_signal = ?';
+    extraParams.push(category.slice('signal:'.length));
+  }
+
+  const rows = await queryMasmis<{ call_id: number; lead_id: string | null; agent_name: string | null; mobile_no: string | null; call_date: string }>(`
+    SELECT call_id, lead_id, agent_name, mobile_no, call_date
+    FROM db_masmis.outbound_call_insights
+    WHERE call_date BETWEEN ? AND ? ${cf} AND ${whereExtra}
+    ORDER BY call_date DESC
+    LIMIT 200
+  `, [...params, ...extraParams]);
+
+  // The cache only stores boolean flags — pull transcripts for this (small, already-filtered)
+  // set of calls to surface which specific word/phrase triggered the match, and (for the social
+  // category) whether it was a social-media mention or a court/legal one.
+  const callIds = rows.map(r => Number(r.call_id));
+  const transcriptMap = new Map<number, string>();
+  if (callIds.length > 0) {
+    const placeholders = callIds.map(() => '?').join(',');
+    const tRows = await querySource<{ id: number; TranscribeText: string | null }>(
+      `SELECT id, TranscribeText FROM db_external.CallDetails WHERE id IN (${placeholders})`,
+      callIds,
+    );
+    for (const t of tRows) transcriptMap.set(Number(t.id), String(t.TranscribeText ?? '').toLowerCase());
+  }
+
+  const keywords = keywordsForCategory(category);
+  const isSocial = category === 'social';
+
+  return {
+    leads: rows.map(r => {
+      const text = transcriptMap.get(Number(r.call_id)) ?? '';
+      const matchedWord = keywords.find(k => text.includes(k.toLowerCase())) ?? '';
+      const type = isSocial ? (text.includes('social media') ? 'Social Media' : 'Court & Legal') : '';
+      return {
+        callId:      Number(r.call_id),
+        leadId:      String(r.lead_id ?? ''),
+        agentName:   String(r.agent_name ?? 'Unknown'),
+        mobileNo:    String(r.mobile_no ?? ''),
+        callDate:    String(r.call_date),
+        type,
+        matchedWord,
+      };
+    }),
+  };
+}
+
+export interface OutboundCallTranscript {
+  callId: number; leadId: string; agentName: string; mobileNo: string; callDate: string; transcript: string;
+}
+
+export async function getOutboundCallTranscript(callId: number): Promise<OutboundCallTranscript | null> {
+  const rows = await querySource<{ id: number; TranscribeText: string; LeadID: string | null; AgentName: string | null; MobileNo: string | null; CallDate: string }>(
+    `SELECT id, TranscribeText, LeadID, AgentName, MobileNo, CallDate FROM db_external.CallDetails WHERE id = ?`,
+    [callId],
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  return {
+    callId:    Number(r.id),
+    leadId:    String(r.LeadID ?? ''),
+    agentName: String(r.AgentName ?? 'Unknown'),
+    mobileNo:  String(r.MobileNo ?? ''),
+    callDate:  String(r.CallDate),
+    transcript: String(r.TranscribeText ?? ''),
   };
 }

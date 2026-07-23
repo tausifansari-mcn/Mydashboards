@@ -57,6 +57,30 @@ export async function getCustomerInteractionInsights(req: Request, res: Response
   }
 }
 
+export async function getOutboundInsightDrill(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const category = String(req.query.category ?? '');
+    const data = await svc.getOutboundInsightDrill(filters, category);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getOutboundCallTranscript(req: Request, res: Response) {
+  try {
+    const callId = Number(req.query.callId);
+    if (!callId) { res.status(400).json({ message: 'callId is required' }); return; }
+    const data = await svc.getOutboundCallTranscript(callId);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
 export async function getObjectionAnalysis(req: Request, res: Response) {
   try {
     const filters = parseDateRange(req);
