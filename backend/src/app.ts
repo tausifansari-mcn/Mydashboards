@@ -16,7 +16,11 @@ import salesRoutes from './modules/sales/sales.routes';
 import { initNeemansTables } from './modules/sales/sales.service';
 import inboundRoutes from './modules/inbound/inbound.routes';
 import qualityRoutes from './modules/quality/quality.routes';
-import { initOutboundInsightsTables, startOutboundInsightsJob, initMagicalScriptCacheTables, startMagicalScriptCacheJob } from './modules/quality/quality.service';
+import {
+  initOutboundInsightsTables, startOutboundInsightsJob,
+  initMagicalScriptCacheTables, startMagicalScriptCacheJob,
+  initOutboundDashboardCacheTables, startOutboundDashboardCacheJob,
+} from './modules/quality/quality.service';
 import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.routes';
 
 const app = express();
@@ -58,6 +62,9 @@ app.listen(PORT, () => {
   initMagicalScriptCacheTables()
     .then(() => startMagicalScriptCacheJob())
     .catch(err => logger.error('[startup] initMagicalScriptCacheTables failed:', err.message));
+  initOutboundDashboardCacheTables()
+    .then(() => startOutboundDashboardCacheJob())
+    .catch(err => logger.error('[startup] initOutboundDashboardCacheTables failed:', err.message));
 });
 
 export default app;

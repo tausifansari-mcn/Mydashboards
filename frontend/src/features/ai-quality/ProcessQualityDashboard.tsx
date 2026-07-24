@@ -684,7 +684,7 @@ function MSLine({ orientation = 'h', size = 20, centered = false, dot = false }:
     return (
       <div className={`relative flex justify-center ${centered ? 'mx-auto' : ''}`} style={{ width: 3, height: size }}>
         <div className="animate-flow-line rounded-full" style={{ width: 3, height: size, background: flowGradient, backgroundSize: '100% 200%' }} />
-        {dot && <div className="absolute rounded-full" style={{ width: 7, height: 7, background: MS_COLORS.primary, boxShadow: `0 0 10px 2px ${MS_COLORS.primary}80`, bottom: -3 }} />}
+        {dot && <div className="absolute rounded-full" style={{ width: 7, height: 7, background: MS_COLORS.primary, boxShadow: `0 0 10px 2px ${MS_COLORS.primary}80`, bottom: -3, left: '50%', transform: 'translateX(-50%)' }} />}
       </div>
     );
   }
@@ -895,13 +895,6 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
 
   return (
     <>
-      <MSKpiGrid items={[
-        { icon: '📞', label: 'Total Calls (OP)', value: ms.op.total_in.toLocaleString(), color: MS_COLORS.primary },
-        { icon: '👋', label: 'OP Success',       value: ms.op.success.toLocaleString(),  color: MS_COLORS.primary },
-        { icon: '💬', label: 'CSP Success',      value: ms.csp.success.toLocaleString(), color: '#0891B2' },
-        { icon: '🎁', label: 'Offer Made',       value: ms.offer.success.toLocaleString(), color: MS_COLORS.success },
-      ]} />
-
       <div className={`rounded-[24px] overflow-hidden mb-6 ${MS_GLASS}`} style={{ background: MS_COLORS.bg }}>
         <MSFlowHeader cachedThrough={ms.cachedThrough} />
         <div className="p-6" style={{ background: `radial-gradient(120% 100% at 0% 0%, #EFF6FF 0%, ${MS_COLORS.bg} 60%)` }}>
@@ -1333,6 +1326,10 @@ export default function ProcessQualityDashboard() {
       .finally(() => setMagicalLoading(false));
   }, [clientId, sd, ed]);
 
+  // Magical Script is now the default landing slide (index 0), so it loads eagerly on mount just
+  // like the header's client-name/KPI fetch, instead of waiting for its old lazy-load-on-visit trigger.
+  useEffect(() => { refetchMagicalScript(); }, [refetchMagicalScript]);
+
   const openScriptEditor = () => {
     if (!clientId) return;
     setScriptEditorOpen(true);
@@ -1404,17 +1401,17 @@ export default function ProcessQualityDashboard() {
       .catch(() => {});
   };
 
-  // Lazy load data per slide
+  // Lazy load data per slide (Magical Script — now slide 0 — loads eagerly above instead)
   useEffect(() => {
     if (!clientId) return;
-    if (activeSlide === 1 && !loadedSlides.current[1]) {
-      loadedSlides.current[1] = true;
+    if (activeSlide === 2 && !loadedSlides.current[2]) {
+      loadedSlides.current[2] = true;
       api.get<{ data: ObjectionAnalysisResponse }>(`/quality/objection-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
         .then(r => setObjectionAnalysis(r.data?.data ?? null))
         .catch(() => setObjectionAnalysis(null));
     }
-    if (activeSlide === 2 && !loadedSlides.current[2]) {
-      loadedSlides.current[2] = true;
+    if (activeSlide === 3 && !loadedSlides.current[3]) {
+      loadedSlides.current[3] = true;
       api.get<{ data: AgentNPSRow[] }>(`/quality/agent-nps-csat?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
         .then(r => setAgentNPS(r.data?.data ?? []))
         .catch(() => setAgentNPS([]));
@@ -1422,19 +1419,11 @@ export default function ProcessQualityDashboard() {
         .then(r => setMissingAgents(r.data?.data ?? []))
         .catch(() => setMissingAgents([]));
     }
-    if (activeSlide === 3 && !loadedSlides.current[3]) {
-      loadedSlides.current[3] = true;
+    if (activeSlide === 4 && !loadedSlides.current[4]) {
+      loadedSlides.current[4] = true;
       api.get<{ data: DetailAnalysisResponse }>(`/quality/detail-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
         .then(r => setDetailAnalysis(r.data?.data ?? null))
         .catch(() => setDetailAnalysis(null));
-    }
-    if (activeSlide === 4 && !loadedSlides.current[4]) {
-      loadedSlides.current[4] = true;
-      setMagicalLoading(true);
-      api.get<{ data: MagicalScriptData }>(`/quality/magical-script?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
-        .then(r => setMagicalScript(r.data?.data ?? null))
-        .catch(() => setMagicalScript(null))
-        .finally(() => setMagicalLoading(false));
     }
   }, [activeSlide, clientId, sd, ed]);
 
@@ -1504,6 +1493,12 @@ export default function ProcessQualityDashboard() {
           <label className="text-[11px] text-slate-500 font-medium">To</label>
           <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
             className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all" />
+          {(loading || magicalLoading || customerInsightsLoading) && (
+            <div className="ml-auto flex items-center gap-2">
+              <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+              <span className="text-[11px] font-semibold text-white">Loading…</span>
+            </div>
+          )}
         </div>
 
         {/* ─── Missing agents banner ── */}
@@ -1580,7 +1575,7 @@ export default function ProcessQualityDashboard() {
 
         {/* ─── Pill tab navigation ── */}
         {(() => {
-          const SLIDES = ['Dashboard', 'Missed Opportunity', 'NPS & CSAT', 'Detail Analysis', '✨ Magical Script'];
+          const SLIDES = ['✨ Magical Script', 'Dashboard', 'Missed Opportunity', 'NPS & CSAT', 'Detail Analysis'];
           return (
             <div className="pill-tabs w-fit">
               {SLIDES.map((label, i) => (
@@ -1597,8 +1592,8 @@ export default function ProcessQualityDashboard() {
           <div className="flex items-center justify-center py-12 text-slate-500 text-xs">Loading KPIs...</div>
         )}
 
-        {/* ─── Slide 0: Dashboard ────────────────────────────────────────── */}
-        {activeSlide === 0 && (<>
+        {/* ─── Slide 1: Dashboard ────────────────────────────────────────── */}
+        {activeSlide === 1 && (<>
 
         {/* ─── CST / CRT side by side ────────────────────────────────────── */}
         {(cst || crt) && (
@@ -2172,8 +2167,8 @@ export default function ProcessQualityDashboard() {
 
         </>)}
 
-        {/* ─── Slide 1: Missed Opportunity ───────────────────────────────── */}
-        {activeSlide === 1 && (
+        {/* ─── Slide 2: Missed Opportunity ───────────────────────────────── */}
+        {activeSlide === 2 && (
         <div className="space-y-8">
           <div className="flex items-center gap-2 mb-6">
             <div className="w-1 h-6 bg-purple-500 rounded-full" />
@@ -2435,8 +2430,8 @@ export default function ProcessQualityDashboard() {
         </div>
         )}
 
-        {/* ─── Slide 2: NPS & CSAT ───────────────────────────────────────── */}
-        {activeSlide === 2 && (
+        {/* ─── Slide 3: NPS & CSAT ───────────────────────────────────────── */}
+        {activeSlide === 3 && (
         <div className="space-y-8">
           <div className="flex items-center gap-2 mb-6">
             <div className="w-1 h-6 bg-sky-500 rounded-full" />
@@ -2477,9 +2472,9 @@ export default function ProcessQualityDashboard() {
                           {dPct  > 0.001 && <path d={gaugeArc(180, Math.max(dEnd, 0.5))} fill="#DC2626" />}
                           {pPct  > 0.001 && <path d={gaugeArc(dEnd, Math.max(pEnd, 0.5))} fill="#EC4899" />}
                           {prPct > 0.001 && <path d={gaugeArc(pEnd, 0)} fill="#22C55E" />}
-                          {dPct  > 0.06 && <text x={dL.x.toFixed(1)}  y={dL.y.toFixed(1)}  textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold" fontFamily="system-ui,sans-serif">Detractors</text>}
-                          {pPct  > 0.06 && <text x={pL.x.toFixed(1)}  y={pL.y.toFixed(1)}  textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold" fontFamily="system-ui,sans-serif">Passives</text>}
-                          {prPct > 0.06 && <text x={prL.x.toFixed(1)} y={prL.y.toFixed(1)} textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold" fontFamily="system-ui,sans-serif">Promoters</text>}
+                          {dPct  > 0.06 && <text x={dL.x.toFixed(1)}  y={dL.y.toFixed(1)}  textAnchor="middle" fill="#0F172A" fontSize="8" fontWeight="bold" fontFamily="system-ui,sans-serif">Detractors</text>}
+                          {pPct  > 0.06 && <text x={pL.x.toFixed(1)}  y={pL.y.toFixed(1)}  textAnchor="middle" fill="#0F172A" fontSize="8" fontWeight="bold" fontFamily="system-ui,sans-serif">Passives</text>}
+                          {prPct > 0.06 && <text x={prL.x.toFixed(1)} y={prL.y.toFixed(1)} textAnchor="middle" fill="#0F172A" fontSize="8" fontWeight="bold" fontFamily="system-ui,sans-serif">Promoters</text>}
                         </>
                       );
                     })()}
@@ -3041,8 +3036,8 @@ export default function ProcessQualityDashboard() {
         </div>
         )}
 
-        {/* ─── Slide 3: Detail Analysis ──────────────────────────────────── */}
-        {activeSlide === 3 && (
+        {/* ─── Slide 4: Detail Analysis ──────────────────────────────────── */}
+        {activeSlide === 4 && (
         <div className="space-y-8">
           <div className="flex items-center gap-2 mb-6">
             <div className="w-1 h-6 bg-orange-500 rounded-full" />
@@ -3636,8 +3631,8 @@ export default function ProcessQualityDashboard() {
           </PQDrillModal>
         )}
 
-        {/* ─── Slide 4: Magical Script ───────────────────────────────────── */}
-        {activeSlide === 4 && (
+        {/* ─── Slide 0: Magical Script ───────────────────────────────────── */}
+        {activeSlide === 0 && (
           <div className="mt-4">
             {magicalLoading ? (
               <div className="flex items-center justify-center h-64 gap-3 text-slate-500 text-sm">

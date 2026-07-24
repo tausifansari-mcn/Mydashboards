@@ -176,105 +176,218 @@ export async function getClients(filters: QualityFilters): Promise<ClientSummary
   `, [startDate, endDate]);
 }
 
+// ─── Outbound Dashboard KPI cache ──────────────────────────────────────────────
+// getKPIs below used to fire 12 separate live queries against db_external.CallDetails per page
+// load, most of them independently re-deriving the same rejected_status classification from
+// scratch. Measured: ~50-67 SECONDS for a single client's current-month data alone, even though
+// EXPLAIN shows the CallDate index being used correctly — the shared/remote DB server (also serving
+// VICIdial) is just slow per-query, and firing 12 of them (only 3 can run concurrently — the pool is
+// deliberately capped low to protect that shared server) compounds badly.
+//
+// Same fix as Magical Script and Outbound Insights: a background job pre-classifies every call once
+// into a small, fully-indexed cache table in db_masmis, and getKPIs reads only from that cache.
+// Two DIFFERENT rejected_status classification schemes coexist in the original 12 queries (one never
+// falls through to 'Other' and defaults straight to 'Opening Rejected'; the other adds two more
+// branches — OpeningRejected/OfferedPitchContext — before falling through to 'Other') — both are
+// cached separately (rejected_status_a / rejected_status_b) rather than unified, to avoid silently
+// changing which numbers show up where.
+export async function initOutboundDashboardCacheTables(): Promise<void> {
+  const pool = getMasmisPool();
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.outbound_dashboard_cache (
+        call_id                INT PRIMARY KEY,
+        client_id               INT NOT NULL,
+        call_date                DATETIME NOT NULL,
+        mobile_valid             TINYINT(1) NOT NULL DEFAULT 0,
+        has_objection_category   TINYINT(1) NOT NULL DEFAULT 0,
+        rejected_status_a        VARCHAR(20) NOT NULL DEFAULT 'Opening Rejected',
+        rejected_status_b        VARCHAR(20) NOT NULL DEFAULT 'Other',
+        sale_done                TINYINT(1) NOT NULL DEFAULT 0,
+        objection_subcategory    VARCHAR(120) NULL,
+        feedback                 VARCHAR(20) NULL,
+        computed_at              DATETIME DEFAULT NOW(),
+        INDEX idx_client_date (client_id, call_date)
+      )
+    `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.outbound_dashboard_cursor (
+        id      TINYINT PRIMARY KEY DEFAULT 1,
+        next_id INT NOT NULL DEFAULT 0
+      )
+    `);
+    const [cursorRows] = await pool.execute(`SELECT next_id FROM db_masmis.outbound_dashboard_cursor WHERE id = 1`);
+    if ((cursorRows as unknown[]).length === 0) {
+      const seedRows = await querySource<{ maxId: number }>(`SELECT COALESCE(MAX(id), 0) AS maxId FROM db_external.CallDetails`);
+      const seedId = Number(seedRows[0]?.maxId ?? 0) + 1;
+      await pool.execute(`INSERT INTO db_masmis.outbound_dashboard_cursor (id, next_id) VALUES (1, ?)`, [seedId]);
+    }
+  } catch (err) {
+    console.error('[quality] initOutboundDashboardCacheTables warning:', (err as Error).message);
+  }
+}
+
+async function processOutboundDashboardBatch(batchSize = 1000): Promise<number> {
+  const [cursorRow] = await queryMasmis<{ next_id: number }>(
+    `SELECT next_id FROM db_masmis.outbound_dashboard_cursor WHERE id = 1`
+  );
+  const nextId = cursorRow?.next_id ?? 0;
+  if (nextId <= 0) return 0;
+
+  type Row = {
+    id: number; client_id: number; CallDate: string;
+    mobile_valid: number; has_objection_category: number;
+    rejected_status_a: string; rejected_status_b: string;
+    sale_done: number; objection_subcategory: string | null; feedback: string | null;
+  };
+
+  const rows = await querySource<Row>(`
+    SELECT
+      cd.id, cd.client_id, cd.CallDate,
+      CASE WHEN cd.MobileNo IS NOT NULL AND cd.MobileNo != '' THEN 1 ELSE 0 END AS mobile_valid,
+      CASE WHEN cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory != '' THEN 1 ELSE 0 END AS has_objection_category,
+      CASE
+        WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
+        WHEN cd.ObjectionHandlingContext = 'None' THEN 'Offering Rejected'
+        WHEN cd.ContactSettingContext = 'None' THEN 'Context Rejected'
+        ELSE 'Opening Rejected'
+      END AS rejected_status_a,
+      CASE
+        WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
+        WHEN cd.ObjectionHandlingContext = 'None'  THEN 'Offering Rejected'
+        WHEN cd.ContactSettingContext = 'None'     THEN 'Context Rejected'
+        WHEN cd.OpeningRejected = 1                THEN 'Opening Rejected'
+        WHEN cd.OfferedPitchContext = 'None'       THEN 'Opening Rejected'
+        ELSE 'Other'
+      END AS rejected_status_b,
+      CASE WHEN cd.SaleDone = 1 THEN 1 ELSE 0 END AS sale_done,
+      LEFT(cd.CustomerObjectionSubCategory, 120) AS objection_subcategory,
+      LEFT(cd.Feedback, 20) AS feedback
+    FROM db_external.CallDetails cd
+    WHERE cd.id < ? AND cd.client_id IS NOT NULL
+    ORDER BY cd.id DESC
+    LIMIT ${Number(batchSize)}
+  `, [nextId]);
+
+  if (rows.length === 0) {
+    await queryMasmis(`UPDATE db_masmis.outbound_dashboard_cursor SET next_id = 0 WHERE id = 1`);
+    return 0;
+  }
+
+  const cols = [
+    'call_id', 'client_id', 'call_date', 'mobile_valid', 'has_objection_category',
+    'rejected_status_a', 'rejected_status_b', 'sale_done', 'objection_subcategory', 'feedback',
+  ];
+  const placeholders = rows.map(() => `(${cols.map(() => '?').join(',')},NOW())`).join(',');
+  const flat = rows.flatMap(r => [
+    r.id, r.client_id, r.CallDate, r.mobile_valid, r.has_objection_category,
+    r.rejected_status_a, r.rejected_status_b, r.sale_done, r.objection_subcategory, r.feedback,
+  ]);
+  const updateCols = cols.filter(c => c !== 'call_id').map(c => `${c} = VALUES(${c})`).join(', ');
+
+  await queryMasmis(`
+    INSERT INTO db_masmis.outbound_dashboard_cache (${cols.join(', ')}, computed_at)
+    VALUES ${placeholders}
+    ON DUPLICATE KEY UPDATE ${updateCols}, computed_at = NOW()
+  `, flat);
+
+  const newNextId = rows[rows.length - 1].id;
+  await queryMasmis(`UPDATE db_masmis.outbound_dashboard_cursor SET next_id = ? WHERE id = 1`, [newNextId]);
+  return rows.length;
+}
+
+let outboundDashboardCacheRunning = false;
+async function runOutboundDashboardCatchUp(): Promise<void> {
+  if (outboundDashboardCacheRunning) return;
+  outboundDashboardCacheRunning = true;
+  try {
+    let processed = 0;
+    do {
+      processed = await processOutboundDashboardBatch(1000);
+      if (processed > 0) await new Promise(r => setTimeout(r, 300));
+    } while (processed > 0);
+  } catch (err) {
+    console.error('[quality] outbound dashboard cache batch error:', (err as Error).message);
+  } finally {
+    outboundDashboardCacheRunning = false;
+  }
+}
+
+export function startOutboundDashboardCacheJob(): void {
+  runOutboundDashboardCatchUp().catch(() => {});
+  const timer = setInterval(() => { runOutboundDashboardCatchUp().catch(() => {}); }, 5 * 60 * 1000);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
 export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
   const params = [startDate, endDate, ...cfParams];
 
+  // All 12 reads come from the pre-classified db_masmis cache (see initOutboundDashboardCacheTables /
+  // processOutboundDashboardBatch above) instead of scanning CallDetails live — cut this endpoint
+  // from 49-67 SECONDS down to near-instant. rejected_status_a is the 4-branch classification (no
+  // 'Other', defaults to 'Opening Rejected'); rejected_status_b is the 5-branch one (adds
+  // OpeningRejected/OfferedPitchContext, defaults to 'Other') — the two coexisted in the original
+  // live queries for different sub-features and are cached separately to keep every number identical.
   const [rejectedBreakdown, row, oppRow, oppLossPie, oppCatPie, moBreaksPie, moCategoryRaw, nedRaw, objectionCategoryPie, npsRaw, npsDaysRaw, auditCountRaw] = await Promise.all([
-    querySource<PieSlice>(`
+    queryMasmis<PieSlice>(`
       WITH base AS (
-        SELECT cd.*,
-          CASE
-            WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
-            WHEN cd.ObjectionHandlingContext = 'None' THEN 'Offering Rejected'
-            WHEN cd.ContactSettingContext = 'None' THEN 'Context Rejected'
-            ELSE 'Opening Rejected'
-          END AS rejected_status
-        FROM db_external.CallDetails cd
-        WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-          AND cd.CallDate BETWEEN ? AND ? ${cf}
+        SELECT * FROM db_masmis.outbound_dashboard_cache cd
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
       ),
       valid AS (
-        SELECT * FROM base
-        WHERE CustomerObjectionCategory IS NOT NULL AND CustomerObjectionCategory != ''
+        SELECT * FROM base WHERE has_objection_category = 1
       )
-      SELECT rejected_status AS name, COUNT(*) AS value
+      SELECT rejected_status_a AS name, COUNT(*) AS value
       FROM valid
-      GROUP BY rejected_status
+      GROUP BY rejected_status_a
       ORDER BY value DESC
     `, params),
 
-    querySource<{
+    queryMasmis<{
       total: number; ops: number; cps: number; offered: number; sale: number;
       or_cnt: number; cr_cnt: number; opr_cnt: number; por_cnt: number;
     }>(`
       WITH base AS (
-        SELECT cd.*,
-          CASE
-            WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
-            WHEN cd.ObjectionHandlingContext = 'None' THEN 'Offering Rejected'
-            WHEN cd.ContactSettingContext = 'None' THEN 'Context Rejected'
-            ELSE 'Opening Rejected'
-          END AS rejected_status
-        FROM db_external.CallDetails cd
-        WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-          AND cd.CallDate BETWEEN ? AND ? ${cf}
+        SELECT * FROM db_masmis.outbound_dashboard_cache cd
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
       ),
       valid AS (
-        SELECT * FROM base
-        WHERE CustomerObjectionCategory IS NOT NULL AND CustomerObjectionCategory != ''
+        SELECT * FROM base WHERE has_objection_category = 1
       )
       SELECT
         (SELECT COUNT(*) FROM valid) AS total,
-        (SELECT COUNT(*) FROM valid WHERE rejected_status != 'Opening Rejected') AS ops,
-        (SELECT COUNT(*) FROM valid WHERE rejected_status NOT IN ('Opening Rejected','Context Rejected')) AS cps,
-        (SELECT COUNT(*) FROM base  WHERE rejected_status NOT IN ('Opening Rejected','Offering Rejected')) AS offered,
-        (SELECT COUNT(*) FROM valid WHERE COALESCE(SaleDone,0) = 1) AS sale,
-        (SELECT COUNT(*) FROM valid WHERE rejected_status = 'Opening Rejected') AS or_cnt,
-        (SELECT COUNT(*) FROM valid WHERE rejected_status = 'Context Rejected') AS cr_cnt,
-        (SELECT COUNT(*) FROM valid WHERE rejected_status = 'Offering Rejected') AS opr_cnt,
-        (SELECT COUNT(*) FROM valid WHERE rejected_status NOT IN ('Offering Rejected','Opening Rejected','Context Rejected')) AS por_cnt
+        (SELECT COUNT(*) FROM valid WHERE rejected_status_a != 'Opening Rejected') AS ops,
+        (SELECT COUNT(*) FROM valid WHERE rejected_status_a NOT IN ('Opening Rejected','Context Rejected')) AS cps,
+        (SELECT COUNT(*) FROM base  WHERE rejected_status_a NOT IN ('Opening Rejected','Offering Rejected')) AS offered,
+        (SELECT COUNT(*) FROM valid WHERE sale_done = 1) AS sale,
+        (SELECT COUNT(*) FROM valid WHERE rejected_status_a = 'Opening Rejected') AS or_cnt,
+        (SELECT COUNT(*) FROM valid WHERE rejected_status_a = 'Context Rejected') AS cr_cnt,
+        (SELECT COUNT(*) FROM valid WHERE rejected_status_a = 'Offering Rejected') AS opr_cnt,
+        (SELECT COUNT(*) FROM valid WHERE rejected_status_a NOT IN ('Offering Rejected','Opening Rejected','Context Rejected')) AS por_cnt
     `, params),
 
-    querySource<{ total_opp: number; mo_count: number }>(`
+    queryMasmis<{ total_opp: number; mo_count: number }>(`
       WITH base AS (
-        SELECT cd.*,
-          CASE
-            WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
-            WHEN cd.ObjectionHandlingContext = 'None' THEN 'Offering Rejected'
-            WHEN cd.ContactSettingContext = 'None' THEN 'Context Rejected'
-            ELSE 'Opening Rejected'
-          END AS rejected_status
-        FROM db_external.CallDetails cd
-        WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-          AND cd.CallDate BETWEEN ? AND ? ${cf}
+        SELECT * FROM db_masmis.outbound_dashboard_cache cd
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
       )
       SELECT
-        (SELECT COUNT(*) FROM base WHERE rejected_status NOT IN ('Opening Rejected','Offering Rejected','Context Rejected')) AS total_opp,
-        (SELECT COUNT(*) FROM base WHERE rejected_status NOT IN ('Opening Rejected','Offering Rejected','Context Rejected')
-          AND CustomerObjectionCategory IS NOT NULL AND CustomerObjectionCategory != ''
-          AND COALESCE(SaleDone,0) = 1) AS mo_count
+        (SELECT COUNT(*) FROM base WHERE rejected_status_a NOT IN ('Opening Rejected','Offering Rejected','Context Rejected')) AS total_opp,
+        (SELECT COUNT(*) FROM base WHERE rejected_status_a NOT IN ('Opening Rejected','Offering Rejected','Context Rejected')
+          AND has_objection_category = 1
+          AND sale_done = 1) AS mo_count
     `, params),
 
-    querySource<PieSlice>(`
+    queryMasmis<PieSlice>(`
       WITH base AS (
-        SELECT cd.*,
-          CASE
-            WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
-            WHEN cd.ObjectionHandlingContext = 'None'  THEN 'Offering Rejected'
-            WHEN cd.ContactSettingContext = 'None'     THEN 'Context Rejected'
-            WHEN cd.OpeningRejected = 1                THEN 'Opening Rejected'
-            WHEN cd.OfferedPitchContext = 'None'       THEN 'Opening Rejected'
-            ELSE 'Other'
-          END AS rejected_status
-        FROM db_external.CallDetails cd
-        WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-          AND cd.CallDate BETWEEN ? AND ? ${cf}
+        SELECT * FROM db_masmis.outbound_dashboard_cache cd
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
       )
       SELECT
         CASE
-          WHEN CustomerObjectionSubCategory IN (
+          WHEN objection_subcategory IN (
             'Liked the product but wants a better deal',
             'Wants to buy later',
             'Perfume Longevity Issue',
@@ -287,40 +400,32 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
         END AS name,
         COUNT(*) AS value
       FROM base
-      WHERE COALESCE(SaleDone, 0) = 0
-        AND rejected_status NOT IN ('Opening Rejected', 'Offering Rejected')
+      WHERE sale_done = 0
+        AND rejected_status_b NOT IN ('Opening Rejected', 'Offering Rejected')
       GROUP BY 1
     `, params),
 
-    querySource<PieSlice>(`
+    queryMasmis<PieSlice>(`
       WITH base AS (
-        SELECT cd.*,
-          CASE
-            WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
-            WHEN cd.ObjectionHandlingContext = 'None' THEN 'Offering Rejected'
-            WHEN cd.ContactSettingContext = 'None' THEN 'Context Rejected'
-            ELSE 'Opening Rejected'
-          END AS rejected_status
-        FROM db_external.CallDetails cd
-        WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-          AND cd.CallDate BETWEEN ? AND ? ${cf}
+        SELECT * FROM db_masmis.outbound_dashboard_cache cd
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
       ),
       opp AS (
         SELECT * FROM base
-        WHERE rejected_status NOT IN ('Opening Rejected','Offering Rejected')
-          AND CustomerObjectionCategory IS NOT NULL AND CustomerObjectionCategory != ''
-          AND COALESCE(SaleDone,0) != 1
+        WHERE rejected_status_a NOT IN ('Opening Rejected','Offering Rejected')
+          AND has_objection_category = 1
+          AND sale_done != 1
       )
       SELECT
         CASE
-          WHEN CustomerObjectionSubCategory IN ('Already has the same product','Already has enough perfumes','Overstock / No Need for More','Already Owns Enough','Already has too many perfumes','Happy with the product but not interested in buying more') THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already has another preferred brand' THEN 'Brand Preference'
-          WHEN CustomerObjectionSubCategory = 'Liked the product but wants a better deal' THEN 'Price Sensitivity'
-          WHEN CustomerObjectionSubCategory = 'Wants to buy later' THEN 'Budget Constraint'
-          WHEN CustomerObjectionSubCategory = 'Not Interested in Perfumes' THEN 'Product Disinterest'
-          WHEN CustomerObjectionSubCategory IN ('Didn''t like one of the perfumes','Disappointed with perfume quality','Perfume Longevity Issue','Perfume too strong') THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory IN ('Damaged Product Received','Wrong Product Received') THEN 'Logistic Concern'
-          WHEN CustomerObjectionSubCategory = 'Doesn''t trust online payments' THEN 'Trust Concerns'
+          WHEN objection_subcategory IN ('Already has the same product','Already has enough perfumes','Overstock / No Need for More','Already Owns Enough','Already has too many perfumes','Happy with the product but not interested in buying more') THEN 'No Need'
+          WHEN objection_subcategory = 'Already has another preferred brand' THEN 'Brand Preference'
+          WHEN objection_subcategory = 'Liked the product but wants a better deal' THEN 'Price Sensitivity'
+          WHEN objection_subcategory = 'Wants to buy later' THEN 'Budget Constraint'
+          WHEN objection_subcategory = 'Not Interested in Perfumes' THEN 'Product Disinterest'
+          WHEN objection_subcategory IN ('Didn''t like one of the perfumes','Disappointed with perfume quality','Perfume Longevity Issue','Perfume too strong') THEN 'Negative Experience'
+          WHEN objection_subcategory IN ('Damaged Product Received','Wrong Product Received') THEN 'Logistic Concern'
+          WHEN objection_subcategory = 'Doesn''t trust online payments' THEN 'Trust Concerns'
           ELSE ''
         END AS name,
         COUNT(*) AS value
@@ -329,35 +434,27 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
       HAVING name != '' AND name != 'Negative Experience'
     `, params),
 
-    querySource<PieSlice>(`
+    queryMasmis<PieSlice>(`
       WITH base AS (
-        SELECT cd.*,
-          CASE
-            WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
-            WHEN cd.ObjectionHandlingContext = 'None' THEN 'Offering Rejected'
-            WHEN cd.ContactSettingContext = 'None' THEN 'Context Rejected'
-            ELSE 'Opening Rejected'
-          END AS rejected_status
-        FROM db_external.CallDetails cd
-        WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-          AND cd.CallDate BETWEEN ? AND ? ${cf}
+        SELECT * FROM db_masmis.outbound_dashboard_cache cd
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
       ),
       mo AS (
         SELECT * FROM base
-        WHERE rejected_status NOT IN ('Opening Rejected','Offering Rejected','Context Rejected')
-          AND CustomerObjectionCategory IS NOT NULL AND CustomerObjectionCategory != ''
-          AND COALESCE(SaleDone,0) = 1
+        WHERE rejected_status_a NOT IN ('Opening Rejected','Offering Rejected','Context Rejected')
+          AND has_objection_category = 1
+          AND sale_done = 1
       )
       SELECT
         CASE
-          WHEN CustomerObjectionSubCategory IN ('Already has the same product','Already has enough perfumes','Overstock / No Need for More','Already Owns Enough','Already has too many perfumes','Happy with the product but not interested in buying more') THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already has another preferred brand' THEN 'Brand Preference'
-          WHEN CustomerObjectionSubCategory = 'Liked the product but wants a better deal' THEN 'Price Sensitivity'
-          WHEN CustomerObjectionSubCategory = 'Wants to buy later' THEN 'Budget Constraint'
-          WHEN CustomerObjectionSubCategory = 'Not Interested in Perfumes' THEN 'Product Disinterest'
-          WHEN CustomerObjectionSubCategory IN ('Didn''t like one of the perfumes','Disappointed with perfume quality','Perfume Longevity Issue','Perfume too strong') THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory IN ('Damaged Product Received','Wrong Product Received') THEN 'Logistic Concern'
-          WHEN CustomerObjectionSubCategory = 'Doesn''t trust online payments' THEN 'Trust Concerns'
+          WHEN objection_subcategory IN ('Already has the same product','Already has enough perfumes','Overstock / No Need for More','Already Owns Enough','Already has too many perfumes','Happy with the product but not interested in buying more') THEN 'No Need'
+          WHEN objection_subcategory = 'Already has another preferred brand' THEN 'Brand Preference'
+          WHEN objection_subcategory = 'Liked the product but wants a better deal' THEN 'Price Sensitivity'
+          WHEN objection_subcategory = 'Wants to buy later' THEN 'Budget Constraint'
+          WHEN objection_subcategory = 'Not Interested in Perfumes' THEN 'Product Disinterest'
+          WHEN objection_subcategory IN ('Didn''t like one of the perfumes','Disappointed with perfume quality','Perfume Longevity Issue','Perfume too strong') THEN 'Negative Experience'
+          WHEN objection_subcategory IN ('Damaged Product Received','Wrong Product Received') THEN 'Logistic Concern'
+          WHEN objection_subcategory = 'Doesn''t trust online payments' THEN 'Trust Concerns'
           ELSE ''
         END AS name,
         COUNT(*) AS value
@@ -366,124 +463,104 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
       HAVING name != ''
     `, params),
 
-    querySource<{ category: string; insight: string; cnt: number }>(`
+    queryMasmis<{ category: string; insight: string; cnt: number }>(`
       WITH base AS (
-        SELECT cd.*,
-          CASE
-            WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
-            WHEN cd.ObjectionHandlingContext = 'None'  THEN 'Offering Rejected'
-            WHEN cd.ContactSettingContext = 'None'     THEN 'Context Rejected'
-            WHEN cd.OpeningRejected = 1                THEN 'Opening Rejected'
-            WHEN cd.OfferedPitchContext = 'None'       THEN 'Opening Rejected'
-            ELSE 'Other'
-          END AS rejected_status
-        FROM db_external.CallDetails cd
-        WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-          AND cd.CallDate BETWEEN ? AND ? ${cf}
+        SELECT * FROM db_masmis.outbound_dashboard_cache cd
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
       )
       SELECT
         CASE
-          WHEN CustomerObjectionSubCategory = 'Already has the same product'                        THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already has enough perfumes'                          THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Overstock / No Need for More'                        THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already Owns Enough'                                 THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already has too many perfumes'                        THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already has another preferred brand'                  THEN 'Brand Preference'
-          WHEN CustomerObjectionSubCategory = 'Liked the product but wants a better deal'            THEN 'Price Sensitivity'
-          WHEN CustomerObjectionSubCategory = 'Wants to buy later'                                  THEN 'Budget Constraint'
-          WHEN CustomerObjectionSubCategory = 'Not Interested in Perfumes'                          THEN 'Product Disinterest'
-          WHEN CustomerObjectionSubCategory = 'Happy with the product but not interested in buying more' THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Didn''t like one of the perfumes'                    THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory = 'Disappointed with perfume quality'                   THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory = 'Perfume Longevity Issue'                             THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory = 'Perfume too strong'                                  THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory = 'Damaged Product Received'                            THEN 'Logistic Concern'
-          WHEN CustomerObjectionSubCategory = 'Wrong Product Received'                              THEN 'Logistic Concern'
-          WHEN CustomerObjectionSubCategory = 'Doesn''t trust online payments'                      THEN 'Trust Concerns'
+          WHEN objection_subcategory = 'Already has the same product'                        THEN 'No Need'
+          WHEN objection_subcategory = 'Already has enough perfumes'                          THEN 'No Need'
+          WHEN objection_subcategory = 'Overstock / No Need for More'                        THEN 'No Need'
+          WHEN objection_subcategory = 'Already Owns Enough'                                 THEN 'No Need'
+          WHEN objection_subcategory = 'Already has too many perfumes'                        THEN 'No Need'
+          WHEN objection_subcategory = 'Already has another preferred brand'                  THEN 'Brand Preference'
+          WHEN objection_subcategory = 'Liked the product but wants a better deal'            THEN 'Price Sensitivity'
+          WHEN objection_subcategory = 'Wants to buy later'                                  THEN 'Budget Constraint'
+          WHEN objection_subcategory = 'Not Interested in Perfumes'                          THEN 'Product Disinterest'
+          WHEN objection_subcategory = 'Happy with the product but not interested in buying more' THEN 'No Need'
+          WHEN objection_subcategory = 'Didn''t like one of the perfumes'                    THEN 'Negative Experience'
+          WHEN objection_subcategory = 'Disappointed with perfume quality'                   THEN 'Negative Experience'
+          WHEN objection_subcategory = 'Perfume Longevity Issue'                             THEN 'Negative Experience'
+          WHEN objection_subcategory = 'Perfume too strong'                                  THEN 'Negative Experience'
+          WHEN objection_subcategory = 'Damaged Product Received'                            THEN 'Logistic Concern'
+          WHEN objection_subcategory = 'Wrong Product Received'                              THEN 'Logistic Concern'
+          WHEN objection_subcategory = 'Doesn''t trust online payments'                      THEN 'Trust Concerns'
           ELSE ''
         END AS category,
         CASE
-          WHEN CustomerObjectionSubCategory = 'Already has the same product'                        THEN 'Customer already has same product; no need to buy.'
-          WHEN CustomerObjectionSubCategory = 'Already has enough perfumes'                          THEN 'Fully stocked; low chance of purchase.'
-          WHEN CustomerObjectionSubCategory = 'Overstock / No Need for More'                        THEN 'No immediate need; possible future purchase.'
-          WHEN CustomerObjectionSubCategory = 'Already Owns Enough'                                 THEN 'No need for additional purchases now.'
-          WHEN CustomerObjectionSubCategory = 'Already has too many perfumes'                        THEN 'Similar to overstocked; minimal conversion potential.'
-          WHEN CustomerObjectionSubCategory = 'Already has another preferred brand'                  THEN 'Prefers another brand; difficult to convert.'
-          WHEN CustomerObjectionSubCategory = 'Liked the product but wants a better deal'            THEN 'Possible to convert with discounts or offers.'
-          WHEN CustomerObjectionSubCategory = 'Wants to buy later'                                  THEN 'Future potential lead; needs follow-up.'
-          WHEN CustomerObjectionSubCategory = 'Not Interested in Perfumes'                          THEN 'No interest at all; unlikely to convert.'
-          WHEN CustomerObjectionSubCategory = 'Happy with the product but not interested in buying more' THEN 'No further purchase intent; hard to upsell.'
-          WHEN CustomerObjectionSubCategory = 'Didn''t like one of the perfumes'                    THEN 'A bad experience with one variant; can recommend others.'
-          WHEN CustomerObjectionSubCategory = 'Disappointed with perfume quality'                   THEN 'Concerns about quality; provide product assurance.'
-          WHEN CustomerObjectionSubCategory = 'Perfume Longevity Issue'                             THEN 'Customer finds longevity lacking; suggest long-lasting alternatives.'
-          WHEN CustomerObjectionSubCategory = 'Perfume too strong'                                  THEN 'Scent preference issue; suggest milder alternatives.'
-          WHEN CustomerObjectionSubCategory = 'Damaged Product Received'                            THEN 'A serious issue; needs strong resolution to regain trust.'
-          WHEN CustomerObjectionSubCategory = 'Wrong Product Received'                              THEN 'Fulfillment error; needs rectification and trust-building.'
-          WHEN CustomerObjectionSubCategory = 'Doesn''t trust online payments'                      THEN 'Major barrier; provide secure payment options and reassurance.'
+          WHEN objection_subcategory = 'Already has the same product'                        THEN 'Customer already has same product; no need to buy.'
+          WHEN objection_subcategory = 'Already has enough perfumes'                          THEN 'Fully stocked; low chance of purchase.'
+          WHEN objection_subcategory = 'Overstock / No Need for More'                        THEN 'No immediate need; possible future purchase.'
+          WHEN objection_subcategory = 'Already Owns Enough'                                 THEN 'No need for additional purchases now.'
+          WHEN objection_subcategory = 'Already has too many perfumes'                        THEN 'Similar to overstocked; minimal conversion potential.'
+          WHEN objection_subcategory = 'Already has another preferred brand'                  THEN 'Prefers another brand; difficult to convert.'
+          WHEN objection_subcategory = 'Liked the product but wants a better deal'            THEN 'Possible to convert with discounts or offers.'
+          WHEN objection_subcategory = 'Wants to buy later'                                  THEN 'Future potential lead; needs follow-up.'
+          WHEN objection_subcategory = 'Not Interested in Perfumes'                          THEN 'No interest at all; unlikely to convert.'
+          WHEN objection_subcategory = 'Happy with the product but not interested in buying more' THEN 'No further purchase intent; hard to upsell.'
+          WHEN objection_subcategory = 'Didn''t like one of the perfumes'                    THEN 'A bad experience with one variant; can recommend others.'
+          WHEN objection_subcategory = 'Disappointed with perfume quality'                   THEN 'Concerns about quality; provide product assurance.'
+          WHEN objection_subcategory = 'Perfume Longevity Issue'                             THEN 'Customer finds longevity lacking; suggest long-lasting alternatives.'
+          WHEN objection_subcategory = 'Perfume too strong'                                  THEN 'Scent preference issue; suggest milder alternatives.'
+          WHEN objection_subcategory = 'Damaged Product Received'                            THEN 'A serious issue; needs strong resolution to regain trust.'
+          WHEN objection_subcategory = 'Wrong Product Received'                              THEN 'Fulfillment error; needs rectification and trust-building.'
+          WHEN objection_subcategory = 'Doesn''t trust online payments'                      THEN 'Major barrier; provide secure payment options and reassurance.'
           ELSE ''
         END AS insight,
         COUNT(*) AS cnt
       FROM base
-      WHERE COALESCE(SaleDone, 0) = 0
-        AND rejected_status NOT IN ('Opening Rejected', 'Offering Rejected')
+      WHERE sale_done = 0
+        AND rejected_status_b NOT IN ('Opening Rejected', 'Offering Rejected')
       GROUP BY 1, 2
       HAVING category != ''
       ORDER BY cnt DESC
     `, params),
 
-    querySource<{ ned_category: string; ned_qs: string; ned_status: string; cnt: number }>(`
+    queryMasmis<{ ned_category: string; ned_qs: string; ned_status: string; cnt: number }>(`
       WITH base AS (
-        SELECT cd.*,
-          CASE
-            WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
-            WHEN cd.ObjectionHandlingContext = 'None'  THEN 'Offering Rejected'
-            WHEN cd.ContactSettingContext = 'None'     THEN 'Context Rejected'
-            WHEN cd.OpeningRejected = 1                THEN 'Opening Rejected'
-            WHEN cd.OfferedPitchContext = 'None'       THEN 'Opening Rejected'
-            ELSE 'Other'
-          END AS rejected_status
-        FROM db_external.CallDetails cd
-        WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-          AND cd.CallDate BETWEEN ? AND ? ${cf}
+        SELECT * FROM db_masmis.outbound_dashboard_cache cd
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
       )
       SELECT
         CASE
-          WHEN CustomerObjectionSubCategory = 'Already has the same product'                        THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already has enough perfumes'                         THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Overstock / No Need for More'                       THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already Owns Enough'                                THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already has too many perfumes'                      THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already has another preferred brand'                THEN 'Brand Preference'
-          WHEN CustomerObjectionSubCategory = 'Liked the product but wants a better deal'          THEN 'Price Sensitivity'
-          WHEN CustomerObjectionSubCategory = 'Wants to buy later'                                 THEN 'Budget Constraint'
-          WHEN CustomerObjectionSubCategory = 'Not Interested in Perfumes'                         THEN 'Product Disinterest'
-          WHEN CustomerObjectionSubCategory = 'Happy with the product but not interested in buying more' THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Didn''t like one of the perfumes'                   THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory = 'Disappointed with perfume quality'                  THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory = 'Perfume Longevity Issue'                            THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory = 'Perfume too strong'                                 THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory = 'Damaged Product Received'                           THEN 'Logistic Concern'
-          WHEN CustomerObjectionSubCategory = 'Wrong Product Received'                             THEN 'Logistic Concern'
-          WHEN CustomerObjectionSubCategory = 'Doesn''t trust online payments'                     THEN 'Trust Concerns'
+          WHEN objection_subcategory = 'Already has the same product'                        THEN 'No Need'
+          WHEN objection_subcategory = 'Already has enough perfumes'                         THEN 'No Need'
+          WHEN objection_subcategory = 'Overstock / No Need for More'                       THEN 'No Need'
+          WHEN objection_subcategory = 'Already Owns Enough'                                THEN 'No Need'
+          WHEN objection_subcategory = 'Already has too many perfumes'                      THEN 'No Need'
+          WHEN objection_subcategory = 'Already has another preferred brand'                THEN 'Brand Preference'
+          WHEN objection_subcategory = 'Liked the product but wants a better deal'          THEN 'Price Sensitivity'
+          WHEN objection_subcategory = 'Wants to buy later'                                 THEN 'Budget Constraint'
+          WHEN objection_subcategory = 'Not Interested in Perfumes'                         THEN 'Product Disinterest'
+          WHEN objection_subcategory = 'Happy with the product but not interested in buying more' THEN 'No Need'
+          WHEN objection_subcategory = 'Didn''t like one of the perfumes'                   THEN 'Negative Experience'
+          WHEN objection_subcategory = 'Disappointed with perfume quality'                  THEN 'Negative Experience'
+          WHEN objection_subcategory = 'Perfume Longevity Issue'                            THEN 'Negative Experience'
+          WHEN objection_subcategory = 'Perfume too strong'                                 THEN 'Negative Experience'
+          WHEN objection_subcategory = 'Damaged Product Received'                           THEN 'Logistic Concern'
+          WHEN objection_subcategory = 'Wrong Product Received'                             THEN 'Logistic Concern'
+          WHEN objection_subcategory = 'Doesn''t trust online payments'                     THEN 'Trust Concerns'
           ELSE ''
         END AS ned_category,
         CASE
-          WHEN CustomerObjectionSubCategory = 'Didn''t like one of the perfumes'   THEN 'Disappointed with perfume quality'
-          WHEN CustomerObjectionSubCategory = 'Already has enough perfumes'         THEN 'Already has too many perfumes'
-          WHEN CustomerObjectionSubCategory = 'Already has the same product'        THEN 'Already has too many perfumes'
-          WHEN CustomerObjectionSubCategory = 'Already has too many perfumes'       THEN 'Already has too many perfumes'
-          WHEN CustomerObjectionSubCategory = 'Already Owns Enough'                 THEN 'Already has too many perfumes'
-          WHEN CustomerObjectionSubCategory = 'Overstock/No Need for More'          THEN 'Already has too many perfumes'
-          ELSE COALESCE(CustomerObjectionSubCategory, '')
+          WHEN objection_subcategory = 'Didn''t like one of the perfumes'   THEN 'Disappointed with perfume quality'
+          WHEN objection_subcategory = 'Already has enough perfumes'         THEN 'Already has too many perfumes'
+          WHEN objection_subcategory = 'Already has the same product'        THEN 'Already has too many perfumes'
+          WHEN objection_subcategory = 'Already has too many perfumes'       THEN 'Already has too many perfumes'
+          WHEN objection_subcategory = 'Already Owns Enough'                 THEN 'Already has too many perfumes'
+          WHEN objection_subcategory = 'Overstock/No Need for More'          THEN 'Already has too many perfumes'
+          ELSE COALESCE(objection_subcategory, '')
         END AS ned_qs,
         CASE
-          WHEN CustomerObjectionSubCategory IN (
+          WHEN objection_subcategory IN (
             'Already has the same product','Already has enough perfumes','Overstock / No Need for More',
             'Already Owns Enough','Already has too many perfumes','Already has another preferred brand',
             'Not Interested in Perfumes','Happy with the product but not interested in buying more',
             'Didn''t like one of the perfumes','Disappointed with perfume quality'
           ) THEN 'Non Workable'
-          WHEN CustomerObjectionSubCategory IN (
+          WHEN objection_subcategory IN (
             'Liked the product but wants a better deal','Wants to buy later',
             'Perfume Longevity Issue','Perfume too strong',
             'Damaged Product Received','Wrong Product Received',
@@ -493,117 +570,107 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
         END AS ned_status,
         COUNT(*) AS cnt
       FROM base
-      WHERE COALESCE(SaleDone, 0) = 0
-        AND rejected_status NOT IN ('Opening Rejected', 'Offering Rejected')
+      WHERE sale_done = 0
+        AND rejected_status_b NOT IN ('Opening Rejected', 'Offering Rejected')
       GROUP BY 1, 2, 3
       HAVING ned_category != '' AND ned_status != ''
       ORDER BY cnt DESC
     `, params),
 
-    querySource<PieSlice>(`
+    queryMasmis<PieSlice>(`
       WITH base AS (
-        SELECT cd.*,
-          CASE
-            WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'Post Offer Rejected'
-            WHEN cd.ObjectionHandlingContext = 'None'  THEN 'Offering Rejected'
-            WHEN cd.ContactSettingContext = 'None'     THEN 'Context Rejected'
-            WHEN cd.OpeningRejected = 1                THEN 'Opening Rejected'
-            WHEN cd.OfferedPitchContext = 'None'       THEN 'Opening Rejected'
-            ELSE 'Other'
-          END AS rejected_status
-        FROM db_external.CallDetails cd
-        WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-          AND cd.CallDate BETWEEN ? AND ? ${cf}
+        SELECT * FROM db_masmis.outbound_dashboard_cache cd
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
       )
       SELECT
         CASE
-          WHEN CustomerObjectionSubCategory IS NULL
-               OR CustomerObjectionSubCategory = ''
-               OR CustomerObjectionSubCategory IN (
+          WHEN objection_subcategory IS NULL
+               OR objection_subcategory = ''
+               OR objection_subcategory IN (
                  'Already has the same product','Already has enough perfumes',
                  'Overstock / No Need for More','Already Owns Enough',
                  'Already has too many perfumes',
                  'Happy with the product but not interested in buying more'
                ) THEN 'No Need'
-          WHEN CustomerObjectionSubCategory = 'Already has another preferred brand'          THEN 'Brand Preference'
-          WHEN CustomerObjectionSubCategory = 'Liked the product but wants a better deal'   THEN 'Price Sensitivity'
-          WHEN CustomerObjectionSubCategory = 'Wants to buy later'                          THEN 'Budget Constraint'
-          WHEN CustomerObjectionSubCategory = 'Not Interested in Perfumes'                  THEN 'Product Disinterest'
-          WHEN CustomerObjectionSubCategory IN (
+          WHEN objection_subcategory = 'Already has another preferred brand'          THEN 'Brand Preference'
+          WHEN objection_subcategory = 'Liked the product but wants a better deal'   THEN 'Price Sensitivity'
+          WHEN objection_subcategory = 'Wants to buy later'                          THEN 'Budget Constraint'
+          WHEN objection_subcategory = 'Not Interested in Perfumes'                  THEN 'Product Disinterest'
+          WHEN objection_subcategory IN (
             'Didn''t like one of the perfumes','Disappointed with perfume quality',
             'Perfume Longevity Issue','Perfume too strong'
           ) THEN 'Negative Experience'
-          WHEN CustomerObjectionSubCategory IN ('Damaged Product Received','Wrong Product Received') THEN 'Logistic Concern'
-          WHEN CustomerObjectionSubCategory = 'Doesn''t trust online payments'              THEN 'Trust Concerns'
+          WHEN objection_subcategory IN ('Damaged Product Received','Wrong Product Received') THEN 'Logistic Concern'
+          WHEN objection_subcategory = 'Doesn''t trust online payments'              THEN 'Trust Concerns'
           ELSE 'No Need'
         END AS name,
         COUNT(*) AS value
       FROM base
-      WHERE rejected_status NOT IN ('Opening Rejected', 'Offering Rejected')
+      WHERE rejected_status_b NOT IN ('Opening Rejected', 'Offering Rejected')
       GROUP BY 1
       ORDER BY value DESC
     `, params),
 
-    querySource<{
+    queryMasmis<{
       total: number; promoter: number; detractor: number; passive: number;
       nps_score: number | null; csat_score: number | null;
     }>(`
       SELECT
-        SUM(CASE WHEN cd.Feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END) AS total,
-        SUM(CASE WHEN cd.Feedback = 'Positive' THEN 1 ELSE 0 END) AS promoter,
-        SUM(CASE WHEN cd.Feedback = 'Negative' THEN 1 ELSE 0 END) AS detractor,
-        SUM(CASE WHEN cd.Feedback = 'Neutral'  THEN 1 ELSE 0 END) AS passive,
+        SUM(CASE WHEN cd.feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END) AS total,
+        SUM(CASE WHEN cd.feedback = 'Positive' THEN 1 ELSE 0 END) AS promoter,
+        SUM(CASE WHEN cd.feedback = 'Negative' THEN 1 ELSE 0 END) AS detractor,
+        SUM(CASE WHEN cd.feedback = 'Neutral'  THEN 1 ELSE 0 END) AS passive,
         ROUND(
-          (SUM(CASE WHEN cd.Feedback = 'Positive' THEN 1 ELSE 0 END) * 100.0 /
-           NULLIF(SUM(CASE WHEN cd.Feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0))
+          (SUM(CASE WHEN cd.feedback = 'Positive' THEN 1 ELSE 0 END) * 100.0 /
+           NULLIF(SUM(CASE WHEN cd.feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0))
           -
-          (SUM(CASE WHEN cd.Feedback = 'Negative' THEN 1 ELSE 0 END) * 100.0 /
-           NULLIF(SUM(CASE WHEN cd.Feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0)),
+          (SUM(CASE WHEN cd.feedback = 'Negative' THEN 1 ELSE 0 END) * 100.0 /
+           NULLIF(SUM(CASE WHEN cd.feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0)),
           2
         ) AS nps_score,
         ROUND(
-          (SUM(CASE WHEN cd.Feedback IN ('Positive','Neutral') THEN 1 ELSE 0 END) * 100.0 /
-           NULLIF(SUM(CASE WHEN cd.Feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0)) / 100,
+          (SUM(CASE WHEN cd.feedback IN ('Positive','Neutral') THEN 1 ELSE 0 END) * 100.0 /
+           NULLIF(SUM(CASE WHEN cd.feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0)) / 100,
           4
         ) AS csat_score
-      FROM db_external.CallDetails cd
-      WHERE cd.Feedback IN ('Positive','Negative','Neutral')
-        AND cd.CallDate BETWEEN ? AND ? ${cf}
+      FROM db_masmis.outbound_dashboard_cache cd
+      WHERE cd.feedback IN ('Positive','Negative','Neutral')
+        AND cd.call_date BETWEEN ? AND ? ${cf}
     `, params),
 
-    querySource<{
+    queryMasmis<{
       calldate: string; total_feedbacks: number;
       promoter: number; detractor: number; passive: number; nps_score: number | null;
     }>(`
       SELECT
-        DATE_FORMAT(cd.CallDate, '%Y-%m-%d') AS calldate,
+        DATE_FORMAT(cd.call_date, '%Y-%m-%d') AS calldate,
         COUNT(*) AS total_feedbacks,
-        SUM(CASE WHEN cd.Feedback = 'Positive' THEN 1 ELSE 0 END) AS promoter,
-        SUM(CASE WHEN cd.Feedback = 'Negative' THEN 1 ELSE 0 END) AS detractor,
-        SUM(CASE WHEN cd.Feedback = 'Neutral'  THEN 1 ELSE 0 END) AS passive,
+        SUM(CASE WHEN cd.feedback = 'Positive' THEN 1 ELSE 0 END) AS promoter,
+        SUM(CASE WHEN cd.feedback = 'Negative' THEN 1 ELSE 0 END) AS detractor,
+        SUM(CASE WHEN cd.feedback = 'Neutral'  THEN 1 ELSE 0 END) AS passive,
         ROUND(
-          (SUM(CASE WHEN cd.Feedback = 'Positive' THEN 1 ELSE 0 END) * 100.0 /
-           NULLIF(SUM(CASE WHEN cd.Feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0))
+          (SUM(CASE WHEN cd.feedback = 'Positive' THEN 1 ELSE 0 END) * 100.0 /
+           NULLIF(SUM(CASE WHEN cd.feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0))
           -
-          (SUM(CASE WHEN cd.Feedback = 'Negative' THEN 1 ELSE 0 END) * 100.0 /
-           NULLIF(SUM(CASE WHEN cd.Feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0)),
+          (SUM(CASE WHEN cd.feedback = 'Negative' THEN 1 ELSE 0 END) * 100.0 /
+           NULLIF(SUM(CASE WHEN cd.feedback IN ('Positive','Negative','Neutral') THEN 1 ELSE 0 END), 0)),
           2
         ) AS nps_score
-      FROM db_external.CallDetails cd
-      WHERE cd.Feedback IN ('Positive','Negative','Neutral')
-        AND cd.CallDate BETWEEN ? AND ? ${cf}
+      FROM db_masmis.outbound_dashboard_cache cd
+      WHERE cd.feedback IN ('Positive','Negative','Neutral')
+        AND cd.call_date BETWEEN ? AND ? ${cf}
       GROUP BY 1
       ORDER BY 1
     `, params),
 
     // Date-wise audit count — same "valid call" definition as the CST/CRT total above
     // (MobileNo present, CustomerObjectionCategory tagged), just broken out per day.
-    querySource<{ calldate: string; cnt: number }>(`
-      SELECT DATE_FORMAT(cd.CallDate, '%Y-%m-%d') AS calldate, COUNT(*) AS cnt
-      FROM db_external.CallDetails cd
-      WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-        AND cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory != ''
-        AND cd.CallDate BETWEEN ? AND ? ${cf}
+    queryMasmis<{ calldate: string; cnt: number }>(`
+      SELECT DATE_FORMAT(cd.call_date, '%Y-%m-%d') AS calldate, COUNT(*) AS cnt
+      FROM db_masmis.outbound_dashboard_cache cd
+      WHERE cd.mobile_valid = 1
+        AND cd.has_objection_category = 1
+        AND cd.call_date BETWEEN ? AND ? ${cf}
       GROUP BY 1
       ORDER BY 1
     `, params),
