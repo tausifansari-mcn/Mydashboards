@@ -2409,15 +2409,17 @@ export default function InboundQualityDashboard() {
                         onClick={() => {
                           if (isAvg) return;
                           setScoreCompModal({ label, accent, key: key! });
-                          if (!scoreCompData) {
-                            setScoreCompLoading(true);
-                            const clientParam = clientId ? `&clientId=${clientId}` : '';
-                            api.get<{ data: ScoreComponentData }>(
-                              `/inbound-quality/score-component-detail?startDate=${sd}&endDate=${ed}${clientParam}`
-                            ).then(r => setScoreCompData(r.data?.data ?? null))
-                              .catch(() => setScoreCompData(null))
-                              .finally(() => setScoreCompLoading(false));
-                          }
+                          // Always refetch on open — previously this only fetched once per page
+                          // load and reused stale data for every later click, so changing the date
+                          // range (or client) after the first click kept showing the first range's
+                          // numbers indefinitely.
+                          setScoreCompLoading(true);
+                          const clientParam = clientId ? `&clientId=${clientId}` : '';
+                          api.get<{ data: ScoreComponentData }>(
+                            `/inbound-quality/score-component-detail?startDate=${sd}&endDate=${ed}${clientParam}`
+                          ).then(r => setScoreCompData(r.data?.data ?? null))
+                            .catch(() => setScoreCompData(null))
+                            .finally(() => setScoreCompLoading(false));
                         }}
                         className={`relative flex flex-col items-center justify-center gap-1.5 rounded-xl border py-4 px-3 overflow-hidden transition-all ${
                           isAvg

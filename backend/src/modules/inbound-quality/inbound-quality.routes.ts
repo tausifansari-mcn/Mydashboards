@@ -7,7 +7,7 @@ import * as ctrl from './inbound-quality.controller';
 
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin'), enforceClientScope());
+router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin', 'qa'), enforceClientScope());
 
 router.get('/clients',        ctrl.getInboundClients);
 router.get('/kpis',           ctrl.getInboundProcessKPIs);

@@ -8,7 +8,7 @@ import * as ciCtrl from './customer-intelligence.controller';
 
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent'));
+router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'qa'));
 
 router.get('/kpis', ctrl.getKPIs);
 router.get('/quality-trend', ctrl.getQualityTrend);

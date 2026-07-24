@@ -10,7 +10,7 @@ import {
   BarChart, Bar,
 } from 'recharts';
 import {
-  BarChart3, ChevronLeft, PhoneCall, PhoneOff,
+  BarChart3, ChevronLeft, ChevronDown, PhoneCall, PhoneOff,
   Target, TrendingUp, Users, XCircle, AlertTriangle, ThumbsDown, Info, Download, X, Pencil,
   ShieldAlert, AlertOctagon, Trash2, Plus, Save,
 } from 'lucide-react';
@@ -639,65 +639,196 @@ const EDIT_SCRIPT_ROLES = ['super_admin', 'manager', 'client_admin'];
 // ─── Magical Script tree-diagram primitives — shared by every outbound process. Bellavita runs its
 // own funnel (its own CallDetails columns and fixed scripts, not the DB-configured generic flow
 // every other outbound client uses) but both render through the same connector-line visual style. ──
-const MS_LINE_COLOR = '#93C5FD';
-const MS_CALLEND_GRADIENT = 'linear-gradient(135deg, #3B82F6, #1E3A8A)';
-const MS_SUCCESS_GRADIENT = 'linear-gradient(135deg, #34D399, #0F7B4F)';
+const MS_COLORS = {
+  primary: '#2563EB',
+  primaryDark: '#1D4ED8',
+  success: '#10B981',
+  successDark: '#0F7B4F',
+  warning: '#F59E0B',
+  danger: '#EF4444',
+  neutral: '#64748B',
+  bg: '#F8FAFC',
+};
+// Best-effort icon for an objection/category branch card, matched by keyword since category names
+// are free text (admin-editable, or pulled straight from CallDetails' own taxonomy) — falls back to
+// a neutral speech-bubble rather than guessing wrong.
+function categoryIcon(category: string): string {
+  const c = category.toLowerCase();
+  if (c.includes('pric') || c.includes('roi') || c.includes('cost')) return '💰';
+  if (c.includes('deliver') || c.includes('ship')) return '🚚';
+  if (c.includes('eligib') || c.includes('kyc') || c.includes('verif')) return '🪪';
+  if (c.includes('loan') || c.includes('requirement') || c.includes('purchase') || c.includes('readiness')) return '🛒';
+  if (c.includes('disinterest') || c.includes('not interested') || c.includes('reject')) return '🚫';
+  if (c.includes('service') || c.includes('journey') || c.includes('support') || c.includes('issue')) return '🛠';
+  if (c.includes('quality') || c.includes('fragrance') || c.includes('product')) return '✨';
+  if (c.includes('trust') || c.includes('payment') || c.includes('financ')) return '🔒';
+  return '💬';
+}
+
+const MS_LINE_COLOR = MS_COLORS.primary;
+const MS_CALLEND_GRADIENT = `linear-gradient(135deg, ${MS_COLORS.primary}, ${MS_COLORS.primaryDark})`;
+const MS_SUCCESS_GRADIENT = `linear-gradient(135deg, ${MS_COLORS.success}, ${MS_COLORS.successDark})`;
 // Kept for callers still passing a flat color into MSMetricPill's `bg` prop.
 const MS_CALLEND_BG = MS_CALLEND_GRADIENT;
 const MS_SUCCESS_BG = MS_SUCCESS_GRADIENT;
+// Shared glass-card surface — the "premium SaaS" look: translucent white, blurred, soft shadow,
+// faint border. Reused for every card in the flow (stage boxes, KPI tiles, category cards).
+const MS_GLASS = 'backdrop-blur-xl border border-white/60 shadow-[0_4px_24px_-8px_rgba(15,23,42,0.12)]';
 
-// Thin connector line — horizontal by default, or vertical when orientation="v". A small dot caps
-// the end so junctions read as deliberate "nodes" rather than lines just stopping mid-air.
+// Thin connector line — horizontal by default, or vertical when orientation="v". A slow gradient
+// sweep (animate-flow-line) reads as "data flowing" through the tree rather than a static rule; a
+// glowing dot caps the end so junctions read as deliberate nodes rather than lines stopping mid-air.
 function MSLine({ orientation = 'h', size = 20, centered = false, dot = false }: { orientation?: 'h' | 'v'; size?: number; centered?: boolean; dot?: boolean }) {
+  const flowGradient = `linear-gradient(${orientation === 'v' ? '180deg' : '90deg'}, ${MS_COLORS.primary}33, ${MS_COLORS.primary}, ${MS_COLORS.primary}33)`;
   if (orientation === 'v') {
     return (
-      <div className={`relative flex justify-center ${centered ? 'mx-auto' : ''}`} style={{ width: 2, height: size }}>
-        <div style={{ width: 2, height: size, background: `linear-gradient(180deg, ${MS_LINE_COLOR}, ${MS_LINE_COLOR}AA)` }} />
-        {dot && <div className="absolute rounded-full" style={{ width: 6, height: 6, background: MS_LINE_COLOR, bottom: -3 }} />}
+      <div className={`relative flex justify-center ${centered ? 'mx-auto' : ''}`} style={{ width: 3, height: size }}>
+        <div className="animate-flow-line rounded-full" style={{ width: 3, height: size, background: flowGradient, backgroundSize: '100% 200%' }} />
+        {dot && <div className="absolute rounded-full" style={{ width: 7, height: 7, background: MS_COLORS.primary, boxShadow: `0 0 10px 2px ${MS_COLORS.primary}80`, bottom: -3 }} />}
       </div>
     );
   }
-  return <div className="shrink-0" style={{ width: size, borderTop: `2px solid ${MS_LINE_COLOR}` }} />;
+  return (
+    <div className="shrink-0 rounded-full overflow-hidden" style={{ width: size, height: 3 }}>
+      <div className="animate-flow-line h-full" style={{ background: flowGradient, backgroundSize: '200% 100%' }} />
+    </div>
+  );
 }
 
 // Horizontal bar spanning from the first to the last of `count` equal-width columns, so N
 // vertical drops (one per column, self-centered) land exactly on it without any manual math.
 function MSFanBar({ count }: { count: number }) {
   if (count <= 1) return null;
-  return <div className="mx-auto" style={{ width: `${((count - 1) / count) * 100}%`, borderTop: `2px solid ${MS_LINE_COLOR}` }} />;
+  return <div className="mx-auto rounded-full" style={{ width: `${((count - 1) / count) * 100}%`, height: 3, background: `linear-gradient(90deg, ${MS_COLORS.primary}40, ${MS_COLORS.primary}, ${MS_COLORS.primary}40)` }} />;
 }
 
-function MSStageBadge({ children }: { children: React.ReactNode }) {
+function MSStageBadge({ icon, children }: { icon?: string; children: React.ReactNode }) {
   return (
-    <div className="text-center py-3 px-3 rounded-xl text-[11px] font-black text-white uppercase tracking-wide shrink-0 transition-transform hover:scale-105"
+    <div className={`flex flex-col items-center justify-center gap-1 text-center py-3.5 px-3 rounded-[20px] shrink-0 transition-all duration-300 hover:-translate-y-0.5 hover:scale-[1.03] ${MS_GLASS}`}
       style={{
         minWidth: 130,
-        background: 'linear-gradient(135deg, #0EA5E9, #0369A1)',
-        boxShadow: '0 6px 16px -4px #0369A170',
+        background: `linear-gradient(135deg, ${MS_COLORS.primary}, ${MS_COLORS.primaryDark})`,
+        boxShadow: `0 8px 24px -6px ${MS_COLORS.primary}60`,
       }}>
-      {children}
+      {icon && <span className="text-base leading-none">{icon}</span>}
+      <span className="text-[11px] font-black text-white uppercase tracking-wide leading-none">{children}</span>
     </div>
   );
 }
 
 function MSScriptBox({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex-1 rounded-xl px-4 py-3 text-[11px] text-slate-700 leading-relaxed font-medium flex items-center relative overflow-hidden transition-shadow hover:shadow-md"
-      style={{ background: 'linear-gradient(135deg, #F0F9FF, #FFFFFF)', border: '1px solid #DBEAFE', boxShadow: '0 2px 8px -2px #94A3B830' }}>
-      <div className="absolute left-0 top-0 bottom-0" style={{ width: 3, background: 'linear-gradient(180deg, #0EA5E9, #0369A1)' }} />
-      <div className="pl-2">{children}</div>
+    <div className={`flex-1 rounded-[20px] px-5 py-4 text-[12px] text-slate-700 leading-relaxed font-medium flex items-center relative overflow-hidden transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_8px_28px_-8px_rgba(37,99,235,0.18)] ${MS_GLASS}`}
+      style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.92), rgba(248,250,252,0.75))' }}>
+      <div className="absolute left-0 top-0 bottom-0 rounded-l-[20px]" style={{ width: 4, background: `linear-gradient(180deg, ${MS_COLORS.primary}, ${MS_COLORS.primaryDark})` }} />
+      <div className="pl-3">{children}</div>
     </div>
   );
 }
 
-function MSMetricPill({ bg, onClick, children }: { bg: string; onClick?: () => void; children: React.ReactNode }) {
+function MSMetricPill({ bg, icon, onClick, children }: { bg: string; icon?: string; onClick?: () => void; children: React.ReactNode }) {
   const clickable = !!onClick;
   return (
     <div onClick={onClick}
-      className={`rounded-full px-4 py-2 text-center w-full transition-all duration-200 ${clickable ? 'cursor-pointer hover:scale-[1.06] hover:brightness-110' : ''}`}
-      style={{ background: bg, boxShadow: '0 4px 12px -3px rgba(15,23,42,0.35)' }}
+      className={`rounded-2xl px-4 py-2.5 text-center w-full flex items-center justify-center gap-2 transition-all duration-300 border border-white/25 ${clickable ? 'cursor-pointer hover:-translate-y-0.5 hover:scale-[1.05] hover:brightness-110' : ''}`}
+      style={{ background: bg, boxShadow: '0 6px 18px -4px rgba(15,23,42,0.35)' }}
       title={clickable ? 'Click to view calls' : undefined}>
-      {children}
+      {icon && <span className="text-sm leading-none shrink-0">{icon}</span>}
+      <div>{children}</div>
+    </div>
+  );
+}
+
+// Glass KPI tile strip shown above the tree — shared shape for both flows, just fed different stats.
+function MSKpiGrid({ items, cols = 4 }: { items: { icon: string; label: string; value: string; color: string }[]; cols?: number }) {
+  return (
+    <div className={`grid grid-cols-2 sm:grid-cols-${cols} gap-3 mb-6`}>
+      {items.map(c => (
+        <div key={c.label}
+          className={`relative overflow-hidden rounded-[20px] px-5 py-4 transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_12px_32px_-10px_rgba(37,99,235,0.25)] ${MS_GLASS}`}
+          style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.85), rgba(248,250,252,0.6))' }}>
+          <div className="absolute top-0 left-0 right-0 h-[3px]" style={{ background: c.color }} />
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <span className="text-sm leading-none">{c.icon}</span>
+            <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: c.color }}>{c.label}</p>
+          </div>
+          <p className="text-2xl font-black tabular-nums text-slate-900 leading-none">{c.value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Section header for the tree card — glass strip with a live "flowing" accent bar instead of a flat
+// solid-color banner, so the whole card reads as one glass panel rather than a document with a
+// colored title bar stapled on top.
+function MSFlowHeader({ cachedThrough, right }: { cachedThrough: string | null; right?: React.ReactNode }) {
+  return (
+    <div className="px-5 py-3.5 flex items-center gap-2 relative overflow-hidden"
+      style={{ background: `linear-gradient(135deg, ${MS_COLORS.primary} 0%, ${MS_COLORS.primaryDark} 100%)` }}>
+      <div className="absolute inset-x-0 bottom-0 h-[2px] animate-flow-line"
+        style={{ background: `linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent)`, backgroundSize: '200% 100%' }} />
+      <span className="text-sm">✨</span>
+      <h3 className="text-xs font-black text-white uppercase tracking-widest">Today's Best Conversation Flow</h3>
+      <span className="text-[9px] ml-1 hidden sm:inline" style={{ color: 'rgba(255,255,255,0.7)' }}>Opening → Context → Offer</span>
+      <div className="ml-auto flex items-center gap-3">
+        {right}
+        <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.7)' }}>
+          {cachedThrough ? `Data cached through ${fmtDateTime(cachedThrough)}` : 'Backfilling…'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Category/objection branch card — collapsed by default (title + contribution + a 2-line script
+// preview) and expands on click to show the full script plus its Call End / Sale Done pills. Keeps
+// the tree scannable at a glance while still surfacing full detail on demand, per the "expandable
+// cards, not text boxes" ask.
+function MSBranchCard({ accent, icon, title, contributionPct, script, fallback, metrics, onMetricClick, delay, grown }: {
+  accent: string; icon: string; title: string; contributionPct: number;
+  script: React.ReactNode; fallback?: React.ReactNode;
+  metrics: { callEnd: number; saleDone: number; convPct: number };
+  onMetricClick: () => void; delay: number; grown: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="flex flex-col items-center transition-all ease-out"
+      style={{ opacity: grown ? 1 : 0, transform: grown ? 'translateY(0)' : 'translateY(12px)', transitionDuration: '500ms', transitionDelay: `${delay}ms` }}>
+      <MSLine orientation="v" size={18} />
+      <button onClick={() => setExpanded(v => !v)}
+        className={`w-full rounded-[20px] px-4 py-3 text-center transition-all duration-300 hover:-translate-y-0.5 ${MS_GLASS}`}
+        style={{ background: `linear-gradient(135deg, ${accent}1c, ${accent}08)`, boxShadow: `0 4px 16px -6px ${accent}40` }}>
+        <div className="flex items-center justify-center gap-1.5">
+          <span className="text-sm leading-none">{icon}</span>
+          <p className="text-[11px] font-bold leading-tight" style={{ color: accent }}>{title}</p>
+        </div>
+        <p className="text-[10px] text-slate-500 mt-0.5">({contributionPct}%) Contribution</p>
+        <ChevronDown size={13} className="mx-auto mt-1 transition-transform duration-300" style={{ color: accent, transform: expanded ? 'rotate(180deg)' : 'none' }} />
+      </button>
+      <MSLine orientation="v" size={14} />
+      <div className={`w-full rounded-[20px] px-3.5 py-3 text-[10px] text-slate-700 leading-relaxed overflow-y-auto transition-all duration-300 ${MS_GLASS}`}
+        style={{ background: 'rgba(255,255,255,0.85)', minHeight: 90, maxHeight: expanded ? 320 : 90 }}>
+        {script || fallback || <span className="italic text-slate-400">No script configured</span>}
+      </div>
+      <MSLine orientation="v" size={14} />
+      <MSFanBar count={2} />
+      <div className="w-full flex gap-3">
+        <div className="flex-1 flex flex-col items-center">
+          <MSLine orientation="v" size={12} />
+          <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞">
+            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
+            <p className="text-sm font-black tabular-nums text-white leading-none">{metrics.callEnd.toLocaleString()}</p>
+          </MSMetricPill>
+        </div>
+        <div className="flex-1 flex flex-col items-center">
+          <MSLine orientation="v" size={12} />
+          <MSMetricPill bg={MS_SUCCESS_GRADIENT} icon="💰" onClick={onMetricClick}>
+            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Sale Done</p>
+            <p className="text-sm font-black tabular-nums text-white leading-none">{metrics.saleDone.toLocaleString()} ({metrics.convPct}%)</p>
+          </MSMetricPill>
+        </div>
+      </div>
     </div>
   );
 }
@@ -718,8 +849,8 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
   // Stage row: [badge] —line— [script box] —line— { vertical bracket → [Call End] / [Success·Contribution] }.
   // Badge sits in a fixed-width column so a vertical connector can drop straight down from it into
   // the next row's badge, reading as one continuous OP → CSP → Offer flow instead of 3 loose rows.
-  const StageRow = ({ label, scriptNode, metrics, delay, connectDown }: {
-    label: string; scriptNode: React.ReactNode; metrics: BellavitaStageMetrics; delay: number; connectDown?: boolean;
+  const StageRow = ({ icon, label, scriptNode, metrics, delay, connectDown }: {
+    icon?: string; label: string; scriptNode: React.ReactNode; metrics: BellavitaStageMetrics; delay: number; connectDown?: boolean;
   }) => (
     <div className="mb-5 last:mb-0">
       <div className="flex items-center transition-all ease-out"
@@ -730,22 +861,22 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
           transitionDelay: `${delay}ms`,
         }}>
         <div className="flex flex-col items-center shrink-0" style={{ width: 130 }}>
-          <MSStageBadge>{label}</MSStageBadge>
+          <MSStageBadge icon={icon}>{label}</MSStageBadge>
         </div>
         <MSLine size={24} dot />
         <MSScriptBox>{scriptNode}</MSScriptBox>
         <MSLine size={24} dot />
-        <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_LINE_COLOR}`, minWidth: 220 }}>
+        <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_COLORS.primary}30`, minWidth: 220 }}>
           <div className="flex items-center">
             <MSLine size={16} />
-            <MSMetricPill bg={MS_CALLEND_GRADIENT}>
+            <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞">
               <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
               <p className="text-base font-black tabular-nums text-white leading-none">{metrics.call_end.toLocaleString()}</p>
             </MSMetricPill>
           </div>
           <div className="flex items-center">
             <MSLine size={16} />
-            <MSMetricPill bg={MS_SUCCESS_GRADIENT}>
+            <MSMetricPill bg={MS_SUCCESS_GRADIENT} icon="📈">
               <p className="text-[9px] font-bold text-white leading-tight">Success Rate ({metrics.success_rate}%)</p>
               <p className="text-[9px] font-bold text-white leading-tight">Contribution% ({metrics.contribution_rate}%)</p>
             </MSMetricPill>
@@ -764,35 +895,20 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
 
   return (
     <>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        {[
-          { label: 'Total Calls (OP)', value: ms.op.total_in.toLocaleString(), color: '#1D4ED8' },
-          { label: 'OP Success',       value: ms.op.success.toLocaleString(),  color: '#1D4ED8' },
-          { label: 'CSP Success',      value: ms.csp.success.toLocaleString(), color: '#0891B2' },
-          { label: 'Offer Made',       value: ms.offer.success.toLocaleString(), color: '#059669' },
-        ].map(c => (
-          <div key={c.label} className="bg-white rounded-xl px-4 py-3 relative overflow-hidden" style={{ border: `2px solid ${c.color}` }}>
-            <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: c.color }} />
-            <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: c.color }}>{c.label}</p>
-            <p className="text-xl font-black tabular-nums text-slate-900 leading-none">{c.value}</p>
-          </div>
-        ))}
-      </div>
+      <MSKpiGrid items={[
+        { icon: '📞', label: 'Total Calls (OP)', value: ms.op.total_in.toLocaleString(), color: MS_COLORS.primary },
+        { icon: '👋', label: 'OP Success',       value: ms.op.success.toLocaleString(),  color: MS_COLORS.primary },
+        { icon: '💬', label: 'CSP Success',      value: ms.csp.success.toLocaleString(), color: '#0891B2' },
+        { icon: '🎁', label: 'Offer Made',       value: ms.offer.success.toLocaleString(), color: MS_COLORS.success },
+      ]} />
 
-      <div className="rounded-xl overflow-hidden mb-6" style={{ border: '1px solid #0369A1' }}>
-        <div className="px-5 py-3 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
-          <span className="text-sm">✨</span>
-          <h3 className="text-xs font-black text-white uppercase tracking-widest">Today's Magical Script</h3>
-          <span className="text-[9px] ml-1" style={{ color: 'rgba(255,255,255,0.65)' }}>Opening → Context → Offer</span>
-          <span className="text-[9px] ml-auto" style={{ color: 'rgba(255,255,255,0.65)' }}>
-            {ms.cachedThrough ? `Data cached through ${fmtDateTime(ms.cachedThrough)}` : 'Backfilling…'}
-          </span>
-        </div>
-        <div className="bg-white p-6">
-          <StageRow label="Magical OP" metrics={ms.op} delay={0} connectDown
+      <div className={`rounded-[24px] overflow-hidden mb-6 ${MS_GLASS}`} style={{ background: MS_COLORS.bg }}>
+        <MSFlowHeader cachedThrough={ms.cachedThrough} />
+        <div className="p-6" style={{ background: `radial-gradient(120% 100% at 0% 0%, #EFF6FF 0%, ${MS_COLORS.bg} 60%)` }}>
+          <StageRow icon="👋" label="Magical OP" metrics={ms.op} delay={0} connectDown
             scriptNode={<span style={{ whiteSpace: 'pre-line' }}>{ms.op.script}</span>} />
 
-          <StageRow label="Magical CSP" metrics={ms.csp} delay={150} connectDown
+          <StageRow icon="💬" label="Magical CSP" metrics={ms.csp} delay={150} connectDown
             scriptNode={
               <div className="flex flex-col gap-3 w-full">
                 {ms.csp.scripts.map(s => (
@@ -804,7 +920,7 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
               </div>
             } />
 
-          <StageRow label="Magical Offer" metrics={ms.offer} delay={300}
+          <StageRow icon="🎁" label="Magical Offer" metrics={ms.offer} delay={300}
             scriptNode={
               ms.offer.products.length > 0 ? (
                 <button onClick={() => onToggleProductModal(true)} className="text-left hover:underline decoration-dotted w-full">
@@ -822,55 +938,23 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
               <div className="flex justify-center"><MSLine orientation="v" size={22} /></div>
               <MSFanBar count={ms.categories.length} />
               <div className="grid gap-4 mt-0" style={{ gridTemplateColumns: `repeat(${ms.categories.length}, minmax(0, 1fr))` }}>
-                {ms.categories.map((cat, i) => {
-                  const accent = CARD_ACCS[i % CARD_ACCS.length];
-                  return (
-                    <div key={cat.category} className="flex flex-col items-center transition-all ease-out"
-                      style={{ opacity: grown ? 1 : 0, transform: grown ? 'translateY(0)' : 'translateY(12px)', transitionDuration: '500ms', transitionDelay: `${450 + i * 100}ms` }}>
-                      <MSLine orientation="v" size={18} />
-                      <div className="w-full rounded-xl px-3 py-2.5 text-center transition-transform hover:scale-[1.02]"
-                        style={{ background: `linear-gradient(135deg, ${accent}18, ${accent}05)`, border: `1px solid ${accent}50`, boxShadow: `0 3px 10px -3px ${accent}30` }}>
-                        <p className="text-[11px] font-bold leading-tight" style={{ color: accent }}>{cat.category}</p>
-                        <p className="text-[10px] text-slate-500 mt-0.5">({cat.contribution_pct}%) Contribution</p>
-                      </div>
-                      <MSLine orientation="v" size={14} />
-                      <div className="w-full rounded-xl px-3 py-3 text-[10px] text-slate-700 leading-relaxed bg-white overflow-y-auto transition-shadow hover:shadow-md"
-                        style={{ border: `1px solid ${accent}30`, minHeight: 150, maxHeight: 210, boxShadow: '0 2px 8px -3px #94A3B830' }}>
-                        {cat.script ? (
-                          <span style={{ whiteSpace: 'pre-line' }}>{cat.script}</span>
-                        ) : cat.topContext ? (
-                          <div>
-                            <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Most common pitch in calls</p>
-                            <span style={{ whiteSpace: 'pre-line' }}>{cat.topContext}</span>
-                            {cat.contexts.length > 1 && (
-                              <p className="text-[9px] text-slate-400 mt-1.5">+{cat.contexts.length - 1} other variation{cat.contexts.length > 2 ? 's' : ''} seen</p>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="italic text-slate-400">No script configured</span>
+                {ms.categories.map((cat, i) => (
+                  <MSBranchCard key={cat.category} delay={450 + i * 100} grown={grown}
+                    accent={CARD_ACCS[i % CARD_ACCS.length]} icon={categoryIcon(cat.category)}
+                    title={cat.category} contributionPct={cat.contribution_pct}
+                    script={cat.script ? <span style={{ whiteSpace: 'pre-line' }}>{cat.script}</span> : null}
+                    fallback={cat.topContext ? (
+                      <div>
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Most common pitch in calls</p>
+                        <span style={{ whiteSpace: 'pre-line' }}>{cat.topContext}</span>
+                        {cat.contexts.length > 1 && (
+                          <p className="text-[9px] text-slate-400 mt-1.5">+{cat.contexts.length - 1} other variation{cat.contexts.length > 2 ? 's' : ''} seen</p>
                         )}
                       </div>
-                      <MSLine orientation="v" size={14} />
-                      <MSFanBar count={2} />
-                      <div className="w-full flex gap-3">
-                        <div className="flex-1 flex flex-col items-center">
-                          <MSLine orientation="v" size={12} />
-                          <MSMetricPill bg={MS_CALLEND_GRADIENT}>
-                            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
-                            <p className="text-sm font-black tabular-nums text-white leading-none">{cat.call_end.toLocaleString()}</p>
-                          </MSMetricPill>
-                        </div>
-                        <div className="flex-1 flex flex-col items-center">
-                          <MSLine orientation="v" size={12} />
-                          <MSMetricPill bg={MS_SUCCESS_GRADIENT} onClick={() => onSaleDoneClick(cat.category)}>
-                            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Sale Done</p>
-                            <p className="text-sm font-black tabular-nums text-white leading-none">{cat.sale_done.toLocaleString()} ({cat.conv_pct}%)</p>
-                          </MSMetricPill>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                    ) : null}
+                    metrics={{ callEnd: cat.call_end, saleDone: cat.sale_done, convPct: cat.conv_pct }}
+                    onMetricClick={() => onSaleDoneClick(cat.category)} />
+                ))}
               </div>
             </div>
           )}
@@ -929,41 +1013,23 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick }: {
 
   return (
     <>
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-6">
-        {[
-          { label: 'Total Calls',   value: ms.summary.total_calls.toLocaleString(),  color: '#475569' },
-          { label: 'OP Passed',     value: ms.summary.op_pass.toLocaleString(),      color: '#1D4ED8' },
-          { label: 'CSP Passed',    value: ms.summary.csp_pass.toLocaleString(),     color: '#0891B2' },
-          { label: 'Offer Made',    value: ms.summary.offer_pass.toLocaleString(),   color: '#059669' },
-          { label: 'Sale Done',     value: ms.summary.sale_done.toLocaleString(),    color: '#16A34A' },
-          { label: 'Overall Conv%', value: `${ms.summary.overall_conv}%`,            color: ms.summary.overall_conv >= 10 ? '#16A34A' : ms.summary.overall_conv >= 5 ? '#D97706' : '#DC2626' },
-        ].map(c => (
-          <div key={c.label} className="bg-white rounded-xl px-4 py-3 relative overflow-hidden" style={{ border: `2px solid ${c.color}` }}>
-            <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: c.color }} />
-            <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: c.color }}>{c.label}</p>
-            <p className="text-xl font-black tabular-nums text-slate-900 leading-none">{c.value}</p>
-          </div>
-        ))}
-      </div>
+      <MSKpiGrid cols={6} items={[
+        { icon: '📞', label: 'Total Calls',   value: ms.summary.total_calls.toLocaleString(),  color: MS_COLORS.neutral },
+        { icon: '👋', label: 'OP Passed',     value: ms.summary.op_pass.toLocaleString(),      color: MS_COLORS.primary },
+        { icon: '💬', label: 'CSP Passed',    value: ms.summary.csp_pass.toLocaleString(),     color: '#0891B2' },
+        { icon: '🎁', label: 'Offer Made',    value: ms.summary.offer_pass.toLocaleString(),   color: MS_COLORS.success },
+        { icon: '💰', label: 'Sale Done',     value: ms.summary.sale_done.toLocaleString(),    color: MS_COLORS.success },
+        { icon: '🏆', label: 'Overall Conv%', value: `${ms.summary.overall_conv}%`,            color: ms.summary.overall_conv >= 10 ? MS_COLORS.success : ms.summary.overall_conv >= 5 ? MS_COLORS.warning : MS_COLORS.danger },
+      ]} />
 
-      <div className="rounded-xl overflow-hidden mb-6" style={{ border: '1px solid #0369A1' }}>
-        <div className="px-5 py-3 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
-          <span className="text-sm">✨</span>
-          <h3 className="text-xs font-black text-white uppercase tracking-widest">Today's Magical Script</h3>
-          <span className="text-[9px] ml-1" style={{ color: 'rgba(255,255,255,0.65)' }}>Opening → Context → Offer</span>
-          <div className="ml-auto flex items-center gap-3">
-            {canEdit && (
-              <button onClick={onOpenEditor}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold text-white/90 hover:text-white border border-white/30 hover:border-white/60 transition-colors">
-                <Pencil size={11} /> Edit Scripts
-              </button>
-            )}
-            <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.65)' }}>
-              {ms.cachedThrough ? `Data cached through ${fmtDateTime(ms.cachedThrough)}` : 'Backfilling…'}
-            </span>
-          </div>
-        </div>
-        <div className="bg-white p-6">
+      <div className={`rounded-[24px] overflow-hidden mb-6 ${MS_GLASS}`} style={{ background: MS_COLORS.bg }}>
+        <MSFlowHeader cachedThrough={ms.cachedThrough} right={canEdit && (
+          <button onClick={onOpenEditor}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold text-white/90 hover:text-white border border-white/30 hover:border-white/60 transition-colors">
+            <Pencil size={11} /> Edit Scripts
+          </button>
+        )} />
+        <div className="p-6" style={{ background: `radial-gradient(120% 100% at 0% 0%, #EFF6FF 0%, ${MS_COLORS.bg} 60%)` }}>
           {ms.flow.map((stage, si) => (
             <div key={stage.stage} className="flex items-center mb-5 last:mb-0 transition-all ease-out"
               style={{
@@ -972,7 +1038,7 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick }: {
                 transitionDuration: '500ms',
                 transitionDelay: `${si * 150}ms`,
               }}>
-              <MSStageBadge>{stage.title}</MSStageBadge>
+              <MSStageBadge icon={stage.stage === 'op' ? '👋' : stage.stage === 'csp' ? '💬' : '🎁'}>{stage.title}</MSStageBadge>
               <MSLine size={24} dot />
               <MSScriptBox>
                 {stage.script
@@ -980,17 +1046,17 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick }: {
                   : <span className="text-slate-400 italic">Call opening — no predefined script</span>}
               </MSScriptBox>
               <MSLine size={24} dot />
-              <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_LINE_COLOR}`, minWidth: 200 }}>
+              <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_COLORS.primary}30`, minWidth: 200 }}>
                 <div className="flex items-center">
                   <MSLine size={16} />
-                  <MSMetricPill bg={MS_CALLEND_GRADIENT}>
+                  <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞">
                     <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
                     <p className="text-base font-black tabular-nums text-white leading-none">{stage.dropped.toLocaleString()}</p>
                   </MSMetricPill>
                 </div>
                 <div className="flex items-center">
                   <MSLine size={16} />
-                  <MSMetricPill bg={MS_SUCCESS_GRADIENT}>
+                  <MSMetricPill bg={MS_SUCCESS_GRADIENT} icon="📈">
                     <p className="text-[9px] font-bold text-white leading-tight">Success Rate ({stage.success_rate}%)</p>
                   </MSMetricPill>
                 </div>
@@ -1004,43 +1070,14 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick }: {
               <div className="flex justify-center"><MSLine orientation="v" size={22} /></div>
               <MSFanBar count={ms.objections.length} />
               <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${ms.objections.length}, minmax(0, 1fr))` }}>
-                {ms.objections.map((obj, i) => {
-                  const accent = CARD_ACCS[i % CARD_ACCS.length];
-                  return (
-                    <div key={i} className="flex flex-col items-center transition-all ease-out"
-                      style={{ opacity: grown ? 1 : 0, transform: grown ? 'translateY(0)' : 'translateY(12px)', transitionDuration: '500ms', transitionDelay: `${450 + i * 100}ms` }}>
-                      <MSLine orientation="v" size={18} />
-                      <div className="w-full rounded-xl px-3 py-2.5 text-center transition-transform hover:scale-[1.02]"
-                        style={{ background: `linear-gradient(135deg, ${accent}18, ${accent}05)`, border: `1px solid ${accent}50`, boxShadow: `0 3px 10px -3px ${accent}30` }}>
-                        <p className="text-[11px] font-bold leading-tight" style={{ color: accent }}>{obj.title}</p>
-                        <p className="text-[10px] text-slate-500 mt-0.5">({obj.contribution}%) Contribution</p>
-                      </div>
-                      <MSLine orientation="v" size={14} />
-                      <div className="w-full rounded-xl px-3 py-3 text-[10px] text-slate-700 leading-relaxed bg-white overflow-y-auto transition-shadow hover:shadow-md"
-                        style={{ border: `1px solid ${accent}30`, minHeight: 150, maxHeight: 210, boxShadow: '0 2px 8px -3px #94A3B830' }}>
-                        {obj.script || <span className="italic text-slate-400">No script configured</span>}
-                      </div>
-                      <MSLine orientation="v" size={14} />
-                      <MSFanBar count={2} />
-                      <div className="w-full flex gap-3">
-                        <div className="flex-1 flex flex-col items-center">
-                          <MSLine orientation="v" size={12} />
-                          <MSMetricPill bg={MS_CALLEND_GRADIENT}>
-                            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
-                            <p className="text-sm font-black tabular-nums text-white leading-none">{(obj.total - obj.sales).toLocaleString()}</p>
-                          </MSMetricPill>
-                        </div>
-                        <div className="flex-1 flex flex-col items-center">
-                          <MSLine orientation="v" size={12} />
-                          <MSMetricPill bg={MS_SUCCESS_GRADIENT} onClick={() => onSaleDoneClick(obj.category ?? obj.title)}>
-                            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Sale Done</p>
-                            <p className="text-sm font-black tabular-nums text-white leading-none">{obj.sales.toLocaleString()} ({obj.conv_pct}%)</p>
-                          </MSMetricPill>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                {ms.objections.map((obj, i) => (
+                  <MSBranchCard key={i} delay={450 + i * 100} grown={grown}
+                    accent={CARD_ACCS[i % CARD_ACCS.length]} icon={categoryIcon(obj.category ?? obj.title)}
+                    title={obj.title} contributionPct={obj.contribution}
+                    script={obj.script ? <span style={{ whiteSpace: 'pre-line' }}>{obj.script}</span> : null}
+                    metrics={{ callEnd: obj.total - obj.sales, saleDone: obj.sales, convPct: obj.conv_pct }}
+                    onMetricClick={() => onSaleDoneClick(obj.category ?? obj.title)} />
+                ))}
               </div>
             </div>
           )}

@@ -6,7 +6,7 @@ import * as ctrl from './inbound.controller';
 
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin'));
+router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin', 'qa'));
 
 // Overall (all projects)
 router.get('/summary',             ctrl.getSummary);

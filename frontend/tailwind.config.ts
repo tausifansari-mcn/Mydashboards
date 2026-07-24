@@ -46,11 +46,13 @@ const config: Config = {
         'fade-in':  'fadeIn 0.2s ease-out',
         'slide-up': 'slideUp 0.3s ease-out',
         'count-up': 'countUp 0.5s ease-out',
+        'flow-line': 'flowLine 2.2s linear infinite',
       },
       keyframes: {
         fadeIn:  { from: { opacity: '0' },                                          to: { opacity: '1' } },
         slideUp: { from: { opacity: '0', transform: 'translateY(12px)' },           to: { opacity: '1', transform: 'translateY(0)' } },
         countUp: { from: { opacity: '0', transform: 'translateY(6px)' },            to: { opacity: '1', transform: 'translateY(0)' } },
+        flowLine: { '0%': { backgroundPosition: '0% 0%' },                          '100%': { backgroundPosition: '200% 0%' } },
       },
     },
   },
