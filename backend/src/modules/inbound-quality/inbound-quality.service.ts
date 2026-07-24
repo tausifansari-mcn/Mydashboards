@@ -236,7 +236,12 @@ async function refreshNegCatExpr(): Promise<void> {
     );
     if (!rules.length) return;
 
-    const esc = (s: string) => s.replace(/'/g, "''");
+    // Backslash MUST be escaped before quotes — MySQL treats \ as an escape character by default,
+    // so a pattern ending in \ could neutralize the following escaped quote and break out of the
+    // string literal even with quotes doubled. Mirrors the known-safe escaping in
+    // buildProductCaseFromDB below, which this rule set (admin-editable via POST /neg-keywords,
+    // reachable by any authenticated role) previously didn't match.
+    const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     const dynamicWhens = rules
       .map(r => `  WHEN LOWER(q.top_negative_words) LIKE '%${esc(r.pattern.toLowerCase())}%' THEN '${esc(r.category)}'`)
       .join('\n');

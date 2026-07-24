@@ -738,6 +738,45 @@ export async function getSaleDoneCalls(filters: QualityFilters): Promise<SaleDon
   }));
 }
 
+// Drill-down behind a Magical Script category branch's "Sale Done" pill. Column-based clients
+// (Bellavita/GNC/Neeman's) group by magical_script_cache.resolved_category; every other client's
+// generic flow groups by objection_category (CustomerObjectionCategory) instead — both are
+// computed for every row regardless of client, so this just picks the right column to match on.
+export async function getMagicalCategorySaleDoneCalls(
+  filters: QualityFilters, category: string, variant: 'bellavita' | 'generic',
+): Promise<SaleDoneCallRow[]> {
+  const { startDate, endDate, clientId } = filters;
+  const field = variant === 'bellavita' ? 'resolved_category' : 'objection_category';
+  const cf = clientId ? ' AND client_id = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, category, ...(clientId ? [Number(clientId)] : [])];
+
+  const cacheRows = await queryMasmis<{ call_id: number }>(`
+    SELECT call_id FROM db_masmis.magical_script_cache
+    WHERE call_date BETWEEN ? AND ? AND ${field} = ? AND sale_done = 1 ${cf}
+    ORDER BY call_date DESC
+    LIMIT 200
+  `, params);
+
+  const ids = cacheRows.map(r => Number(r.call_id));
+  if (ids.length === 0) return [];
+
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await querySource<{ id: number; CallDate: string; AgentName: string | null; MobileNo: string | null; FileName: string | null }>(
+    `SELECT id, CallDate, AgentName, MobileNo, FileName FROM db_external.CallDetails WHERE id IN (${placeholders})`,
+    ids,
+  );
+
+  return rows
+    .map(r => ({
+      callId:    Number(r.id),
+      callDate:  String(r.CallDate),
+      agentName: r.AgentName ?? 'Unknown',
+      mobileNo:  r.MobileNo ?? '',
+      fileName:  r.FileName ?? '',
+    }))
+    .sort((a, b) => b.callDate.localeCompare(a.callDate));
+}
+
 export async function getDetailAnalysis(filters: QualityFilters): Promise<DetailAnalysisResponse> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
@@ -1087,7 +1126,7 @@ export async function getAgentNPSCSAT(filters: QualityFilters): Promise<AgentNPS
     WHERE cd.Feedback IN ('Positive','Negative','Neutral')
       AND cd.CallDate BETWEEN ? AND ? ${cf}
       AND cd.AgentName IS NOT NULL AND cd.AgentName != ''
-    GROUP BY cd.AgentName
+    GROUP BY cd.AgentName, am.AgentName
     HAVING calls >= 1
     ORDER BY csat DESC
   `, params);
@@ -1463,7 +1502,20 @@ const COLUMN_BASED_CLIENTS: Record<string, string> = {
   '375': 'Bellavita',
   '409': 'GNC',
   '475': "Neeman's",
+  // Verified before adding (not assumed): Finnable's CallDetails rows populate Opening (5,050 of
+  // 9,493 calls), Offered (4,683), ContactSettingContext (1,865) and Category/SubCategory with a
+  // real, distinct taxonomy (General Disinterest, Eligibility Barrier, Requirement of Loan, ...) —
+  // same column shape as Bellavita/GNC/Neeman's, just loan-domain content instead of retail.
+  '497': 'Finnable',
 };
+
+// Reserved for excluding a specific stale/misconfigured campaign_id from a client's data, if one is
+// ever confirmed. NOT populated: for Neemans (475), the two campaigns turned out to be sequential,
+// not parallel — NEEMANSC ran Jan-Mar 2026 and was retired, NEEM_OUT has been the sole active
+// campaign since Apr 2026 — so excluding either one hides real, current data rather than bad data.
+// The mismatched product-offering text seen under NEEM_OUT is a genuine source data-quality issue
+// (confirmed to exist in db_external.CallDetails itself), not something safe to filter out here.
+const CAMPAIGN_ALLOWLIST: Record<string, string[]> = {};
 
 const BELLAVITA_OP_SCRIPT =
   `Good Morning/Afternoon/Evening.\n\n` +
@@ -1589,6 +1641,8 @@ export async function initMagicalScriptCacheTables(): Promise<void> {
         sale_done           TINYINT(1) NOT NULL DEFAULT 0,
         call_stage          VARCHAR(20) NOT NULL DEFAULT 'opening_rejected',
         objection_category  VARCHAR(120) NULL,
+        offered_pitch_context VARCHAR(500) NULL,
+        campaign_id         VARCHAR(20) NULL,
         computed_at         DATETIME DEFAULT NOW(),
         INDEX idx_client_date (client_id, call_date)
       )
@@ -1604,6 +1658,26 @@ export async function initMagicalScriptCacheTables(): Promise<void> {
     let migrated = false;
     if (currentLen < 120) {
       await pool.execute(`ALTER TABLE db_masmis.magical_script_cache MODIFY COLUMN resolved_category VARCHAR(120) NULL`);
+      migrated = true;
+    }
+
+    // Migration for a table created before per-category offer-pitch text support.
+    const [ctxColRows] = await pool.execute(`
+      SELECT COLUMN_NAME FROM information_schema.columns
+      WHERE TABLE_SCHEMA = 'db_masmis' AND TABLE_NAME = 'magical_script_cache' AND COLUMN_NAME = 'offered_pitch_context'
+    `);
+    if ((ctxColRows as unknown[]).length === 0) {
+      await pool.execute(`ALTER TABLE db_masmis.magical_script_cache ADD COLUMN offered_pitch_context VARCHAR(500) NULL`);
+      migrated = true;
+    }
+
+    // Migration for a table created before campaign-level filtering support (CAMPAIGN_ALLOWLIST).
+    const [campColRows] = await pool.execute(`
+      SELECT COLUMN_NAME FROM information_schema.columns
+      WHERE TABLE_SCHEMA = 'db_masmis' AND TABLE_NAME = 'magical_script_cache' AND COLUMN_NAME = 'campaign_id'
+    `);
+    if ((campColRows as unknown[]).length === 0) {
+      await pool.execute(`ALTER TABLE db_masmis.magical_script_cache ADD COLUMN campaign_id VARCHAR(20) NULL`);
       migrated = true;
     }
 
@@ -1640,6 +1714,7 @@ async function processMagicalScriptBatch(batchSize = 1000): Promise<number> {
     op_success: number | null; csp_success: number; csp_call_end: number; csp_variant: string | null;
     offer_success: number; product_offering: string | null; resolved_category: string | null;
     sale_done: number; call_stage: string; objection_category: string | null;
+    offered_pitch_context: string | null; campaign_id: string | null;
   };
 
   const rows = await querySource<Row>(`
@@ -1665,7 +1740,14 @@ async function processMagicalScriptBatch(batchSize = 1000): Promise<number> {
         WHEN cd.ContactSettingContext    = 'None'                   THEN 'context_rejected'
         ELSE 'opening_rejected'
       END AS call_stage,
-      CASE WHEN cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory NOT IN ('', 'None') THEN cd.CustomerObjectionCategory ELSE NULL END AS objection_category
+      CASE WHEN cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory NOT IN ('', 'None') THEN cd.CustomerObjectionCategory ELSE NULL END AS objection_category,
+      -- Excludes the leaked prompt-instruction artifact some AI-summarized calls carry when the
+      -- summarizer had nothing to report ("Context of the product offer presented. If not
+      -- mentioned, return 'None'.") — real question data, not a real pitch context.
+      CASE WHEN cd.OfferedPitchContext IS NOT NULL
+             AND cd.OfferedPitchContext NOT IN ('', 'None', "Context of the product offer presented. If not mentioned, return 'None'.")
+           THEN LEFT(cd.OfferedPitchContext, 500) ELSE NULL END AS offered_pitch_context,
+      cd.campaign_id
     FROM db_external.CallDetails cd
     WHERE cd.id < ? AND cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
       AND cd.client_id IS NOT NULL
@@ -1682,14 +1764,14 @@ async function processMagicalScriptBatch(batchSize = 1000): Promise<number> {
     'call_id', 'client_id', 'call_date',
     'op_success', 'csp_success', 'csp_call_end', 'csp_variant',
     'offer_success', 'product_offering', 'resolved_category',
-    'sale_done', 'call_stage', 'objection_category',
+    'sale_done', 'call_stage', 'objection_category', 'offered_pitch_context', 'campaign_id',
   ];
   const placeholders = rows.map(() => `(${cols.map(() => '?').join(',')},NOW())`).join(',');
   const flat = rows.flatMap(r => [
     r.id, r.client_id, r.CallDate,
     r.op_success, r.csp_success, r.csp_call_end, r.csp_variant,
     r.offer_success, r.product_offering, r.resolved_category,
-    r.sale_done, r.call_stage, r.objection_category,
+    r.sale_done, r.call_stage, r.objection_category, r.offered_pitch_context, r.campaign_id,
   ]);
   const updateCols = cols.filter(c => c !== 'call_id').map(c => `${c} = VALUES(${c})`).join(', ');
 
@@ -1748,7 +1830,10 @@ export interface BellavitaMagicalScriptData {
   op: BellavitaStageMetrics & { script: string };
   csp: BellavitaStageMetrics & { scripts: { label: string; text: string; count: number }[] };
   offer: BellavitaStageMetrics & { script: string; topProduct: string | null; products: { product: string; count: number }[] };
-  categories: { category: string; script: string; total: number; contribution_pct: number; call_end: number; sale_done: number; conv_pct: number }[];
+  categories: {
+    category: string; script: string; total: number; contribution_pct: number; call_end: number; sale_done: number; conv_pct: number;
+    topContext: string | null; contexts: { text: string; count: number }[];
+  }[];
   cachedThrough: string | null;
 }
 
@@ -1759,10 +1844,15 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
   const baseParams = [startDate, endDate];
   const pct = (n: number, d: number) => d > 0 ? Math.round((n / d) * 1000) / 10 : 0;
 
+  const allowedCampaigns = filters.clientId ? CAMPAIGN_ALLOWLIST[filters.clientId] : undefined;
+  const campaignClause = allowedCampaigns ? ` AND campaign_id IN (${allowedCampaigns.map(() => '?').join(',')})` : '';
+  const campaignParams: string[] = allowedCampaigns ?? [];
+  const params = [...baseParams, ...campaignParams];
+
   // All 5 reads come from the pre-classified db_masmis cache (see initMagicalScriptCacheTables /
   // processMagicalScriptBatch above) instead of scanning CallDetails live — that's what cut this
   // from ~2.5 minutes down to near-instant.
-  const [opRows, cspRows, offerRows, products, categoryRows, status, configRows] = await Promise.all([
+  const [opRows, cspRows, offerRows, products, categoryRows, contextRows, status, configRows] = await Promise.all([
     // OP: op_success is NULL for the excluded population (Opening IS NULL/'None'); COUNT(op_success)
     // naturally skips those rows, matching "do not count None value".
     queryMasmis<{ total: number; call_end: number; success: number; sale_contrib: number }>(`
@@ -1772,8 +1862,8 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(CASE WHEN op_success = 1 THEN 1 ELSE 0 END) AS success,
         SUM(CASE WHEN op_success IS NOT NULL AND sale_done = 1 THEN 1 ELSE 0 END) AS sale_contrib
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?
-    `, baseParams),
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${campaignClause}
+    `, params),
 
     // CSP: population = calls that passed Opening.
     queryMasmis<{
@@ -1788,8 +1878,8 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(CASE WHEN csp_variant = 'before' THEN 1 ELSE 0 END) AS feedback_before,
         SUM(CASE WHEN csp_variant = 'same' THEN 1 ELSE 0 END) AS feedback_same
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND op_success = 1
-    `, baseParams),
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND op_success = 1${campaignClause}
+    `, params),
 
     // Offer: population = calls that passed CSP.
     queryMasmis<{ total: number; call_end: number; success: number; sale_contrib: number }>(`
@@ -1799,26 +1889,40 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(offer_success) AS success,
         SUM(CASE WHEN offer_success = 1 AND sale_done = 1 THEN 1 ELSE 0 END) AS sale_contrib
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND op_success = 1 AND csp_success = 1
-    `, baseParams),
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND op_success = 1 AND csp_success = 1${campaignClause}
+    `, params),
 
     queryMasmis<{ product: string; n: number }>(`
       SELECT product_offering AS product, COUNT(*) AS n
       FROM db_masmis.magical_script_cache
       WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?
-        AND offer_success = 1 AND product_offering IS NOT NULL
+        AND offer_success = 1 AND product_offering IS NOT NULL${campaignClause}
       GROUP BY product_offering
       ORDER BY n DESC
-    `, baseParams),
+    `, params),
 
     queryMasmis<{ resolved_category: string; total: number; sales: number }>(`
       SELECT resolved_category, COUNT(*) AS total, SUM(sale_done) AS sales
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND resolved_category IS NOT NULL
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND resolved_category IS NOT NULL${campaignClause}
       GROUP BY resolved_category
       ORDER BY total DESC
       LIMIT 4
-    `, baseParams),
+    `, params),
+
+    // Real per-category pitch text (OfferedPitchContext, cached as offered_pitch_context) for
+    // clients that don't have an admin-authored objection script yet — same idea as the top-product
+    // surfacing above, grouped per category instead of globally. Capped per category in JS below
+    // since these are full sentences (up to 500 chars), not short labels like product names.
+    queryMasmis<{ resolved_category: string; context: string; n: number }>(`
+      SELECT resolved_category, offered_pitch_context AS context, COUNT(*) AS n
+      FROM db_masmis.magical_script_cache
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?
+        AND resolved_category IS NOT NULL AND offered_pitch_context IS NOT NULL${campaignClause}
+      GROUP BY resolved_category, offered_pitch_context
+      ORDER BY resolved_category, n DESC
+      LIMIT 2000
+    `, params),
 
     magicalScriptCacheStatus(),
 
@@ -1870,9 +1974,13 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
     },
     offer: {
       ...stage(offerRow),
+      // Product-offering data (ProductOffering column, cached as product_offering) is captured for
+      // every column-based client, not just Bellavita — surface the top-contributing product + full
+      // list here so the frontend's existing "click to view all products" modal works for GNC/Neemans
+      // too. Falls back to the configured offer script only when there's no product data at all.
       script: isBellavita ? '' : (offerConfig?.scriptText ?? ''),
-      topProduct: isBellavita ? (products[0]?.product ?? null) : null,
-      products: isBellavita ? products.map(p => ({ product: p.product, count: Number(p.n) })) : [],
+      topProduct: products[0]?.product ?? null,
+      products: products.map(p => ({ product: p.product, count: Number(p.n) })),
     },
     categories: categoryRows.map(r => {
       const total = Number(r.total);
@@ -1880,6 +1988,13 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
       const script = isBellavita
         ? (BELLAVITA_CATEGORY_SCRIPTS[r.resolved_category] ?? '')
         : (objectionConfig.find(c => c.objectionCategory === r.resolved_category)?.scriptText ?? '');
+      // contextRows is pre-sorted DESC by count within each category (see query above), so the
+      // first match here is already the top context; cap the "view all" list at 30 since these are
+      // full sentences, not short labels.
+      const contexts = contextRows
+        .filter(c => c.resolved_category === r.resolved_category)
+        .slice(0, 30)
+        .map(c => ({ text: c.context, count: Number(c.n) }));
       return {
         category: r.resolved_category,
         script,
@@ -1888,6 +2003,8 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         call_end: total - sales,
         sale_done: sales,
         conv_pct: pct(sales, total),
+        topContext: contexts[0]?.text ?? null,
+        contexts,
       };
     }),
     cachedThrough: status.cachedThrough,

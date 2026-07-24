@@ -31,6 +31,15 @@ if (process.env.SMTP_USER) {
 const FROM = `"${process.env.SMTP_FROM_NAME || 'My Dashboard'}" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`;
 const APP_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 async function send(to: string, subject: string, html: string, text: string): Promise<void> {
   if (!process.env.SMTP_USER) {
     console.log(`[DEV EMAIL → ${to}]\nSubject: ${subject}\n${text}\n`);
@@ -64,7 +73,7 @@ function branded(title: string, body: string): string {
 
 export async function sendPasswordResetEmail(to: string, name: string, resetLink: string): Promise<void> {
   const body = `
-    <p style="margin:0 0 8px;color:#111827;font-size:16px;">Hi <strong>${name}</strong>,</p>
+    <p style="margin:0 0 8px;color:#111827;font-size:16px;">Hi <strong>${escapeHtml(name)}</strong>,</p>
     <p style="margin:0 0 16px;color:#6b7280;font-size:14px;line-height:1.6;">You requested a password reset for your My Dashboard account. Click the button below — link expires in <strong>1 hour</strong>.</p>
     <div style="text-align:center;margin:24px 0;">
       <a href="${resetLink}" style="background:#1E40AF;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">
@@ -83,13 +92,13 @@ export async function sendPasswordResetEmail(to: string, name: string, resetLink
 
 export async function sendWelcomeEmail(to: string, name: string, tempPassword: string): Promise<void> {
   const body = `
-    <p style="margin:0 0 12px;color:#111827;font-size:16px;">Welcome, <strong>${name}</strong>!</p>
+    <p style="margin:0 0 12px;color:#111827;font-size:16px;">Welcome, <strong>${escapeHtml(name)}</strong>!</p>
     <p style="margin:0 0 16px;color:#6b7280;font-size:14px;line-height:1.6;">Your My Dashboard account has been created. Use the credentials below to log in.</p>
     <div style="background:#f0f4ff;border:1px solid #c7d2fe;border-radius:8px;padding:16px;margin:0 0 20px;">
       <p style="margin:0 0 6px;font-size:13px;color:#6b7280;">Email:</p>
-      <p style="margin:0 0 12px;font-size:15px;font-weight:700;color:#1e1b4b;">${to}</p>
+      <p style="margin:0 0 12px;font-size:15px;font-weight:700;color:#1e1b4b;">${escapeHtml(to)}</p>
       <p style="margin:0 0 6px;font-size:13px;color:#6b7280;">Temporary Password:</p>
-      <p style="margin:0;font-size:18px;font-weight:800;letter-spacing:3px;color:#1e1b4b;">${tempPassword}</p>
+      <p style="margin:0;font-size:18px;font-weight:800;letter-spacing:3px;color:#1e1b4b;">${escapeHtml(tempPassword)}</p>
     </div>
     <div style="text-align:center;margin:24px 0;">
       <a href="${APP_URL}/login" style="background:#1E40AF;color:#fff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">

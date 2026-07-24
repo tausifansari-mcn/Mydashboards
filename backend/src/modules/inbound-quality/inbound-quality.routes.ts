@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { verifyToken } from '../../middleware/verifyToken';
 import { injectTenant } from '../../middleware/injectTenant';
 import { requireRole } from '../../middleware/requireRole';
+import { enforceClientScope } from '../../middleware/enforceClientScope';
 import * as ctrl from './inbound-quality.controller';
 
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin'));
+router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin'), enforceClientScope());
 
 router.get('/clients',        ctrl.getInboundClients);
 router.get('/kpis',           ctrl.getInboundProcessKPIs);

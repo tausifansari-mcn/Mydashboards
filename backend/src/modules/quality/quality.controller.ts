@@ -46,6 +46,20 @@ export async function getSaleDoneCalls(req: Request, res: Response) {
   }
 }
 
+export async function getMagicalCategorySaleDoneCalls(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const category = String(req.query.category ?? '');
+    const variant = req.query.variant === 'generic' ? 'generic' : 'bellavita';
+    if (!category) { res.status(400).json({ message: 'category is required' }); return; }
+    const data = await svc.getMagicalCategorySaleDoneCalls(filters, category, variant);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
 export async function getDetailAnalysis(req: Request, res: Response) {
   try {
     const filters = parseDateRange(req);

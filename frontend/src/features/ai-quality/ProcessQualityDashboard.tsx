@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useProcessStore } from '@/store/processStore';
@@ -222,8 +222,6 @@ const pieColors: Record<string, string> = {
   'Offering Rejected': '#A78BFA',
   'Post Offer Rejected': '#3B82F6',
 };
-
-const funnelCSTColors = ['#3B82F6', '#22C55E', '#14B8A6', '#A78BFA', '#F59E0B'];
 
 const TT: React.CSSProperties = {
   background: '#FFFFFF', border: '1px solid #E2E8F0',
@@ -619,7 +617,10 @@ interface BellavitaMagicalScriptData {
   op: BellavitaStageMetrics & { script: string };
   csp: BellavitaStageMetrics & { scripts: { label: string; text: string; count: number }[] };
   offer: BellavitaStageMetrics & { script: string; topProduct: string | null; products: { product: string; count: number }[] };
-  categories: { category: string; script: string; total: number; contribution_pct: number; call_end: number; sale_done: number; conv_pct: number }[];
+  categories: {
+    category: string; script: string; total: number; contribution_pct: number; call_end: number; sale_done: number; conv_pct: number;
+    topContext: string | null; contexts: { text: string; count: number }[];
+  }[];
   cachedThrough: string | null;
 }
 
@@ -638,14 +639,23 @@ const EDIT_SCRIPT_ROLES = ['super_admin', 'manager', 'client_admin'];
 // ─── Magical Script tree-diagram primitives — shared by every outbound process. Bellavita runs its
 // own funnel (its own CallDetails columns and fixed scripts, not the DB-configured generic flow
 // every other outbound client uses) but both render through the same connector-line visual style. ──
-const MS_LINE_COLOR = '#7DB8E8';
-const MS_CALLEND_BG = '#1E3A8A';
-const MS_SUCCESS_BG = '#0F7B4F';
+const MS_LINE_COLOR = '#93C5FD';
+const MS_CALLEND_GRADIENT = 'linear-gradient(135deg, #3B82F6, #1E3A8A)';
+const MS_SUCCESS_GRADIENT = 'linear-gradient(135deg, #34D399, #0F7B4F)';
+// Kept for callers still passing a flat color into MSMetricPill's `bg` prop.
+const MS_CALLEND_BG = MS_CALLEND_GRADIENT;
+const MS_SUCCESS_BG = MS_SUCCESS_GRADIENT;
 
-// Thin connector line — horizontal by default, or vertical when orientation="v".
-function MSLine({ orientation = 'h', size = 20, centered = false }: { orientation?: 'h' | 'v'; size?: number; centered?: boolean }) {
+// Thin connector line — horizontal by default, or vertical when orientation="v". A small dot caps
+// the end so junctions read as deliberate "nodes" rather than lines just stopping mid-air.
+function MSLine({ orientation = 'h', size = 20, centered = false, dot = false }: { orientation?: 'h' | 'v'; size?: number; centered?: boolean; dot?: boolean }) {
   if (orientation === 'v') {
-    return <div className={centered ? 'mx-auto' : undefined} style={{ width: 2, height: size, background: MS_LINE_COLOR }} />;
+    return (
+      <div className={`relative flex justify-center ${centered ? 'mx-auto' : ''}`} style={{ width: 2, height: size }}>
+        <div style={{ width: 2, height: size, background: `linear-gradient(180deg, ${MS_LINE_COLOR}, ${MS_LINE_COLOR}AA)` }} />
+        {dot && <div className="absolute rounded-full" style={{ width: 6, height: 6, background: MS_LINE_COLOR, bottom: -3 }} />}
+      </div>
+    );
   }
   return <div className="shrink-0" style={{ width: size, borderTop: `2px solid ${MS_LINE_COLOR}` }} />;
 }
@@ -659,7 +669,12 @@ function MSFanBar({ count }: { count: number }) {
 
 function MSStageBadge({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-center py-2.5 px-3 rounded-lg text-[11px] font-bold text-slate-800 bg-white shrink-0" style={{ border: '1px solid #CBD5E1', minWidth: 130 }}>
+    <div className="text-center py-3 px-3 rounded-xl text-[11px] font-black text-white uppercase tracking-wide shrink-0 transition-transform hover:scale-105"
+      style={{
+        minWidth: 130,
+        background: 'linear-gradient(135deg, #0EA5E9, #0369A1)',
+        boxShadow: '0 6px 16px -4px #0369A170',
+      }}>
       {children}
     </div>
   );
@@ -667,48 +682,81 @@ function MSStageBadge({ children }: { children: React.ReactNode }) {
 
 function MSScriptBox({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex-1 rounded-lg px-4 py-3 text-[11px] text-slate-700 leading-relaxed font-medium flex items-center bg-slate-100" style={{ border: '1px solid #E2E8F0' }}>
-      {children}
+    <div className="flex-1 rounded-xl px-4 py-3 text-[11px] text-slate-700 leading-relaxed font-medium flex items-center relative overflow-hidden transition-shadow hover:shadow-md"
+      style={{ background: 'linear-gradient(135deg, #F0F9FF, #FFFFFF)', border: '1px solid #DBEAFE', boxShadow: '0 2px 8px -2px #94A3B830' }}>
+      <div className="absolute left-0 top-0 bottom-0" style={{ width: 3, background: 'linear-gradient(180deg, #0EA5E9, #0369A1)' }} />
+      <div className="pl-2">{children}</div>
     </div>
   );
 }
 
-function MSMetricPill({ bg, children }: { bg: string; children: React.ReactNode }) {
+function MSMetricPill({ bg, onClick, children }: { bg: string; onClick?: () => void; children: React.ReactNode }) {
+  const clickable = !!onClick;
   return (
-    <div className="rounded-full px-4 py-2 text-center w-full" style={{ background: bg }}>
+    <div onClick={onClick}
+      className={`rounded-full px-4 py-2 text-center w-full transition-all duration-200 ${clickable ? 'cursor-pointer hover:scale-[1.06] hover:brightness-110' : ''}`}
+      style={{ background: bg, boxShadow: '0 4px 12px -3px rgba(15,23,42,0.35)' }}
+      title={clickable ? 'Click to view calls' : undefined}>
       {children}
     </div>
   );
 }
 
-function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal }: {
+function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSaleDoneClick }: {
   ms: BellavitaMagicalScriptData;
   productModalOpen: boolean;
   onToggleProductModal: (open: boolean) => void;
+  onSaleDoneClick: (category: string) => void;
 }) {
-  // Stage row: [badge] —line— [script box] —line— { vertical bracket → [Call End] / [Success·Contribution] }
-  const StageRow = ({ label, scriptNode, metrics }: { label: string; scriptNode: React.ReactNode; metrics: BellavitaStageMetrics }) => (
-    <div className="flex items-center mb-5 last:mb-0">
-      <MSStageBadge>{label}</MSStageBadge>
-      <MSLine size={24} />
-      <MSScriptBox>{scriptNode}</MSScriptBox>
-      <MSLine size={24} />
-      <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_LINE_COLOR}`, minWidth: 220 }}>
-        <div className="flex items-center">
-          <MSLine size={16} />
-          <MSMetricPill bg={MS_CALLEND_BG}>
-            <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
-            <p className="text-base font-black tabular-nums text-white leading-none">{metrics.call_end.toLocaleString()}</p>
-          </MSMetricPill>
+  const [grown, setGrown] = useState(false);
+  useEffect(() => {
+    setGrown(false);
+    const t = setTimeout(() => setGrown(true), 60);
+    return () => clearTimeout(t);
+  }, [ms]);
+
+  // Stage row: [badge] —line— [script box] —line— { vertical bracket → [Call End] / [Success·Contribution] }.
+  // Badge sits in a fixed-width column so a vertical connector can drop straight down from it into
+  // the next row's badge, reading as one continuous OP → CSP → Offer flow instead of 3 loose rows.
+  const StageRow = ({ label, scriptNode, metrics, delay, connectDown }: {
+    label: string; scriptNode: React.ReactNode; metrics: BellavitaStageMetrics; delay: number; connectDown?: boolean;
+  }) => (
+    <div className="mb-5 last:mb-0">
+      <div className="flex items-center transition-all ease-out"
+        style={{
+          opacity: grown ? 1 : 0,
+          transform: grown ? 'translateX(0)' : 'translateX(-16px)',
+          transitionDuration: '500ms',
+          transitionDelay: `${delay}ms`,
+        }}>
+        <div className="flex flex-col items-center shrink-0" style={{ width: 130 }}>
+          <MSStageBadge>{label}</MSStageBadge>
         </div>
-        <div className="flex items-center">
-          <MSLine size={16} />
-          <MSMetricPill bg={MS_SUCCESS_BG}>
-            <p className="text-[9px] font-bold text-white leading-tight">Success Rate ({metrics.success_rate}%)</p>
-            <p className="text-[9px] font-bold text-white leading-tight">Contribution% ({metrics.contribution_rate}%)</p>
-          </MSMetricPill>
+        <MSLine size={24} dot />
+        <MSScriptBox>{scriptNode}</MSScriptBox>
+        <MSLine size={24} dot />
+        <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_LINE_COLOR}`, minWidth: 220 }}>
+          <div className="flex items-center">
+            <MSLine size={16} />
+            <MSMetricPill bg={MS_CALLEND_GRADIENT}>
+              <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
+              <p className="text-base font-black tabular-nums text-white leading-none">{metrics.call_end.toLocaleString()}</p>
+            </MSMetricPill>
+          </div>
+          <div className="flex items-center">
+            <MSLine size={16} />
+            <MSMetricPill bg={MS_SUCCESS_GRADIENT}>
+              <p className="text-[9px] font-bold text-white leading-tight">Success Rate ({metrics.success_rate}%)</p>
+              <p className="text-[9px] font-bold text-white leading-tight">Contribution% ({metrics.contribution_rate}%)</p>
+            </MSMetricPill>
+          </div>
         </div>
       </div>
+      {connectDown && (
+        <div className="flex justify-center" style={{ width: 130 }}>
+          <MSLine orientation="v" size={20} dot />
+        </div>
+      )}
     </div>
   );
 
@@ -741,10 +789,10 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal }: {
           </span>
         </div>
         <div className="bg-white p-6">
-          <StageRow label="Magical OP" metrics={ms.op}
+          <StageRow label="Magical OP" metrics={ms.op} delay={0} connectDown
             scriptNode={<span style={{ whiteSpace: 'pre-line' }}>{ms.op.script}</span>} />
 
-          <StageRow label="Magical CSP" metrics={ms.csp}
+          <StageRow label="Magical CSP" metrics={ms.csp} delay={150} connectDown
             scriptNode={
               <div className="flex flex-col gap-3 w-full">
                 {ms.csp.scripts.map(s => (
@@ -756,7 +804,7 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal }: {
               </div>
             } />
 
-          <StageRow label="Magical Offer" metrics={ms.offer}
+          <StageRow label="Magical Offer" metrics={ms.offer} delay={300}
             scriptNode={
               ms.offer.products.length > 0 ? (
                 <button onClick={() => onToggleProductModal(true)} className="text-left hover:underline decoration-dotted w-full">
@@ -777,30 +825,44 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal }: {
                 {ms.categories.map((cat, i) => {
                   const accent = CARD_ACCS[i % CARD_ACCS.length];
                   return (
-                    <div key={cat.category} className="flex flex-col items-center">
+                    <div key={cat.category} className="flex flex-col items-center transition-all ease-out"
+                      style={{ opacity: grown ? 1 : 0, transform: grown ? 'translateY(0)' : 'translateY(12px)', transitionDuration: '500ms', transitionDelay: `${450 + i * 100}ms` }}>
                       <MSLine orientation="v" size={18} />
-                      <div className="w-full rounded-lg px-3 py-2.5 text-center bg-slate-100" style={{ border: `1px solid ${accent}40` }}>
-                        <p className="text-[11px] font-bold text-slate-800 leading-tight">{cat.category}</p>
+                      <div className="w-full rounded-xl px-3 py-2.5 text-center transition-transform hover:scale-[1.02]"
+                        style={{ background: `linear-gradient(135deg, ${accent}18, ${accent}05)`, border: `1px solid ${accent}50`, boxShadow: `0 3px 10px -3px ${accent}30` }}>
+                        <p className="text-[11px] font-bold leading-tight" style={{ color: accent }}>{cat.category}</p>
                         <p className="text-[10px] text-slate-500 mt-0.5">({cat.contribution_pct}%) Contribution</p>
                       </div>
                       <MSLine orientation="v" size={14} />
-                      <div className="w-full rounded-lg px-3 py-3 text-[10px] text-slate-700 leading-relaxed bg-white overflow-y-auto"
-                        style={{ border: `1px solid ${accent}30`, minHeight: 150, maxHeight: 210 }}>
-                        {cat.script || <span className="italic text-slate-400">No script configured</span>}
+                      <div className="w-full rounded-xl px-3 py-3 text-[10px] text-slate-700 leading-relaxed bg-white overflow-y-auto transition-shadow hover:shadow-md"
+                        style={{ border: `1px solid ${accent}30`, minHeight: 150, maxHeight: 210, boxShadow: '0 2px 8px -3px #94A3B830' }}>
+                        {cat.script ? (
+                          <span style={{ whiteSpace: 'pre-line' }}>{cat.script}</span>
+                        ) : cat.topContext ? (
+                          <div>
+                            <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Most common pitch in calls</p>
+                            <span style={{ whiteSpace: 'pre-line' }}>{cat.topContext}</span>
+                            {cat.contexts.length > 1 && (
+                              <p className="text-[9px] text-slate-400 mt-1.5">+{cat.contexts.length - 1} other variation{cat.contexts.length > 2 ? 's' : ''} seen</p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="italic text-slate-400">No script configured</span>
+                        )}
                       </div>
                       <MSLine orientation="v" size={14} />
                       <MSFanBar count={2} />
                       <div className="w-full flex gap-3">
                         <div className="flex-1 flex flex-col items-center">
                           <MSLine orientation="v" size={12} />
-                          <MSMetricPill bg={MS_CALLEND_BG}>
+                          <MSMetricPill bg={MS_CALLEND_GRADIENT}>
                             <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
                             <p className="text-sm font-black tabular-nums text-white leading-none">{cat.call_end.toLocaleString()}</p>
                           </MSMetricPill>
                         </div>
                         <div className="flex-1 flex flex-col items-center">
                           <MSLine orientation="v" size={12} />
-                          <MSMetricPill bg={MS_SUCCESS_BG}>
+                          <MSMetricPill bg={MS_SUCCESS_GRADIENT} onClick={() => onSaleDoneClick(cat.category)}>
                             <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Sale Done</p>
                             <p className="text-sm font-black tabular-nums text-white leading-none">{cat.sale_done.toLocaleString()} ({cat.conv_pct}%)</p>
                           </MSMetricPill>
@@ -854,8 +916,16 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal }: {
 
 // ─── Every other outbound process: DB-configured OP → CSP → Offer flow + objection scripts,
 // rendered through the same tree/connector style as Bellavita's flow above. ───────────────────────
-function GenericMagicalFlow({ ms, canEdit, onOpenEditor }: { ms: GenericMagicalScriptData; canEdit: boolean; onOpenEditor: () => void }) {
+function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick }: {
+  ms: GenericMagicalScriptData; canEdit: boolean; onOpenEditor: () => void; onSaleDoneClick: (category: string) => void;
+}) {
   const CARD_ACCS = ['#1D4ED8', '#7C3AED', '#0891B2', '#D97706'];
+  const [grown, setGrown] = useState(false);
+  useEffect(() => {
+    setGrown(false);
+    const t = setTimeout(() => setGrown(true), 60);
+    return () => clearTimeout(t);
+  }, [ms]);
 
   return (
     <>
@@ -894,27 +964,33 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor }: { ms: GenericMagicalS
           </div>
         </div>
         <div className="bg-white p-6">
-          {ms.flow.map(stage => (
-            <div key={stage.stage} className="flex items-center mb-5 last:mb-0">
+          {ms.flow.map((stage, si) => (
+            <div key={stage.stage} className="flex items-center mb-5 last:mb-0 transition-all ease-out"
+              style={{
+                opacity: grown ? 1 : 0,
+                transform: grown ? 'translateX(0)' : 'translateX(-16px)',
+                transitionDuration: '500ms',
+                transitionDelay: `${si * 150}ms`,
+              }}>
               <MSStageBadge>{stage.title}</MSStageBadge>
-              <MSLine size={24} />
+              <MSLine size={24} dot />
               <MSScriptBox>
                 {stage.script
                   ? <span>{stage.script}</span>
                   : <span className="text-slate-400 italic">Call opening — no predefined script</span>}
               </MSScriptBox>
-              <MSLine size={24} />
+              <MSLine size={24} dot />
               <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_LINE_COLOR}`, minWidth: 200 }}>
                 <div className="flex items-center">
                   <MSLine size={16} />
-                  <MSMetricPill bg={MS_CALLEND_BG}>
+                  <MSMetricPill bg={MS_CALLEND_GRADIENT}>
                     <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
                     <p className="text-base font-black tabular-nums text-white leading-none">{stage.dropped.toLocaleString()}</p>
                   </MSMetricPill>
                 </div>
                 <div className="flex items-center">
                   <MSLine size={16} />
-                  <MSMetricPill bg={MS_SUCCESS_BG}>
+                  <MSMetricPill bg={MS_SUCCESS_GRADIENT}>
                     <p className="text-[9px] font-bold text-white leading-tight">Success Rate ({stage.success_rate}%)</p>
                   </MSMetricPill>
                 </div>
@@ -931,15 +1007,17 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor }: { ms: GenericMagicalS
                 {ms.objections.map((obj, i) => {
                   const accent = CARD_ACCS[i % CARD_ACCS.length];
                   return (
-                    <div key={i} className="flex flex-col items-center">
+                    <div key={i} className="flex flex-col items-center transition-all ease-out"
+                      style={{ opacity: grown ? 1 : 0, transform: grown ? 'translateY(0)' : 'translateY(12px)', transitionDuration: '500ms', transitionDelay: `${450 + i * 100}ms` }}>
                       <MSLine orientation="v" size={18} />
-                      <div className="w-full rounded-lg px-3 py-2.5 text-center bg-slate-100" style={{ border: `1px solid ${accent}40` }}>
-                        <p className="text-[11px] font-bold text-slate-800 leading-tight">{obj.title}</p>
+                      <div className="w-full rounded-xl px-3 py-2.5 text-center transition-transform hover:scale-[1.02]"
+                        style={{ background: `linear-gradient(135deg, ${accent}18, ${accent}05)`, border: `1px solid ${accent}50`, boxShadow: `0 3px 10px -3px ${accent}30` }}>
+                        <p className="text-[11px] font-bold leading-tight" style={{ color: accent }}>{obj.title}</p>
                         <p className="text-[10px] text-slate-500 mt-0.5">({obj.contribution}%) Contribution</p>
                       </div>
                       <MSLine orientation="v" size={14} />
-                      <div className="w-full rounded-lg px-3 py-3 text-[10px] text-slate-700 leading-relaxed bg-white overflow-y-auto"
-                        style={{ border: `1px solid ${accent}30`, minHeight: 150, maxHeight: 210 }}>
+                      <div className="w-full rounded-xl px-3 py-3 text-[10px] text-slate-700 leading-relaxed bg-white overflow-y-auto transition-shadow hover:shadow-md"
+                        style={{ border: `1px solid ${accent}30`, minHeight: 150, maxHeight: 210, boxShadow: '0 2px 8px -3px #94A3B830' }}>
                         {obj.script || <span className="italic text-slate-400">No script configured</span>}
                       </div>
                       <MSLine orientation="v" size={14} />
@@ -947,14 +1025,14 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor }: { ms: GenericMagicalS
                       <div className="w-full flex gap-3">
                         <div className="flex-1 flex flex-col items-center">
                           <MSLine orientation="v" size={12} />
-                          <MSMetricPill bg={MS_CALLEND_BG}>
+                          <MSMetricPill bg={MS_CALLEND_GRADIENT}>
                             <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
                             <p className="text-sm font-black tabular-nums text-white leading-none">{(obj.total - obj.sales).toLocaleString()}</p>
                           </MSMetricPill>
                         </div>
                         <div className="flex-1 flex flex-col items-center">
                           <MSLine orientation="v" size={12} />
-                          <MSMetricPill bg={MS_SUCCESS_BG}>
+                          <MSMetricPill bg={MS_SUCCESS_GRADIENT} onClick={() => onSaleDoneClick(obj.category ?? obj.title)}>
                             <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Sale Done</p>
                             <p className="text-sm font-black tabular-nums text-white leading-none">{obj.sales.toLocaleString()} ({obj.conv_pct}%)</p>
                           </MSMetricPill>
@@ -1131,7 +1209,7 @@ export default function ProcessQualityDashboard() {
   const [customerInsightsError, setCustomerInsightsError] = useState(false);
   const [ciDrill, setCiDrill] = useState<{ title: string; category: string; leads: OutboundInsightLead[]; loading: boolean } | null>(null);
   const [ciTranscript, setCiTranscript] = useState<{ loading: boolean; data: OutboundCallTranscript | null } | null>(null);
-  const [saleDoneDrill, setSaleDoneDrill] = useState<{ open: boolean; loading: boolean; rows: SaleDoneCallRow[] } | null>(null);
+  const [saleDoneDrill, setSaleDoneDrill] = useState<{ open: boolean; loading: boolean; title: string; rows: SaleDoneCallRow[] } | null>(null);
   const [magicalScript, setMagicalScript] = useState<MagicalScriptData | null>(null);
   const [magicalLoading, setMagicalLoading] = useState(false);
   const [bellaProductModal, setBellaProductModal] = useState(false);
@@ -1192,10 +1270,21 @@ export default function ProcessQualityDashboard() {
 
   const openSaleDoneDrill = () => {
     if (!clientId) return;
-    setSaleDoneDrill({ open: true, loading: true, rows: [] });
+    setSaleDoneDrill({ open: true, loading: true, title: 'Sale Done — Call Details', rows: [] });
     api.get<{ data: SaleDoneCallRow[] }>(`/quality/sale-done-calls?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
-      .then(r => setSaleDoneDrill({ open: true, loading: false, rows: r.data?.data ?? [] }))
-      .catch(() => setSaleDoneDrill({ open: true, loading: false, rows: [] }));
+      .then(r => setSaleDoneDrill({ open: true, loading: false, title: 'Sale Done — Call Details', rows: r.data?.data ?? [] }))
+      .catch(() => setSaleDoneDrill({ open: true, loading: false, title: 'Sale Done — Call Details', rows: [] }));
+  };
+
+  const openCategorySaleDoneDrill = (category: string, variant: 'bellavita' | 'generic') => {
+    if (!clientId) return;
+    const title = `Sale Done — ${category}`;
+    setSaleDoneDrill({ open: true, loading: true, title, rows: [] });
+    api.get<{ data: SaleDoneCallRow[] }>(
+      `/quality/magical-script-category-sale-done?startDate=${sd}&endDate=${ed}&clientId=${clientId}&category=${encodeURIComponent(category)}&variant=${variant}`
+    )
+      .then(r => setSaleDoneDrill({ open: true, loading: false, title, rows: r.data?.data ?? [] }))
+      .catch(() => setSaleDoneDrill({ open: true, loading: false, title, rows: [] }));
   };
 
   const refetchMagicalScript = useCallback(() => {
@@ -1320,6 +1409,13 @@ export default function ProcessQualityDashboard() {
   const crtFunnel = kpi?.crtFunnel ?? [];
   const auditCountByDate = kpi?.auditCountByDate ?? [];
   const opp = kpi?.opportunity;
+  // CRT pyramid grows in on data load/change rather than popping in at full width.
+  const [pyramidGrown, setPyramidGrown] = useState(false);
+  useEffect(() => {
+    setPyramidGrown(false);
+    const t = setTimeout(() => setPyramidGrown(true), 60);
+    return () => clearTimeout(t);
+  }, [kpi]);
   const nps = kpi?.nps;
   const feedbackData = nps ? [
     { name: 'Positive', value: nps.promoter,  color: '#3B82F6' },
@@ -1620,7 +1716,7 @@ export default function ProcessQualityDashboard() {
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
               <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
                 <div>
-                  <h2 className="text-base font-bold text-slate-800">Sale Done — Call Details</h2>
+                  <h2 className="text-base font-bold text-slate-800">{saleDoneDrill.title}</h2>
                   <p className="text-xs text-slate-500 mt-0.5">{saleDoneDrill.loading ? 'Loading…' : `${saleDoneDrill.rows.length} calls`}</p>
                 </div>
                 {!saleDoneDrill.loading && saleDoneDrill.rows.length > 0 && (
@@ -1689,6 +1785,25 @@ export default function ProcessQualityDashboard() {
             const cstBase = cstFunnel[0]?.value ?? 1;
             const pct = (v: number) => cstBase > 0 ? `${((v / cstBase) * 100).toFixed(0)}%` : '–';
             const cstLabeled = cstFunnel.map(s => ({ ...s, label: `${s.name}: ${s.value.toLocaleString()}` }));
+            const CST_GRADIENTS: [string, string][] = [
+              ['#60A5FA', '#2563EB'], ['#4ADE80', '#16A34A'], ['#2DD4BF', '#0D9488'],
+              ['#C4B5FD', '#7C3AED'], ['#FCD34D', '#D97706'],
+            ];
+            const renderCstLabel = (props: unknown) => {
+              const p = props as { x: number; y: number; width: number; height: number; index: number };
+              const item = cstLabeled[p.index];
+              if (!item) return null;
+              const cx = p.x + p.width / 2;
+              const cy = p.y + p.height / 2;
+              return (
+                <g pointerEvents="none">
+                  <text x={cx} y={cy - 6} textAnchor="middle" fill="#ffffff" fontSize={12} fontWeight={800}
+                    style={{ textShadow: '0 1px 3px rgba(0,0,0,0.35)' }}>{item.name}</text>
+                  <text x={cx} y={cy + 11} textAnchor="middle" fill="rgba(255,255,255,0.92)" fontSize={11} fontWeight={600}
+                    style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>{item.value.toLocaleString()} ({pct(item.value)})</text>
+                </g>
+              );
+            };
             return (
               <div className="flex-1 min-w-0 rounded-xl border border-emerald-500/30 bg-white overflow-hidden">
                 <div className="card-header gap-2 px-5 py-3">
@@ -1696,9 +1811,23 @@ export default function ProcessQualityDashboard() {
                   <span className="text-[11px] font-bold uppercase tracking-widest">CST Funnel</span>
                   <button onClick={() => showDetail('cstFunnel')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
-                <div className="px-4 pt-4 pb-4">
+                <div className="px-4 pt-4 pb-4" style={{ background: 'linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 100%)' }}>
                   <ResponsiveContainer width="100%" height={340}>
                     <FunnelChart>
+                      <defs>
+                        {cstLabeled.map((_, i) => {
+                          const [c1, c2] = CST_GRADIENTS[i % CST_GRADIENTS.length];
+                          return (
+                            <linearGradient key={i} id={`cstGrad${i}`} x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={c1} />
+                              <stop offset="100%" stopColor={c2} />
+                            </linearGradient>
+                          );
+                        })}
+                        <filter id="cstShadow" x="-30%" y="-30%" width="160%" height="160%">
+                          <feDropShadow dx="0" dy="3" stdDeviation="4" floodColor="#0F172A" floodOpacity="0.18" />
+                        </filter>
+                      </defs>
                       <Tooltip
                         contentStyle={TT}
                         formatter={(v: unknown, _n: unknown, props: { payload?: { name?: string } }) => {
@@ -1707,17 +1836,17 @@ export default function ProcessQualityDashboard() {
                         }}
                       />
                       <Funnel dataKey="value" data={cstLabeled} isAnimationActive lastShapeType="rectangle"
+                        style={{ filter: 'url(#cstShadow)' }}
                         onClick={(data: { name?: string }) => { if (data?.name === 'Sale Done') openSaleDoneDrill(); }}>
                         {cstLabeled.map((s, i) => (
-                          <Cell key={i} fill={funnelCSTColors[i % funnelCSTColors.length]}
+                          <Cell key={i} fill={`url(#cstGrad${i})`} stroke="rgba(255,255,255,0.5)" strokeWidth={1}
                             style={{ cursor: s.name === 'Sale Done' ? 'pointer' : 'default' }} />
                         ))}
-                        <LabelList dataKey="label" position="center"
-                          fill="#ffffff" stroke="none" fontSize={11} fontWeight={700} />
+                        <LabelList dataKey="label" position="center" content={renderCstLabel} />
                       </Funnel>
                     </FunnelChart>
                   </ResponsiveContainer>
-                  <p className="text-center text-[10px] text-slate-400 mt-1">Click "Sale Done" to view the underlying calls</p>
+                  <p className="text-center text-[10px] text-slate-400 mt-1">✨ Click "Sale Done" to view the underlying calls</p>
                 </div>
               </div>
             );
@@ -1733,8 +1862,18 @@ export default function ProcessQualityDashboard() {
             const notSaleDoneTotal = Math.max((cst?.totalCalls ?? 0) - (cst?.saleDone ?? 0), 0);
             const rows = [...ascCRT, { name: 'Not Sale Done (Total)', value: notSaleDoneTotal }];
             const maxVal = Math.max(notSaleDoneTotal, ...ascCRT.map(r => r.value), 1);
-            const PYRAMID_COLORS = ['#7C3AED', '#DB2777', '#EA580C', '#DC2626', '#991B1B'];
             const pct = (v: number) => notSaleDoneTotal > 0 ? `${((v / notSaleDoneTotal) * 100).toFixed(0)}%` : '–';
+            const PYRAMID_GRADIENTS: [string, string][] = [
+              ['#A78BFA', '#7C3AED'], ['#F472B6', '#DB2777'], ['#FB923C', '#EA580C'],
+              ['#F87171', '#DC2626'], ['#B91C1C', '#7F1D1D'],
+            ];
+            const CRT_ICON: Record<string, typeof PhoneOff> = {
+              'OR (Opening Rejected)': PhoneOff,
+              'CR (Context Rejected)': AlertTriangle,
+              'OPR (Offering Rejected)': ThumbsDown,
+              'POR (Post Offer Rejected)': XCircle,
+              'Not Sale Done (Total)': AlertOctagon,
+            };
             return (
               <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-white overflow-hidden">
                 <div className="card-header gap-2 px-5 py-3">
@@ -1742,26 +1881,45 @@ export default function ProcessQualityDashboard() {
                   <span className="text-[11px] font-bold uppercase tracking-widest text-red-400">CRT Funnel</span>
                   <button onClick={() => showDetail('crtFunnel')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
-                <div className="px-4 pt-6 pb-6 flex flex-col items-center gap-1.5" style={{ minHeight: 340 }}>
+                <div className="px-4 pt-6 pb-6 flex flex-col items-center gap-2"
+                  style={{ minHeight: 340, background: 'linear-gradient(180deg, #FEF2F2 0%, #FFFFFF 100%)' }}>
                   {rows.map((r, i) => {
-                    const widthPct = 22 + (r.value / maxVal) * 78;
-                    const color = PYRAMID_COLORS[i % PYRAMID_COLORS.length];
+                    const widthPct = 24 + (r.value / maxVal) * 76;
+                    const [c1, c2] = PYRAMID_GRADIENTS[i % PYRAMID_GRADIENTS.length];
                     const isBase = i === rows.length - 1;
+                    const Icon = CRT_ICON[r.name] ?? AlertOctagon;
                     return (
-                      <div key={r.name}
-                        className="rounded-md flex items-center justify-between px-4 shadow-sm transition-all"
-                        style={{
-                          width: `${widthPct}%`,
-                          background: color,
-                          height: isBase ? 52 : 44,
-                          border: isBase ? '2px solid #7F1D1D' : 'none',
-                        }}
-                        title={`${r.name}: ${r.value.toLocaleString()} (${pct(r.value)})`}>
-                        <span className="text-[11px] font-bold text-white uppercase tracking-wide truncate">{r.name}</span>
-                        <span className="text-sm font-black text-white tabular-nums ml-2 shrink-0">
-                          {r.value.toLocaleString()} <span className="text-[10px] font-semibold opacity-80">({pct(r.value)})</span>
-                        </span>
-                      </div>
+                      <Fragment key={r.name}>
+                        <div
+                          className="rounded-2xl flex items-center gap-2 px-4 hover:scale-[1.03] hover:brightness-110 cursor-default"
+                          style={{
+                            width: pyramidGrown ? `${widthPct}%` : '0%',
+                            opacity: pyramidGrown ? 1 : 0,
+                            background: `linear-gradient(135deg, ${c1}, ${c2})`,
+                            height: isBase ? 56 : 46,
+                            boxShadow: `0 6px 16px -4px ${c2}70`,
+                            border: isBase ? '2px solid rgba(255,255,255,0.3)' : '1px solid rgba(255,255,255,0.2)',
+                            transition: 'width 700ms cubic-bezier(0.22,1,0.36,1), opacity 700ms ease-out, transform 200ms ease-out, filter 200ms ease-out',
+                          }}
+                          title={`${r.name}: ${r.value.toLocaleString()} (${pct(r.value)})`}>
+                          <Icon size={isBase ? 18 : 15} className="text-white shrink-0" style={{ filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.25))' }} />
+                          <span className="text-[11px] font-bold text-white uppercase tracking-wide truncate flex-1"
+                            style={{ textShadow: '0 1px 2px rgba(0,0,0,0.2)' }}>{r.name}</span>
+                          <span className="text-sm font-black text-white tabular-nums shrink-0" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.2)' }}>
+                            {r.value.toLocaleString()} <span className="text-[10px] font-semibold text-white/80">({pct(r.value)})</span>
+                          </span>
+                        </div>
+                        {i < rows.length - 1 && (
+                          <div style={{
+                            width: 0, height: 0,
+                            borderLeft: '6px solid transparent',
+                            borderRight: '6px solid transparent',
+                            borderTop: `8px solid ${PYRAMID_GRADIENTS[(i + 1) % PYRAMID_GRADIENTS.length][0]}`,
+                            opacity: pyramidGrown ? 0.7 : 0,
+                            transition: 'opacity 700ms ease-out 200ms',
+                          }} />
+                        )}
+                      </Fragment>
                     );
                   })}
                 </div>
@@ -3452,9 +3610,11 @@ export default function ProcessQualityDashboard() {
             ) : !magicalScript ? (
               <div className="flex items-center justify-center h-64 text-slate-400 text-sm">No script data available for this period.</div>
             ) : magicalScript.variant === 'bellavita' ? (
-              <BellavitaMagicalFlow ms={magicalScript} productModalOpen={bellaProductModal} onToggleProductModal={setBellaProductModal} />
+              <BellavitaMagicalFlow ms={magicalScript} productModalOpen={bellaProductModal} onToggleProductModal={setBellaProductModal}
+                onSaleDoneClick={(category) => openCategorySaleDoneDrill(category, 'bellavita')} />
             ) : (
-              <GenericMagicalFlow ms={magicalScript} canEdit={canEditScripts} onOpenEditor={openScriptEditor} />
+              <GenericMagicalFlow ms={magicalScript} canEdit={canEditScripts} onOpenEditor={openScriptEditor}
+                onSaleDoneClick={(category) => openCategorySaleDoneDrill(category, 'generic')} />
             )}
           </div>
         )}

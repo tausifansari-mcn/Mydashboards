@@ -1595,7 +1595,19 @@ export async function getNeemansCdrExport(startDate: string, endDate: string) {
   });
 }
 
+// Every table an upload endpoint in this file actually writes to — deleteUploadBatch must never
+// interpolate a table name that isn't in this set (tableName previously came straight from
+// req.query.table with no validation, letting any authenticated user DELETE FROM an arbitrary
+// db_masmis table by passing it as the ?table= query param).
+const UPLOAD_BATCH_TABLES = new Set([
+  'bb_sale', 'gnc_sale', 'gnc_apr', 'gnc_allocation', 'bb_apr', 'bb_chat',
+  'neemans_sale_raw', 'neemans_allocation', 'neemans_cart', 'bb_cart', 'neemans_apr',
+]);
+
 export async function deleteUploadBatch(batchId: string, tableName: string): Promise<{ deleted: number }> {
+  if (!UPLOAD_BATCH_TABLES.has(tableName)) {
+    throw new Error(`Invalid table name: ${tableName}`);
+  }
   const [dataResult] = await getMasmisPool().execute(
     `DELETE FROM db_masmis.${tableName} WHERE upload_batch_id = ?`, [batchId],
   );
