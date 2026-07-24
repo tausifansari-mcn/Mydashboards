@@ -35,6 +35,17 @@ export async function getKPIs(req: Request, res: Response) {
   }
 }
 
+export async function getSaleDoneCalls(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getSaleDoneCalls(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
 export async function getDetailAnalysis(req: Request, res: Response) {
   try {
     const filters = parseDateRange(req);
@@ -164,6 +175,57 @@ export async function getMagicalScript(req: Request, res: Response) {
     const filters = parseDateRange(req);
     const data = await svc.getMagicalScript(filters);
     res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getMagicalScriptConfig(req: Request, res: Response) {
+  try {
+    const clientId = Number(req.query.clientId);
+    if (!clientId) { res.status(400).json({ message: 'clientId is required' }); return; }
+    const [rows, objectionOptions] = await Promise.all([
+      svc.getMagicalScriptConfig(clientId),
+      svc.getMagicalScriptObjectionOptions(clientId),
+    ]);
+    res.json({ data: { rows, objectionOptions } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function saveMagicalScriptConfig(req: Request, res: Response) {
+  try {
+    const clientId = Number(req.body.clientId);
+    const { id, stage, stageTitle, objectionCategory, scriptText, displayOrder } = req.body;
+    if (!clientId || !stage || !stageTitle || !scriptText) {
+      res.status(400).json({ message: 'clientId, stage, stageTitle, and scriptText are required' });
+      return;
+    }
+    const data = await svc.saveMagicalScriptConfig(clientId, {
+      id: id ? Number(id) : undefined,
+      stage,
+      stageTitle,
+      objectionCategory: objectionCategory ?? null,
+      scriptText,
+      displayOrder: Number(displayOrder ?? 0),
+    });
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function deleteMagicalScriptConfig(req: Request, res: Response) {
+  try {
+    const clientId = Number(req.query.clientId);
+    const id = Number(req.params.id);
+    if (!clientId || !id) { res.status(400).json({ message: 'clientId and id are required' }); return; }
+    await svc.deleteMagicalScriptConfig(clientId, id);
+    res.json({ ok: true });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ message: msg });

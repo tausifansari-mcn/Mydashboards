@@ -2,15 +2,17 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useProcessStore } from '@/store/processStore';
+import { useAuthStore } from '@/store/authStore';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   FunnelChart, Funnel, LabelList,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Legend,
+  BarChart, Bar,
 } from 'recharts';
 import {
   BarChart3, ChevronLeft, PhoneCall, PhoneOff,
   Target, TrendingUp, Users, XCircle, AlertTriangle, ThumbsDown, Info, Download, X, Pencil,
-  ShieldAlert, AlertOctagon,
+  ShieldAlert, AlertOctagon, Trash2, Plus, Save,
 } from 'lucide-react';
 import api from '@/lib/axios';
 
@@ -168,8 +170,11 @@ interface OutboundMissingAgentRow {
 
 interface OutboundCustomerInsights {
   audit_count: number;
-  social_media_court_threat: number;
+  legal_escalation_count: number;
+  social_escalation_count: number;
   potential_scam: number;
+  refund_count: number;
+  cancellation_count: number;
   frustration_count: number;
   threat_count: number;
   cuss_abuse_count: number;
@@ -181,6 +186,7 @@ interface OutboundCustomerInsights {
 
 interface OutboundInsightLead { callId: number; leadId: string; agentName: string; mobileNo: string; callDate: string; type: string; matchedWord: string; }
 interface OutboundCallTranscript { callId: number; leadId: string; agentName: string; mobileNo: string; callDate: string; transcript: string; }
+interface SaleDoneCallRow { callId: number; callDate: string; agentName: string; mobileNo: string; fileName: string; }
 
 interface KPIResponse {
   cst: CSTData;
@@ -188,6 +194,7 @@ interface KPIResponse {
   rejectedPie: PieSlice[];
   cstFunnel: FunnelStep[];
   crtFunnel: FunnelStep[];
+  auditCountByDate: { calldate: string; count: number }[];
   opportunity: {
     totalOpportunities: number;
     moCount: number;
@@ -217,7 +224,6 @@ const pieColors: Record<string, string> = {
 };
 
 const funnelCSTColors = ['#3B82F6', '#22C55E', '#14B8A6', '#A78BFA', '#F59E0B'];
-const funnelCRTColors = ['#EF4444', '#F59E0B', '#A78BFA', '#3B82F6'];
 
 const TT: React.CSSProperties = {
   background: '#FFFFFF', border: '1px solid #E2E8F0',
@@ -596,10 +602,501 @@ interface MagicalObjection {
   title: string; category: string | null; script: string | null;
   total: number; sales: number; conv_pct: number; contribution: number;
 }
-interface MagicalScriptData {
+interface GenericMagicalScriptData {
+  variant: 'generic';
   summary: { total_calls: number; op_pass: number; csp_pass: number; offer_pass: number; sale_done: number; overall_conv: number };
   flow: MagicalFlowStage[];
   objections: MagicalObjection[];
+  cachedThrough: string | null;
+}
+
+interface BellavitaStageMetrics {
+  total_in: number; call_end: number; success: number; success_rate: number;
+  contribution: number; contribution_rate: number;
+}
+interface BellavitaMagicalScriptData {
+  variant: 'bellavita';
+  op: BellavitaStageMetrics & { script: string };
+  csp: BellavitaStageMetrics & { scripts: { label: string; text: string; count: number }[] };
+  offer: BellavitaStageMetrics & { script: string; topProduct: string | null; products: { product: string; count: number }[] };
+  categories: { category: string; script: string; total: number; contribution_pct: number; call_end: number; sale_done: number; conv_pct: number }[];
+  cachedThrough: string | null;
+}
+
+type MagicalScriptData = GenericMagicalScriptData | BellavitaMagicalScriptData;
+
+interface MagicalScriptConfigRow {
+  id: number;
+  stage: 'op' | 'csp' | 'offer' | 'objection';
+  stageTitle: string;
+  objectionCategory: string | null;
+  scriptText: string | null;
+  displayOrder: number;
+}
+const EDIT_SCRIPT_ROLES = ['super_admin', 'manager', 'client_admin'];
+
+// ─── Magical Script tree-diagram primitives — shared by every outbound process. Bellavita runs its
+// own funnel (its own CallDetails columns and fixed scripts, not the DB-configured generic flow
+// every other outbound client uses) but both render through the same connector-line visual style. ──
+const MS_LINE_COLOR = '#7DB8E8';
+const MS_CALLEND_BG = '#1E3A8A';
+const MS_SUCCESS_BG = '#0F7B4F';
+
+// Thin connector line — horizontal by default, or vertical when orientation="v".
+function MSLine({ orientation = 'h', size = 20, centered = false }: { orientation?: 'h' | 'v'; size?: number; centered?: boolean }) {
+  if (orientation === 'v') {
+    return <div className={centered ? 'mx-auto' : undefined} style={{ width: 2, height: size, background: MS_LINE_COLOR }} />;
+  }
+  return <div className="shrink-0" style={{ width: size, borderTop: `2px solid ${MS_LINE_COLOR}` }} />;
+}
+
+// Horizontal bar spanning from the first to the last of `count` equal-width columns, so N
+// vertical drops (one per column, self-centered) land exactly on it without any manual math.
+function MSFanBar({ count }: { count: number }) {
+  if (count <= 1) return null;
+  return <div className="mx-auto" style={{ width: `${((count - 1) / count) * 100}%`, borderTop: `2px solid ${MS_LINE_COLOR}` }} />;
+}
+
+function MSStageBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-center py-2.5 px-3 rounded-lg text-[11px] font-bold text-slate-800 bg-white shrink-0" style={{ border: '1px solid #CBD5E1', minWidth: 130 }}>
+      {children}
+    </div>
+  );
+}
+
+function MSScriptBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex-1 rounded-lg px-4 py-3 text-[11px] text-slate-700 leading-relaxed font-medium flex items-center bg-slate-100" style={{ border: '1px solid #E2E8F0' }}>
+      {children}
+    </div>
+  );
+}
+
+function MSMetricPill({ bg, children }: { bg: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-full px-4 py-2 text-center w-full" style={{ background: bg }}>
+      {children}
+    </div>
+  );
+}
+
+function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal }: {
+  ms: BellavitaMagicalScriptData;
+  productModalOpen: boolean;
+  onToggleProductModal: (open: boolean) => void;
+}) {
+  // Stage row: [badge] —line— [script box] —line— { vertical bracket → [Call End] / [Success·Contribution] }
+  const StageRow = ({ label, scriptNode, metrics }: { label: string; scriptNode: React.ReactNode; metrics: BellavitaStageMetrics }) => (
+    <div className="flex items-center mb-5 last:mb-0">
+      <MSStageBadge>{label}</MSStageBadge>
+      <MSLine size={24} />
+      <MSScriptBox>{scriptNode}</MSScriptBox>
+      <MSLine size={24} />
+      <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_LINE_COLOR}`, minWidth: 220 }}>
+        <div className="flex items-center">
+          <MSLine size={16} />
+          <MSMetricPill bg={MS_CALLEND_BG}>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
+            <p className="text-base font-black tabular-nums text-white leading-none">{metrics.call_end.toLocaleString()}</p>
+          </MSMetricPill>
+        </div>
+        <div className="flex items-center">
+          <MSLine size={16} />
+          <MSMetricPill bg={MS_SUCCESS_BG}>
+            <p className="text-[9px] font-bold text-white leading-tight">Success Rate ({metrics.success_rate}%)</p>
+            <p className="text-[9px] font-bold text-white leading-tight">Contribution% ({metrics.contribution_rate}%)</p>
+          </MSMetricPill>
+        </div>
+      </div>
+    </div>
+  );
+
+  const CARD_ACCS = ['#1D4ED8', '#7C3AED', '#0891B2', '#D97706'];
+
+  return (
+    <>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        {[
+          { label: 'Total Calls (OP)', value: ms.op.total_in.toLocaleString(), color: '#1D4ED8' },
+          { label: 'OP Success',       value: ms.op.success.toLocaleString(),  color: '#1D4ED8' },
+          { label: 'CSP Success',      value: ms.csp.success.toLocaleString(), color: '#0891B2' },
+          { label: 'Offer Made',       value: ms.offer.success.toLocaleString(), color: '#059669' },
+        ].map(c => (
+          <div key={c.label} className="bg-white rounded-xl px-4 py-3 relative overflow-hidden" style={{ border: `2px solid ${c.color}` }}>
+            <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: c.color }} />
+            <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: c.color }}>{c.label}</p>
+            <p className="text-xl font-black tabular-nums text-slate-900 leading-none">{c.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-xl overflow-hidden mb-6" style={{ border: '1px solid #0369A1' }}>
+        <div className="px-5 py-3 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
+          <span className="text-sm">✨</span>
+          <h3 className="text-xs font-black text-white uppercase tracking-widest">Today's Magical Script</h3>
+          <span className="text-[9px] ml-1" style={{ color: 'rgba(255,255,255,0.65)' }}>Opening → Context → Offer</span>
+          <span className="text-[9px] ml-auto" style={{ color: 'rgba(255,255,255,0.65)' }}>
+            {ms.cachedThrough ? `Data cached through ${fmtDateTime(ms.cachedThrough)}` : 'Backfilling…'}
+          </span>
+        </div>
+        <div className="bg-white p-6">
+          <StageRow label="Magical OP" metrics={ms.op}
+            scriptNode={<span style={{ whiteSpace: 'pre-line' }}>{ms.op.script}</span>} />
+
+          <StageRow label="Magical CSP" metrics={ms.csp}
+            scriptNode={
+              <div className="flex flex-col gap-3 w-full">
+                {ms.csp.scripts.map(s => (
+                  <div key={s.label}>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-cyan-700 mb-0.5">{s.label} · {s.count.toLocaleString()} calls</p>
+                    <p style={{ whiteSpace: 'pre-line' }}>{s.text}</p>
+                  </div>
+                ))}
+              </div>
+            } />
+
+          <StageRow label="Magical Offer" metrics={ms.offer}
+            scriptNode={
+              ms.offer.products.length > 0 ? (
+                <button onClick={() => onToggleProductModal(true)} className="text-left hover:underline decoration-dotted w-full">
+                  <p className="font-semibold">{ms.offer.topProduct ?? 'No product data'}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Most-offered product · click to view all {ms.offer.products.length} products</p>
+                </button>
+              ) : (
+                <span style={{ whiteSpace: 'pre-line' }}>{ms.offer.script || <span className="text-slate-400 italic">No script configured</span>}</span>
+              )
+            } />
+
+          {/* ── Branches out of Magical Offer into the top objection categories ── */}
+          {ms.categories.length > 0 && (
+            <div className="mt-2">
+              <div className="flex justify-center"><MSLine orientation="v" size={22} /></div>
+              <MSFanBar count={ms.categories.length} />
+              <div className="grid gap-4 mt-0" style={{ gridTemplateColumns: `repeat(${ms.categories.length}, minmax(0, 1fr))` }}>
+                {ms.categories.map((cat, i) => {
+                  const accent = CARD_ACCS[i % CARD_ACCS.length];
+                  return (
+                    <div key={cat.category} className="flex flex-col items-center">
+                      <MSLine orientation="v" size={18} />
+                      <div className="w-full rounded-lg px-3 py-2.5 text-center bg-slate-100" style={{ border: `1px solid ${accent}40` }}>
+                        <p className="text-[11px] font-bold text-slate-800 leading-tight">{cat.category}</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">({cat.contribution_pct}%) Contribution</p>
+                      </div>
+                      <MSLine orientation="v" size={14} />
+                      <div className="w-full rounded-lg px-3 py-3 text-[10px] text-slate-700 leading-relaxed bg-white overflow-y-auto"
+                        style={{ border: `1px solid ${accent}30`, minHeight: 150, maxHeight: 210 }}>
+                        {cat.script || <span className="italic text-slate-400">No script configured</span>}
+                      </div>
+                      <MSLine orientation="v" size={14} />
+                      <MSFanBar count={2} />
+                      <div className="w-full flex gap-3">
+                        <div className="flex-1 flex flex-col items-center">
+                          <MSLine orientation="v" size={12} />
+                          <MSMetricPill bg={MS_CALLEND_BG}>
+                            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
+                            <p className="text-sm font-black tabular-nums text-white leading-none">{cat.call_end.toLocaleString()}</p>
+                          </MSMetricPill>
+                        </div>
+                        <div className="flex-1 flex flex-col items-center">
+                          <MSLine orientation="v" size={12} />
+                          <MSMetricPill bg={MS_SUCCESS_BG}>
+                            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Sale Done</p>
+                            <p className="text-sm font-black tabular-nums text-white leading-none">{cat.sale_done.toLocaleString()} ({cat.conv_pct}%)</p>
+                          </MSMetricPill>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {productModalOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+          onClick={() => onToggleProductModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200">
+              <h2 className="text-base font-bold text-slate-800">All Offered Products</h2>
+              <button onClick={() => onToggleProductModal(false)} className="ml-auto text-slate-400 hover:text-slate-700 transition-colors"><X size={18} /></button>
+            </div>
+            <div className="overflow-auto flex-1 p-4">
+              {ms.offer.products.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No product offering data for this period.</p>
+              ) : (
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50">
+                      <th className="text-left px-3 py-2 font-semibold text-slate-500 border-b border-slate-200">Product</th>
+                      <th className="text-right px-3 py-2 font-semibold text-slate-500 border-b border-slate-200">Offered Count</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ms.offer.products.map(p => (
+                      <tr key={p.product} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                        <td className="px-3 py-2 text-slate-700 font-medium">{p.product}</td>
+                        <td className="px-3 py-2 text-right font-mono text-slate-600">{p.count.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Every other outbound process: DB-configured OP → CSP → Offer flow + objection scripts,
+// rendered through the same tree/connector style as Bellavita's flow above. ───────────────────────
+function GenericMagicalFlow({ ms, canEdit, onOpenEditor }: { ms: GenericMagicalScriptData; canEdit: boolean; onOpenEditor: () => void }) {
+  const CARD_ACCS = ['#1D4ED8', '#7C3AED', '#0891B2', '#D97706'];
+
+  return (
+    <>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-6">
+        {[
+          { label: 'Total Calls',   value: ms.summary.total_calls.toLocaleString(),  color: '#475569' },
+          { label: 'OP Passed',     value: ms.summary.op_pass.toLocaleString(),      color: '#1D4ED8' },
+          { label: 'CSP Passed',    value: ms.summary.csp_pass.toLocaleString(),     color: '#0891B2' },
+          { label: 'Offer Made',    value: ms.summary.offer_pass.toLocaleString(),   color: '#059669' },
+          { label: 'Sale Done',     value: ms.summary.sale_done.toLocaleString(),    color: '#16A34A' },
+          { label: 'Overall Conv%', value: `${ms.summary.overall_conv}%`,            color: ms.summary.overall_conv >= 10 ? '#16A34A' : ms.summary.overall_conv >= 5 ? '#D97706' : '#DC2626' },
+        ].map(c => (
+          <div key={c.label} className="bg-white rounded-xl px-4 py-3 relative overflow-hidden" style={{ border: `2px solid ${c.color}` }}>
+            <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: c.color }} />
+            <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: c.color }}>{c.label}</p>
+            <p className="text-xl font-black tabular-nums text-slate-900 leading-none">{c.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-xl overflow-hidden mb-6" style={{ border: '1px solid #0369A1' }}>
+        <div className="px-5 py-3 flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
+          <span className="text-sm">✨</span>
+          <h3 className="text-xs font-black text-white uppercase tracking-widest">Today's Magical Script</h3>
+          <span className="text-[9px] ml-1" style={{ color: 'rgba(255,255,255,0.65)' }}>Opening → Context → Offer</span>
+          <div className="ml-auto flex items-center gap-3">
+            {canEdit && (
+              <button onClick={onOpenEditor}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold text-white/90 hover:text-white border border-white/30 hover:border-white/60 transition-colors">
+                <Pencil size={11} /> Edit Scripts
+              </button>
+            )}
+            <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.65)' }}>
+              {ms.cachedThrough ? `Data cached through ${fmtDateTime(ms.cachedThrough)}` : 'Backfilling…'}
+            </span>
+          </div>
+        </div>
+        <div className="bg-white p-6">
+          {ms.flow.map(stage => (
+            <div key={stage.stage} className="flex items-center mb-5 last:mb-0">
+              <MSStageBadge>{stage.title}</MSStageBadge>
+              <MSLine size={24} />
+              <MSScriptBox>
+                {stage.script
+                  ? <span>{stage.script}</span>
+                  : <span className="text-slate-400 italic">Call opening — no predefined script</span>}
+              </MSScriptBox>
+              <MSLine size={24} />
+              <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_LINE_COLOR}`, minWidth: 200 }}>
+                <div className="flex items-center">
+                  <MSLine size={16} />
+                  <MSMetricPill bg={MS_CALLEND_BG}>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
+                    <p className="text-base font-black tabular-nums text-white leading-none">{stage.dropped.toLocaleString()}</p>
+                  </MSMetricPill>
+                </div>
+                <div className="flex items-center">
+                  <MSLine size={16} />
+                  <MSMetricPill bg={MS_SUCCESS_BG}>
+                    <p className="text-[9px] font-bold text-white leading-tight">Success Rate ({stage.success_rate}%)</p>
+                  </MSMetricPill>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* ── Branches out of the flow into the objection-handling scripts ── */}
+          {ms.objections.length > 0 && (
+            <div className="mt-2">
+              <div className="flex justify-center"><MSLine orientation="v" size={22} /></div>
+              <MSFanBar count={ms.objections.length} />
+              <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${ms.objections.length}, minmax(0, 1fr))` }}>
+                {ms.objections.map((obj, i) => {
+                  const accent = CARD_ACCS[i % CARD_ACCS.length];
+                  return (
+                    <div key={i} className="flex flex-col items-center">
+                      <MSLine orientation="v" size={18} />
+                      <div className="w-full rounded-lg px-3 py-2.5 text-center bg-slate-100" style={{ border: `1px solid ${accent}40` }}>
+                        <p className="text-[11px] font-bold text-slate-800 leading-tight">{obj.title}</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">({obj.contribution}%) Contribution</p>
+                      </div>
+                      <MSLine orientation="v" size={14} />
+                      <div className="w-full rounded-lg px-3 py-3 text-[10px] text-slate-700 leading-relaxed bg-white overflow-y-auto"
+                        style={{ border: `1px solid ${accent}30`, minHeight: 150, maxHeight: 210 }}>
+                        {obj.script || <span className="italic text-slate-400">No script configured</span>}
+                      </div>
+                      <MSLine orientation="v" size={14} />
+                      <MSFanBar count={2} />
+                      <div className="w-full flex gap-3">
+                        <div className="flex-1 flex flex-col items-center">
+                          <MSLine orientation="v" size={12} />
+                          <MSMetricPill bg={MS_CALLEND_BG}>
+                            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
+                            <p className="text-sm font-black tabular-nums text-white leading-none">{(obj.total - obj.sales).toLocaleString()}</p>
+                          </MSMetricPill>
+                        </div>
+                        <div className="flex-1 flex flex-col items-center">
+                          <MSLine orientation="v" size={12} />
+                          <MSMetricPill bg={MS_SUCCESS_BG}>
+                            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Sale Done</p>
+                            <p className="text-sm font-black tabular-nums text-white leading-none">{obj.sales.toLocaleString()} ({obj.conv_pct}%)</p>
+                          </MSMetricPill>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+const MS_STAGE_META: Record<'op' | 'csp' | 'offer', { defaultTitle: string; hint: string }> = {
+  op:    { defaultTitle: 'Magical OP',    hint: 'The opening line every agent reads at the start of the call.' },
+  csp:   { defaultTitle: 'Magical CSP',   hint: 'Sets the context for why you\'re calling before the offer.' },
+  offer: { defaultTitle: 'Magical Offer', hint: 'The pitch used once the customer is engaged.' },
+};
+
+function MagicalScriptRowEditor({ row, savingId, objectionOptions, onChange, onSave, onDelete }: {
+  row: MagicalScriptConfigRow;
+  savingId: number | null;
+  objectionOptions?: string[];
+  onChange: (id: number, patch: Partial<MagicalScriptConfigRow>) => void;
+  onSave: (row: MagicalScriptConfigRow) => void;
+  onDelete?: (row: MagicalScriptConfigRow) => void;
+}) {
+  const saving = savingId === row.id;
+  const canSave = !!row.stageTitle.trim() && !!(row.scriptText ?? '').trim();
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <input value={row.stageTitle} onChange={e => onChange(row.id, { stageTitle: e.target.value })}
+          placeholder="Title"
+          className="flex-1 text-xs font-semibold px-2 py-1.5 rounded-md border border-slate-300 bg-white" />
+        {row.stage === 'objection' && (
+          <>
+            <input value={row.objectionCategory ?? ''} onChange={e => onChange(row.id, { objectionCategory: e.target.value })}
+              placeholder="Objection category (must match CustomerObjectionCategory)"
+              list="ms-objection-options"
+              className="flex-1 text-xs px-2 py-1.5 rounded-md border border-slate-300 bg-white" />
+            {objectionOptions && (
+              <datalist id="ms-objection-options">
+                {objectionOptions.map(o => <option key={o} value={o} />)}
+              </datalist>
+            )}
+          </>
+        )}
+      </div>
+      <textarea value={row.scriptText ?? ''} onChange={e => onChange(row.id, { scriptText: e.target.value })}
+        rows={4} placeholder="Script text…"
+        className="w-full text-xs px-2 py-1.5 rounded-md border border-slate-300 bg-white leading-relaxed" />
+      <div className="flex items-center gap-2">
+        <button onClick={() => onSave(row)} disabled={!canSave || saving}
+          className="flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors">
+          <Save size={11} /> {saving ? 'Saving…' : row.id > 0 ? 'Save' : 'Create'}
+        </button>
+        {onDelete && (
+          <button onClick={() => onDelete(row)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-bold text-red-600 hover:bg-red-50 transition-colors">
+            <Trash2 size={11} /> Delete
+          </button>
+        )}
+        {row.id < 0 && <span className="text-[10px] text-slate-400 italic ml-auto">Not saved yet</span>}
+      </div>
+    </div>
+  );
+}
+
+function MagicalScriptEditorModal({ open, loading, rows, objectionOptions, savingId, onChange, onSave, onDelete, onAddObjection, onClose }: {
+  open: boolean;
+  loading: boolean;
+  rows: MagicalScriptConfigRow[];
+  objectionOptions: string[];
+  savingId: number | null;
+  onChange: (id: number, patch: Partial<MagicalScriptConfigRow>) => void;
+  onSave: (row: MagicalScriptConfigRow) => void;
+  onDelete: (row: MagicalScriptConfigRow) => void;
+  onAddObjection: () => void;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  const objectionRows = rows.filter(r => r.stage === 'objection');
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200">
+          <div>
+            <h2 className="text-base font-bold text-slate-800">Edit Magical Script</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Changes apply immediately to this process's Magical Script page.</p>
+          </div>
+          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700 transition-colors"><X size={18} /></button>
+        </div>
+        <div className="overflow-auto flex-1 p-5 space-y-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 gap-3 text-slate-400 text-sm">
+              <div className="w-5 h-5 border-2 border-slate-300 border-t-blue-500 rounded-full animate-spin" />
+              Loading…
+            </div>
+          ) : (
+            <>
+              {(['op', 'csp', 'offer'] as const).map(stage => {
+                const row = rows.find(r => r.stage === stage);
+                if (!row) return null;
+                return (
+                  <div key={stage}>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">{MS_STAGE_META[stage].defaultTitle}</p>
+                    <p className="text-[10px] text-slate-400 mb-2">{MS_STAGE_META[stage].hint}</p>
+                    <MagicalScriptRowEditor row={row} savingId={savingId} onChange={onChange} onSave={onSave} />
+                  </div>
+                );
+              })}
+
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Objection Handling Scripts</p>
+                  <button onClick={onAddObjection}
+                    className="ml-auto flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold text-blue-600 hover:bg-blue-50 transition-colors">
+                    <Plus size={11} /> Add objection script
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {objectionRows.length === 0 && (
+                    <p className="text-xs text-slate-400 italic">No objection scripts yet — click "Add objection script" to create one.</p>
+                  )}
+                  {objectionRows.map(row => (
+                    <MagicalScriptRowEditor key={row.id} row={row} savingId={savingId} objectionOptions={objectionOptions}
+                      onChange={onChange} onSave={onSave} onDelete={onDelete} />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function ProcessQualityDashboard() {
@@ -634,8 +1131,17 @@ export default function ProcessQualityDashboard() {
   const [customerInsightsError, setCustomerInsightsError] = useState(false);
   const [ciDrill, setCiDrill] = useState<{ title: string; category: string; leads: OutboundInsightLead[]; loading: boolean } | null>(null);
   const [ciTranscript, setCiTranscript] = useState<{ loading: boolean; data: OutboundCallTranscript | null } | null>(null);
+  const [saleDoneDrill, setSaleDoneDrill] = useState<{ open: boolean; loading: boolean; rows: SaleDoneCallRow[] } | null>(null);
   const [magicalScript, setMagicalScript] = useState<MagicalScriptData | null>(null);
   const [magicalLoading, setMagicalLoading] = useState(false);
+  const [bellaProductModal, setBellaProductModal] = useState(false);
+  const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
+  const [scriptEditorLoading, setScriptEditorLoading] = useState(false);
+  const [scriptEditorRows, setScriptEditorRows] = useState<MagicalScriptConfigRow[]>([]);
+  const [scriptEditorOptions, setScriptEditorOptions] = useState<string[]>([]);
+  const [scriptEditorSavingId, setScriptEditorSavingId] = useState<number | null>(null);
+  const authUser = useAuthStore(s => s.user);
+  const canEditScripts = !!authUser && EDIT_SCRIPT_ROLES.includes(authUser.role);
 
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
@@ -684,6 +1190,94 @@ export default function ProcessQualityDashboard() {
       .catch(() => setCiTranscript({ loading: false, data: null }));
   };
 
+  const openSaleDoneDrill = () => {
+    if (!clientId) return;
+    setSaleDoneDrill({ open: true, loading: true, rows: [] });
+    api.get<{ data: SaleDoneCallRow[] }>(`/quality/sale-done-calls?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      .then(r => setSaleDoneDrill({ open: true, loading: false, rows: r.data?.data ?? [] }))
+      .catch(() => setSaleDoneDrill({ open: true, loading: false, rows: [] }));
+  };
+
+  const refetchMagicalScript = useCallback(() => {
+    if (!clientId) return;
+    setMagicalLoading(true);
+    api.get<{ data: MagicalScriptData }>(`/quality/magical-script?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      .then(r => setMagicalScript(r.data?.data ?? null))
+      .catch(() => setMagicalScript(null))
+      .finally(() => setMagicalLoading(false));
+  }, [clientId, sd, ed]);
+
+  const openScriptEditor = () => {
+    if (!clientId) return;
+    setScriptEditorOpen(true);
+    setScriptEditorLoading(true);
+    api.get<{ data: { rows: MagicalScriptConfigRow[]; objectionOptions: string[] } }>(`/quality/magical-script-config?clientId=${clientId}`)
+      .then(r => {
+        const rows = r.data?.data?.rows ?? [];
+        const withDefaults = [...rows];
+        let tempId = -1;
+        (['op', 'csp', 'offer'] as const).forEach(stage => {
+          if (!withDefaults.some(row => row.stage === stage)) {
+            withDefaults.push({ id: tempId--, stage, stageTitle: MS_STAGE_META[stage].defaultTitle, objectionCategory: null, scriptText: '', displayOrder: 0 });
+          }
+        });
+        setScriptEditorRows(withDefaults);
+        setScriptEditorOptions(r.data?.data?.objectionOptions ?? []);
+      })
+      .catch(() => { setScriptEditorRows([]); setScriptEditorOptions([]); })
+      .finally(() => setScriptEditorLoading(false));
+  };
+
+  const changeScriptRow = (id: number, patch: Partial<MagicalScriptConfigRow>) => {
+    setScriptEditorRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+  };
+
+  const addObjectionScriptRow = () => {
+    setScriptEditorRows(prev => [...prev, {
+      id: -(Date.now()),
+      stage: 'objection',
+      stageTitle: '',
+      objectionCategory: '',
+      scriptText: '',
+      displayOrder: prev.filter(r => r.stage === 'objection').length,
+    }]);
+  };
+
+  const saveScriptRow = (row: MagicalScriptConfigRow) => {
+    if (!clientId) return;
+    setScriptEditorSavingId(row.id);
+    api.post<{ data: MagicalScriptConfigRow }>('/quality/magical-script-config', {
+      clientId: Number(clientId),
+      id: row.id > 0 ? row.id : undefined,
+      stage: row.stage,
+      stageTitle: row.stageTitle,
+      objectionCategory: row.objectionCategory,
+      scriptText: row.scriptText,
+      displayOrder: row.displayOrder,
+    })
+      .then(r => {
+        const saved = r.data?.data;
+        if (saved) setScriptEditorRows(prev => prev.map(x => x.id === row.id ? saved : x));
+        refetchMagicalScript();
+      })
+      .catch(() => {})
+      .finally(() => setScriptEditorSavingId(null));
+  };
+
+  const deleteScriptRow = (row: MagicalScriptConfigRow) => {
+    if (row.id < 0) {
+      setScriptEditorRows(prev => prev.filter(x => x.id !== row.id));
+      return;
+    }
+    if (!clientId || !window.confirm('Delete this objection script?')) return;
+    api.delete(`/quality/magical-script-config/${row.id}?clientId=${clientId}`)
+      .then(() => {
+        setScriptEditorRows(prev => prev.filter(x => x.id !== row.id));
+        refetchMagicalScript();
+      })
+      .catch(() => {});
+  };
+
   // Lazy load data per slide
   useEffect(() => {
     if (!clientId) return;
@@ -724,6 +1318,7 @@ export default function ProcessQualityDashboard() {
   const pie = kpi?.rejectedPie ?? [];
   const cstFunnel = kpi?.cstFunnel ?? [];
   const crtFunnel = kpi?.crtFunnel ?? [];
+  const auditCountByDate = kpi?.auditCountByDate ?? [];
   const opp = kpi?.opportunity;
   const nps = kpi?.nps;
   const feedbackData = nps ? [
@@ -918,131 +1513,6 @@ export default function ProcessQualityDashboard() {
           </div>
         )}
 
-        {/* ─── Customer Interaction Insights ─────────────────────────────── */}
-        {customerInsightsLoading && (
-          <div className="rounded-2xl px-5 py-8 flex flex-col items-center justify-center gap-2" style={{ background: 'linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 60%, #7DD3FC 100%)', border: '1px solid #7DD3FC' }}>
-            <div className="w-6 h-6 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-xs font-semibold text-slate-700">Loading Customer Interaction Insights…</p>
-          </div>
-        )}
-        {customerInsightsError && !customerInsightsLoading && (
-          <div className="rounded-2xl px-5 py-5 text-center text-xs font-medium text-red-600 bg-red-50 border border-red-200">
-            Couldn't load Customer Interaction Insights for this period.
-          </div>
-        )}
-        {customerInsights && !customerInsightsLoading && (() => {
-          const ci = customerInsights;
-          const pct = (n: number) => ci.audit_count > 0 ? `${((n / ci.audit_count) * 100).toFixed(1)}%` : '0.0%';
-          const CRITICAL_SIGNALS: { label: string; count: number; color: string; bg: string; border: string; icon: string }[] = [
-            { label: 'Frustration', count: ci.frustration_count, color: '#D97706', bg: '#FFFBEB', border: '#FDE68A', icon: '😤' },
-            { label: 'Threat',      count: ci.threat_count,      color: '#DC2626', bg: '#FEF2F2', border: '#FECACA', icon: '⚠️' },
-            { label: 'Abuse',       count: ci.cuss_abuse_count,  color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE', icon: '🚫' },
-            { label: 'Slang',       count: ci.slang_count,       color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE', icon: '💬' },
-            { label: 'Sarcasm',     count: ci.sarcasm_count,     color: '#059669', bg: '#ECFDF5', border: '#A7F3D0', icon: '😏' },
-          ];
-          const totalGolden = ci.golden_words.reduce((s, g) => s + g.count, 0);
-          const cacheNote = ci.cached_through
-            ? `Updated ${new Date(ci.cached_through).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} · Click any card for details`
-            : 'Click any card for details';
-          return (
-            <div className="rounded-2xl px-5 py-5" style={{ background: 'linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 60%, #7DD3FC 100%)', border: '1px solid #7DD3FC' }}>
-              <div className="flex items-center gap-2 mb-5">
-                <div className="w-1 h-5 rounded-full bg-violet-500" />
-                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest">Customer Interaction Insights</h2>
-                <span className="ml-auto text-[10px] text-slate-500">{cacheNote}</span>
-              </div>
-
-              {/* Threat + Scam */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
-                <div onClick={() => openCiDrill('social', 'Social Media & Consumer Court Threat')}
-                  className="relative flex items-center gap-4 bg-white border border-orange-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
-                  title="Click to view calls">
-                  <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-orange-500" />
-                  <div className="p-3 rounded-xl bg-orange-500/10 shrink-0">
-                    <ShieldAlert size={22} className="text-orange-400" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-semibold text-slate-700 uppercase tracking-widest leading-tight mb-1">Social Media &amp; Consumer Court Threat</p>
-                    <div className="flex items-end gap-2">
-                      <span className="text-3xl font-bold text-orange-500 tabular-nums leading-none">{ci.social_media_court_threat.toLocaleString()}</span>
-                      <span className="text-xs text-slate-600 mb-0.5">calls ({pct(ci.social_media_court_threat)})</span>
-                    </div>
-                    <p className="text-[10px] text-slate-500 mt-1">📱 Social Media &nbsp;·&nbsp; ⚖️ Consumer Court &nbsp;·&nbsp; Legal / FIR</p>
-                  </div>
-                </div>
-
-                <div onClick={() => openCiDrill('scam', 'Potential Scam')}
-                  className="relative flex items-center gap-4 bg-white border border-red-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
-                  title="Click to view calls">
-                  <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-red-500" />
-                  <div className="p-3 rounded-xl bg-red-500/10 shrink-0">
-                    <AlertOctagon size={22} className="text-red-400" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-semibold text-slate-700 uppercase tracking-widest leading-tight mb-1">Potential Scam</p>
-                    <div className="flex items-end gap-2">
-                      <span className="text-3xl font-bold text-red-500 tabular-nums leading-none">{ci.potential_scam.toLocaleString()}</span>
-                      <span className="text-xs text-slate-600 mb-0.5">calls ({pct(ci.potential_scam)})</span>
-                    </div>
-                    <p className="text-[10px] text-slate-600 mt-1">Financial fraud</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Golden Phrases */}
-              <div className="mb-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-1 h-4 rounded-full bg-emerald-500" />
-                  <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">Golden Phrases</h3>
-                  <span className="ml-auto text-[10px] text-slate-400">{totalGolden.toLocaleString()} total mentions</span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                  {ci.golden_words.map((g, i) => (
-                    <div key={g.category}
-                      onClick={() => openCiDrill(`golden:${i}`, g.category)}
-                      className="relative flex flex-col gap-1.5 rounded-xl px-3 py-3 overflow-hidden cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all"
-                      style={{ backgroundColor: '#ffffff', border: '2px solid #05966930', boxShadow: '0 2px 8px #05966915' }}
-                      title={g.keywords.join(', ')}>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[9px] font-bold rounded-full px-1.5 py-0.5" style={{ backgroundColor: '#05966920', color: '#059669' }}>
-                          {g.keywords.length} phrase{g.keywords.length > 1 ? 's' : ''}
-                        </span>
-                      </div>
-                      <span className="text-xl font-bold tabular-nums leading-none" style={{ color: '#059669' }}>{g.count.toLocaleString()}</span>
-                      <span className="text-[10px] font-bold text-slate-700 leading-tight block truncate">{g.category}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Critical Signals */}
-              <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-1 h-4 rounded-full bg-rose-500" />
-                  <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">Critical Signals</h3>
-                  <span className="ml-auto text-[10px] text-slate-400">Keyword-matched from TranscribeText</span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                  {CRITICAL_SIGNALS.map(s => (
-                    <div key={s.label}
-                      onClick={() => openCiDrill(`signal:${s.label}`, `${s.label} Signal`)}
-                      className="relative flex flex-col gap-2 rounded-xl px-4 py-4 overflow-hidden cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all"
-                      style={{ backgroundColor: '#ffffff', border: `2px solid ${s.color}60`, boxShadow: `0 2px 8px ${s.color}25` }}>
-                      <div className="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style={{ backgroundColor: s.color }} />
-                      <div className="flex items-center justify-between">
-                        <span className="text-base">{s.icon}</span>
-                        <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: `${s.color}25`, color: s.color }}>{pct(s.count)}</span>
-                      </div>
-                      <span className="text-2xl font-bold tabular-nums" style={{ color: s.color }}>{s.count.toLocaleString()}</span>
-                      <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-700">{s.label}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
         {/* ─── Customer Interaction Insights: drill-down modal ───────────── */}
         {ciDrill && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
@@ -1143,6 +1613,76 @@ export default function ProcessQualityDashboard() {
           </div>
         )}
 
+        {/* ─── CST Funnel: Sale Done drill-down ───────────────────────────── */}
+        {saleDoneDrill?.open && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+            onClick={() => setSaleDoneDrill(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
+                <div>
+                  <h2 className="text-base font-bold text-slate-800">Sale Done — Call Details</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">{saleDoneDrill.loading ? 'Loading…' : `${saleDoneDrill.rows.length} calls`}</p>
+                </div>
+                {!saleDoneDrill.loading && saleDoneDrill.rows.length > 0 && (
+                  <button
+                    onClick={() => downloadCSV(saleDoneDrill.rows.map(r => ({
+                      'Call Date': fmtDateTime(r.callDate), 'Agent Name': r.agentName, 'Mobile No': r.mobileNo, 'File Name': r.fileName,
+                    })), 'sale-done-calls.csv')}
+                    title="Download CSV"
+                    className="ml-auto flex items-center gap-1 px-2 py-1 rounded text-[10px] text-slate-500 hover:text-emerald-600 border border-slate-200 hover:border-emerald-500/30 transition-colors">
+                    <Download size={11} /> CSV
+                  </button>
+                )}
+                <button onClick={() => setSaleDoneDrill(null)} className={`${saleDoneDrill.rows.length > 0 ? '' : 'ml-auto'} text-slate-400 hover:text-slate-700 transition-colors`}><X size={18} /></button>
+              </div>
+              <div className="overflow-auto flex-1 p-6">
+                {saleDoneDrill.loading ? (
+                  <div className="flex flex-col gap-2">
+                    {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-9 rounded-lg bg-slate-100 animate-pulse" />)}
+                  </div>
+                ) : saleDoneDrill.rows.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 gap-3 text-slate-400">
+                    <span className="text-4xl">🔍</span>
+                    <p className="text-sm font-medium">No sale-done calls found for this period.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50">
+                          {['Call Date', 'Agent Name', 'Mobile No', 'Recording', 'Transcript'].map(h => (
+                            <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-slate-200">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {saleDoneDrill.rows.map((r, i) => (
+                          <tr key={i} className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0">
+                            <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{fmtDateTime(r.callDate)}</td>
+                            <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{r.agentName}</td>
+                            <td className="px-3 py-2 font-mono text-slate-500 whitespace-nowrap">{r.mobileNo || '—'}</td>
+                            <td className="px-3 py-2" style={{ minWidth: 220 }}>
+                              {r.fileName
+                                ? <audio controls preload="none" src={r.fileName} style={{ height: 30, width: 210 }} />
+                                : <span className="text-slate-300 italic">No recording</span>}
+                            </td>
+                            <td className="px-3 py-2">
+                              <button onClick={() => openCiTranscript(r.callId)}
+                                className="font-mono text-[11px] text-blue-600 hover:text-blue-800 hover:underline font-semibold transition-colors">
+                                Read Transcript
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ─── Funnels side by side ─────────────────────────────────────── */}
         <div className="flex flex-row gap-6">
           {cstFunnel.length > 0 && (() => {
@@ -1166,25 +1706,35 @@ export default function ProcessQualityDashboard() {
                           return [`${val.toLocaleString()} (${pct(val)})`, props?.payload?.name ?? ''];
                         }}
                       />
-                      <Funnel dataKey="value" data={cstLabeled} isAnimationActive lastShapeType="rectangle">
-                        {cstLabeled.map((_, i) => (
-                          <Cell key={i} fill={funnelCSTColors[i % funnelCSTColors.length]} />
+                      <Funnel dataKey="value" data={cstLabeled} isAnimationActive lastShapeType="rectangle"
+                        onClick={(data: { name?: string }) => { if (data?.name === 'Sale Done') openSaleDoneDrill(); }}>
+                        {cstLabeled.map((s, i) => (
+                          <Cell key={i} fill={funnelCSTColors[i % funnelCSTColors.length]}
+                            style={{ cursor: s.name === 'Sale Done' ? 'pointer' : 'default' }} />
                         ))}
                         <LabelList dataKey="label" position="center"
                           fill="#ffffff" stroke="none" fontSize={11} fontWeight={700} />
                       </Funnel>
                     </FunnelChart>
                   </ResponsiveContainer>
+                  <p className="text-center text-[10px] text-slate-400 mt-1">Click "Sale Done" to view the underlying calls</p>
                 </div>
               </div>
             );
           })()}
 
           {crtFunnel.length > 0 && (() => {
-            const sortedCRT = [...crtFunnel].sort((a, b) => b.value - a.value);
-            const crtBase = sortedCRT[0]?.value ?? 1;
-            const pct = (v: number) => crtBase > 0 ? `${((v / crtBase) * 100).toFixed(0)}%` : '–';
-            const crtLabeled = sortedCRT.map(s => ({ ...s, label: `${s.name}: ${s.value.toLocaleString()}` }));
+            // Stepped pyramid instead of a trapezoid funnel: smallest reason at the top, widening
+            // down to a "Not Sale Done" base bar. The base is Total Calls − Sale Done — NOT the sum
+            // of the 4 rejection reasons, since "Post Offer Rejected" (per the CRT query) also
+            // absorbs AfterListeningOfferRejected/SaleDone calls, so summing all 4 just reproduces
+            // Total Calls including conversions.
+            const ascCRT = [...crtFunnel].sort((a, b) => a.value - b.value);
+            const notSaleDoneTotal = Math.max((cst?.totalCalls ?? 0) - (cst?.saleDone ?? 0), 0);
+            const rows = [...ascCRT, { name: 'Not Sale Done (Total)', value: notSaleDoneTotal }];
+            const maxVal = Math.max(notSaleDoneTotal, ...ascCRT.map(r => r.value), 1);
+            const PYRAMID_COLORS = ['#7C3AED', '#DB2777', '#EA580C', '#DC2626', '#991B1B'];
+            const pct = (v: number) => notSaleDoneTotal > 0 ? `${((v / notSaleDoneTotal) * 100).toFixed(0)}%` : '–';
             return (
               <div className="flex-1 min-w-0 rounded-xl border border-red-500/30 bg-white overflow-hidden">
                 <div className="card-header gap-2 px-5 py-3">
@@ -1192,25 +1742,28 @@ export default function ProcessQualityDashboard() {
                   <span className="text-[11px] font-bold uppercase tracking-widest text-red-400">CRT Funnel</span>
                   <button onClick={() => showDetail('crtFunnel')} className="ml-auto text-white/70 hover:text-white transition-colors"><Info size={13} /></button>
                 </div>
-                <div className="px-4 pt-4 pb-4">
-                  <ResponsiveContainer width="100%" height={340}>
-                    <FunnelChart>
-                      <Tooltip
-                        contentStyle={TT}
-                        formatter={(v: unknown, _n: unknown, props: { payload?: { name?: string } }) => {
-                          const val = Number(v);
-                          return [`${val.toLocaleString()} (${pct(val)})`, props?.payload?.name ?? ''];
+                <div className="px-4 pt-6 pb-6 flex flex-col items-center gap-1.5" style={{ minHeight: 340 }}>
+                  {rows.map((r, i) => {
+                    const widthPct = 22 + (r.value / maxVal) * 78;
+                    const color = PYRAMID_COLORS[i % PYRAMID_COLORS.length];
+                    const isBase = i === rows.length - 1;
+                    return (
+                      <div key={r.name}
+                        className="rounded-md flex items-center justify-between px-4 shadow-sm transition-all"
+                        style={{
+                          width: `${widthPct}%`,
+                          background: color,
+                          height: isBase ? 52 : 44,
+                          border: isBase ? '2px solid #7F1D1D' : 'none',
                         }}
-                      />
-                      <Funnel dataKey="value" data={crtLabeled} isAnimationActive lastShapeType="rectangle">
-                        {crtLabeled.map((_, i) => (
-                          <Cell key={i} fill={funnelCRTColors[i % funnelCRTColors.length]} />
-                        ))}
-                        <LabelList dataKey="label" position="center"
-                          fill="#ffffff" stroke="none" fontSize={11} fontWeight={700} />
-                      </Funnel>
-                    </FunnelChart>
-                  </ResponsiveContainer>
+                        title={`${r.name}: ${r.value.toLocaleString()} (${pct(r.value)})`}>
+                        <span className="text-[11px] font-bold text-white uppercase tracking-wide truncate">{r.name}</span>
+                        <span className="text-sm font-black text-white tabular-nums ml-2 shrink-0">
+                          {r.value.toLocaleString()} <span className="text-[10px] font-semibold opacity-80">({pct(r.value)})</span>
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -1249,6 +1802,178 @@ export default function ProcessQualityDashboard() {
             </div>
           </div>
         )}
+
+        {/* ─── Date-wise Audit Count ───────────────────────────────────── */}
+        {auditCountByDate.length > 0 && (
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+            <div className="px-5 py-3 card-header gap-2">
+              <BarChart3 size={14} className="text-blue-400" />
+              <span className="text-[11px] font-bold uppercase tracking-widest">Date-wise Audit Count</span>
+              <span className="ml-auto text-[10px] text-white/60">
+                {auditCountByDate.reduce((s, d) => s + d.count, 0).toLocaleString()} total audits
+              </span>
+            </div>
+            <div className="px-4 pt-4 pb-2">
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={auditCountByDate.map(d => ({ ...d, label: fmtDateTime(`${d.calldate} 00:00:00`).slice(0, 5) }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748B' }} axisLine={{ stroke: '#CBD5E1' }} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: '#64748B' }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={TT} formatter={(v: unknown) => [`${Number(v).toLocaleString()} audits`, '']}
+                    labelFormatter={(_l, p) => p?.[0]?.payload?.calldate ?? ''} />
+                  <Bar dataKey="count" name="Audit Count" fill="#2563EB" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Customer Interaction Insights ─────────────────────────────── */}
+        {customerInsightsLoading && (
+          <div className="rounded-2xl px-5 py-8 flex flex-col items-center justify-center gap-2" style={{ background: 'linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 60%, #7DD3FC 100%)', border: '1px solid #7DD3FC' }}>
+            <div className="w-6 h-6 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs font-semibold text-slate-700">Loading Customer Interaction Insights…</p>
+          </div>
+        )}
+        {customerInsightsError && !customerInsightsLoading && (
+          <div className="rounded-2xl px-5 py-5 text-center text-xs font-medium text-red-600 bg-red-50 border border-red-200">
+            Couldn't load Customer Interaction Insights for this period.
+          </div>
+        )}
+        {customerInsights && !customerInsightsLoading && (() => {
+          const ci = customerInsights;
+          const pct = (n: number) => ci.audit_count > 0 ? `${((n / ci.audit_count) * 100).toFixed(1)}%` : '0.0%';
+          const CRITICAL_SIGNALS: { label: string; count: number; color: string; bg: string; border: string; icon: string; category: string }[] = [
+            { label: 'Frustration',   count: ci.frustration_count,       color: '#D97706', bg: '#FFFBEB', border: '#FDE68A', icon: '😤', category: 'signal:Frustration' },
+            { label: 'Threat',        count: ci.threat_count,            color: '#DC2626', bg: '#FEF2F2', border: '#FECACA', icon: '⚠️', category: 'signal:Threat' },
+            { label: 'Abuse',         count: ci.cuss_abuse_count,        color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE', icon: '🚫', category: 'signal:Abuse' },
+            { label: 'Slang',         count: ci.slang_count,             color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE', icon: '💬', category: 'signal:Slang' },
+            { label: 'Sarcasm',       count: ci.sarcasm_count,           color: '#059669', bg: '#ECFDF5', border: '#A7F3D0', icon: '😏', category: 'signal:Sarcasm' },
+            { label: 'Legal',         count: ci.legal_escalation_count,  color: '#B45309', bg: '#FFFBEB', border: '#FDE68A', icon: '⚖️', category: 'legal' },
+            { label: 'Social Media',  count: ci.social_escalation_count, color: '#EA580C', bg: '#FFF7ED', border: '#FED7AA', icon: '📱', category: 'social' },
+            { label: 'Financial Fraud', count: ci.potential_scam,        color: '#DC2626', bg: '#FEF2F2', border: '#FECACA', icon: '💳', category: 'scam' },
+            { label: 'Refund',        count: ci.refund_count,            color: '#0891B2', bg: '#ECFEFF', border: '#A5F3FC', icon: '💰', category: 'refund' },
+            { label: 'Cancellation',  count: ci.cancellation_count,      color: '#64748B', bg: '#F8FAFC', border: '#E2E8F0', icon: '❌', category: 'cancellation' },
+          ];
+          const totalGolden = ci.golden_words.reduce((s, g) => s + g.count, 0);
+          const cacheNote = ci.cached_through
+            ? `Updated ${new Date(ci.cached_through).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} · Click any card for details`
+            : 'Click any card for details';
+          return (
+            <div className="rounded-2xl px-5 py-5" style={{ background: 'linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 60%, #7DD3FC 100%)', border: '1px solid #7DD3FC' }}>
+              <div className="flex items-center gap-2 mb-5">
+                <div className="w-1 h-5 rounded-full bg-violet-500" />
+                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest">Customer Interaction Insights</h2>
+                <span className="ml-auto text-[10px] text-slate-500">{cacheNote}</span>
+              </div>
+
+              {/* Legal Escalation + Social Media Escalation + Financial Fraud */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+                <div onClick={() => openCiDrill('legal', 'Legal Escalation')}
+                  className="relative flex items-center gap-4 bg-white border border-amber-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
+                  title="Click to view calls">
+                  <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-amber-600" />
+                  <div className="p-3 rounded-xl bg-amber-500/10 shrink-0">
+                    <ShieldAlert size={22} className="text-amber-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] font-semibold text-slate-700 uppercase tracking-widest leading-tight mb-1">Legal Escalation</p>
+                    <div className="flex items-end gap-2">
+                      <span className="text-3xl font-bold text-amber-600 tabular-nums leading-none">{ci.legal_escalation_count.toLocaleString()}</span>
+                      <span className="text-xs text-slate-600 mb-0.5">calls ({pct(ci.legal_escalation_count)})</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">⚖️ Consumer Court &nbsp;·&nbsp; Legal Notice &nbsp;·&nbsp; Lawyer / FIR</p>
+                  </div>
+                </div>
+
+                <div onClick={() => openCiDrill('social', 'Social Media Escalation')}
+                  className="relative flex items-center gap-4 bg-white border border-orange-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
+                  title="Click to view calls">
+                  <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-orange-500" />
+                  <div className="p-3 rounded-xl bg-orange-500/10 shrink-0">
+                    <ShieldAlert size={22} className="text-orange-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] font-semibold text-slate-700 uppercase tracking-widest leading-tight mb-1">Social Media Escalation</p>
+                    <div className="flex items-end gap-2">
+                      <span className="text-3xl font-bold text-orange-500 tabular-nums leading-none">{ci.social_escalation_count.toLocaleString()}</span>
+                      <span className="text-xs text-slate-600 mb-0.5">calls ({pct(ci.social_escalation_count)})</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">📱 Facebook / Instagram &nbsp;·&nbsp; Reviews &nbsp;·&nbsp; Viral Threats</p>
+                  </div>
+                </div>
+
+                <div onClick={() => openCiDrill('scam', 'Financial Fraud')}
+                  className="relative flex items-center gap-4 bg-white border border-red-500/20 rounded-xl px-5 py-4 overflow-hidden cursor-pointer hover:bg-slate-50 transition-colors"
+                  title="Click to view calls">
+                  <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-red-500" />
+                  <div className="p-3 rounded-xl bg-red-500/10 shrink-0">
+                    <AlertOctagon size={22} className="text-red-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] font-semibold text-slate-700 uppercase tracking-widest leading-tight mb-1">Financial Fraud</p>
+                    <div className="flex items-end gap-2">
+                      <span className="text-3xl font-bold text-red-500 tabular-nums leading-none">{ci.potential_scam.toLocaleString()}</span>
+                      <span className="text-xs text-slate-600 mb-0.5">calls ({pct(ci.potential_scam)})</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600 mt-1">Scam &amp; cheating mentions</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Golden Phrases */}
+              <div className="mb-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-1 h-4 rounded-full bg-emerald-500" />
+                  <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">Golden Phrases</h3>
+                  <span className="ml-auto text-[10px] text-slate-400">{totalGolden.toLocaleString()} total mentions</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+                  {ci.golden_words.map((g, i) => (
+                    <div key={g.category}
+                      onClick={() => openCiDrill(`golden:${i}`, g.category)}
+                      className="relative flex flex-col gap-1.5 rounded-xl px-3 py-3 overflow-hidden cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all"
+                      style={{ backgroundColor: '#ffffff', border: '2px solid #05966930', boxShadow: '0 2px 8px #05966915' }}
+                      title={g.keywords.join(', ')}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-bold rounded-full px-1.5 py-0.5" style={{ backgroundColor: '#05966920', color: '#059669' }}>
+                          {g.keywords.length} phrase{g.keywords.length > 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <span className="text-xl font-bold tabular-nums leading-none" style={{ color: '#059669' }}>{g.count.toLocaleString()}</span>
+                      <span className="text-[10px] font-bold text-slate-700 leading-tight block truncate">{g.category}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Critical Signals */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-1 h-4 rounded-full bg-rose-500" />
+                  <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">Critical Signals</h3>
+                  <span className="ml-auto text-[10px] text-slate-400">Keyword-matched from TranscribeText</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {CRITICAL_SIGNALS.map(s => (
+                    <div key={s.label}
+                      onClick={() => openCiDrill(s.category, `${s.label} Signal`)}
+                      className="relative flex flex-col gap-2 rounded-xl px-4 py-4 overflow-hidden cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all"
+                      style={{ backgroundColor: '#ffffff', border: `2px solid ${s.color}60`, boxShadow: `0 2px 8px ${s.color}25` }}>
+                      <div className="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style={{ backgroundColor: s.color }} />
+                      <div className="flex items-center justify-between">
+                        <span className="text-base">{s.icon}</span>
+                        <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: `${s.color}25`, color: s.color }}>{pct(s.count)}</span>
+                      </div>
+                      <span className="text-2xl font-bold tabular-nums" style={{ color: s.color }}>{s.count.toLocaleString()}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-700">{s.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         </>)}
 
@@ -2726,154 +3451,26 @@ export default function ProcessQualityDashboard() {
               </div>
             ) : !magicalScript ? (
               <div className="flex items-center justify-center h-64 text-slate-400 text-sm">No script data available for this period.</div>
-            ) : (() => {
-              const ms = magicalScript;
-              const STAGE_COLORS: Record<string, { accent: string; bg: string; label: string }> = {
-                op:    { accent: '#1D4ED8', bg: '#EFF6FF', label: 'OP'    },
-                csp:   { accent: '#0891B2', bg: '#ECFEFF', label: 'CSP'   },
-                offer: { accent: '#059669', bg: '#ECFDF5', label: 'OFFER' },
-              };
-
-              return (
-                <>
-                  {/* ── Summary KPI Strip ── */}
-                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-6">
-                    {[
-                      { label: 'Total Calls',   value: ms.summary.total_calls.toLocaleString(),  color: '#475569' },
-                      { label: 'OP Passed',     value: ms.summary.op_pass.toLocaleString(),      color: '#1D4ED8' },
-                      { label: 'CSP Passed',    value: ms.summary.csp_pass.toLocaleString(),     color: '#0891B2' },
-                      { label: 'Offer Made',    value: ms.summary.offer_pass.toLocaleString(),   color: '#059669' },
-                      { label: 'Sale Done',     value: ms.summary.sale_done.toLocaleString(),    color: '#16A34A' },
-                      { label: 'Overall Conv%', value: `${ms.summary.overall_conv}%`,            color: ms.summary.overall_conv >= 10 ? '#16A34A' : ms.summary.overall_conv >= 5 ? '#D97706' : '#DC2626' },
-                    ].map(c => (
-                      <div key={c.label} className="bg-white rounded-xl px-4 py-3 relative overflow-hidden"
-                        style={{ border: `2px solid ${c.color}` }}>
-                        <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: c.color }} />
-                        <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: c.color }}>{c.label}</p>
-                        <p className="text-xl font-black tabular-nums text-slate-900 leading-none">{c.value}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* ── Main Flow Tree ── */}
-                  <div className="rounded-xl overflow-hidden mb-6" style={{ border: '1px solid #0369A1' }}>
-                    <div className="px-5 py-3 flex items-center gap-2"
-                      style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
-                      <span className="text-sm">✨</span>
-                      <h3 className="text-xs font-black text-white uppercase tracking-widest">Magical Script — Main Call Flow</h3>
-                      <span className="text-[9px] ml-1" style={{ color: 'rgba(255,255,255,0.65)' }}>Opening → Context → Offer</span>
-                    </div>
-                    <div className="bg-white p-5 space-y-0">
-                      {ms.flow.map((stage, idx) => {
-                        const col = STAGE_COLORS[stage.stage] ?? { accent: '#6B7280', bg: '#F9FAFB', label: stage.stage.toUpperCase() };
-                        return (
-                          <div key={stage.stage}>
-                            <div className="flex gap-4 items-stretch">
-                              {/* Stage badge (left) */}
-                              <div className="flex flex-col items-center" style={{ minWidth: '90px' }}>
-                                <div className="w-full text-center py-2 rounded-xl text-[10px] font-black text-white uppercase tracking-widest shadow-sm"
-                                  style={{ background: col.accent }}>
-                                  {stage.title}
-                                </div>
-                                {idx < ms.flow.length - 1 && (
-                                  <div className="w-0.5 flex-1 mt-1" style={{ background: `${col.accent}40`, minHeight: '32px' }} />
-                                )}
-                              </div>
-
-                              {/* Script box (centre) */}
-                              <div className="flex-1 rounded-xl px-4 py-3 text-[11px] text-slate-700 leading-relaxed font-medium mb-3 min-h-[52px] flex items-center"
-                                style={{ background: col.bg, border: `1px solid ${col.accent}30` }}>
-                                {stage.script
-                                  ? <span>{stage.script}</span>
-                                  : <span className="text-slate-400 italic">Call opening — no predefined script</span>
-                                }
-                              </div>
-
-                              {/* Metrics (right) */}
-                              <div className="flex flex-col gap-1.5 justify-center shrink-0" style={{ minWidth: '180px' }}>
-                                <div className="flex items-center gap-2">
-                                  <div className="flex-1 h-5 rounded-full overflow-hidden bg-slate-100">
-                                    <div className="h-full rounded-full transition-all" style={{ width: `${stage.success_rate}%`, background: col.accent }} />
-                                  </div>
-                                  <span className="text-[10px] font-black tabular-nums w-12 text-right" style={{ color: col.accent }}>{stage.success_rate}% ✓</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <div className="flex-1 h-5 rounded-full overflow-hidden bg-slate-100">
-                                    <div className="h-full rounded-full transition-all" style={{ width: `${stage.drop_rate}%`, background: '#EF4444' }} />
-                                  </div>
-                                  <span className="text-[10px] font-black tabular-nums w-12 text-right text-red-500">{stage.drop_rate}% ✗</span>
-                                </div>
-                                <div className="flex items-center justify-between text-[9px] text-slate-400 font-semibold px-0.5">
-                                  <span>{stage.passed.toLocaleString()} passed</span>
-                                  <span>{stage.dropped.toLocaleString()} dropped</span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* ── Objection Handling Grid ── */}
-                  {ms.objections.length > 0 && (
-                    <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #0369A1' }}>
-                      <div className="px-5 py-3 flex items-center gap-2"
-                        style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
-                        <span className="text-sm">🎯</span>
-                        <h3 className="text-xs font-black text-white uppercase tracking-widest">Objection Handling Scripts</h3>
-                        <span className="text-[9px] ml-1" style={{ color: 'rgba(255,255,255,0.65)' }}>Rebuttal scripts per objection type</span>
-                      </div>
-                      <div className="bg-slate-50 p-4">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                          {ms.objections.map((obj, i) => {
-                            const convColor = obj.conv_pct >= 15 ? '#16A34A' : obj.conv_pct >= 7 ? '#D97706' : '#DC2626';
-                            const CARD_ACCS = ['#1D4ED8','#7C3AED','#0891B2','#D97706'];
-                            const accent = CARD_ACCS[i % CARD_ACCS.length];
-                            return (
-                              <div key={i} className="bg-white rounded-xl overflow-hidden flex flex-col shadow-sm"
-                                style={{ border: `1px solid ${accent}30` }}>
-                                {/* Card header */}
-                                <div className="px-4 py-2.5"
-                                  style={{ background: accent }}>
-                                  <p className="text-[10px] font-black text-white uppercase tracking-wider leading-tight">{obj.title}</p>
-                                  <p className="text-[9px] text-white/70 mt-0.5 font-semibold">{obj.contribution}% Contribution · {obj.total.toLocaleString()} calls</p>
-                                </div>
-                                {/* Script text */}
-                                <div className="px-4 py-3 flex-1 overflow-y-auto" style={{ maxHeight: '140px' }}>
-                                  <p className="text-[10.5px] text-slate-700 leading-relaxed font-medium">
-                                    {obj.script ?? <span className="italic text-slate-400">No script configured</span>}
-                                  </p>
-                                </div>
-                                {/* Footer metrics */}
-                                <div className="px-4 py-2.5 border-t border-slate-100 flex items-center justify-between gap-2 bg-slate-50">
-                                  <div className="text-center">
-                                    <p className="text-[8px] text-slate-400 uppercase font-bold">Call End</p>
-                                    <p className="text-xs font-black text-slate-700">{(obj.total - obj.sales).toLocaleString()}</p>
-                                  </div>
-                                  <div className="w-px h-8 bg-slate-200" />
-                                  <div className="text-center">
-                                    <p className="text-[8px] text-slate-400 uppercase font-bold">Sale Done</p>
-                                    <p className="text-xs font-black" style={{ color: convColor }}>{obj.sales.toLocaleString()}</p>
-                                  </div>
-                                  <div className="w-px h-8 bg-slate-200" />
-                                  <div className="text-center">
-                                    <p className="text-[8px] text-slate-400 uppercase font-bold">Conv%</p>
-                                    <p className="text-sm font-black tabular-nums" style={{ color: convColor }}>{obj.conv_pct}%</p>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </>
-              );
-            })()}
+            ) : magicalScript.variant === 'bellavita' ? (
+              <BellavitaMagicalFlow ms={magicalScript} productModalOpen={bellaProductModal} onToggleProductModal={setBellaProductModal} />
+            ) : (
+              <GenericMagicalFlow ms={magicalScript} canEdit={canEditScripts} onOpenEditor={openScriptEditor} />
+            )}
           </div>
         )}
+
+        <MagicalScriptEditorModal
+          open={scriptEditorOpen}
+          loading={scriptEditorLoading}
+          rows={scriptEditorRows}
+          objectionOptions={scriptEditorOptions}
+          savingId={scriptEditorSavingId}
+          onChange={changeScriptRow}
+          onSave={saveScriptRow}
+          onDelete={deleteScriptRow}
+          onAddObjection={addObjectionScriptRow}
+          onClose={() => setScriptEditorOpen(false)}
+        />
 
       </div>
     </div>

@@ -97,12 +97,18 @@ export interface NPSData {
   days: NPSDayRow[];
 }
 
+export interface AuditCountDayRow {
+  calldate: string;
+  count: number;
+}
+
 export interface KPIResponse {
   cst: CSTData;
   crt: CRTData;
   rejectedPie: PieSlice[];
   cstFunnel: FunnelStep[];
   crtFunnel: FunnelStep[];
+  auditCountByDate: AuditCountDayRow[];
   opportunity: {
     totalOpportunities: number;
     moCount: number;
@@ -175,7 +181,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
   const { sql: cf, params: cfParams } = clientClause(filters);
   const params = [startDate, endDate, ...cfParams];
 
-  const [rejectedBreakdown, row, oppRow, oppLossPie, oppCatPie, moBreaksPie, moCategoryRaw, nedRaw, objectionCategoryPie, npsRaw, npsDaysRaw] = await Promise.all([
+  const [rejectedBreakdown, row, oppRow, oppLossPie, oppCatPie, moBreaksPie, moCategoryRaw, nedRaw, objectionCategoryPie, npsRaw, npsDaysRaw, auditCountRaw] = await Promise.all([
     querySource<PieSlice>(`
       WITH base AS (
         SELECT cd.*,
@@ -589,6 +595,18 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
       GROUP BY 1
       ORDER BY 1
     `, params),
+
+    // Date-wise audit count — same "valid call" definition as the CST/CRT total above
+    // (MobileNo present, CustomerObjectionCategory tagged), just broken out per day.
+    querySource<{ calldate: string; cnt: number }>(`
+      SELECT DATE_FORMAT(cd.CallDate, '%Y-%m-%d') AS calldate, COUNT(*) AS cnt
+      FROM db_external.CallDetails cd
+      WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
+        AND cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory != ''
+        AND cd.CallDate BETWEEN ? AND ? ${cf}
+      GROUP BY 1
+      ORDER BY 1
+    `, params),
   ]);
 
   const r = row[0];
@@ -670,6 +688,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
       { name: 'OPR (Offering Rejected)', value: oprCnt },
       { name: 'POR (Post Offer Rejected)', value: porCnt },
     ],
+    auditCountByDate: auditCountRaw.map(r => ({ calldate: String(r.calldate), count: Number(r.cnt) })),
     opportunity: {
       totalOpportunities: totalOpp,
       moCount,
@@ -682,6 +701,41 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     },
     nps: npsData,
   };
+}
+
+export interface SaleDoneCallRow {
+  callId: number;
+  callDate: string;
+  agentName: string;
+  mobileNo: string;
+  fileName: string;
+}
+
+// Drill-down behind the CST funnel's "Sale Done" segment — same "valid call" population as the
+// CST total/sale figures above, so the row count here always matches the number shown there.
+export async function getSaleDoneCalls(filters: QualityFilters): Promise<SaleDoneCallRow[]> {
+  const { startDate, endDate } = filters;
+  const { sql: cf, params: cfParams } = clientClause(filters);
+  const params = [startDate, endDate, ...cfParams];
+
+  const rows = await querySource<{ id: number; CallDate: string; AgentName: string | null; MobileNo: string | null; FileName: string | null }>(`
+    SELECT cd.id, cd.CallDate, cd.AgentName, cd.MobileNo, cd.FileName
+    FROM db_external.CallDetails cd
+    WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
+      AND cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory != ''
+      AND COALESCE(cd.SaleDone, 0) = 1
+      AND cd.CallDate BETWEEN ? AND ? ${cf}
+    ORDER BY cd.CallDate DESC
+    LIMIT 500
+  `, params);
+
+  return rows.map(r => ({
+    callId:    Number(r.id),
+    callDate:  String(r.CallDate),
+    agentName: r.AgentName ?? 'Unknown',
+    mobileNo:  r.MobileNo ?? '',
+    fileName:  r.FileName ?? '',
+  }));
 }
 
 export async function getDetailAnalysis(filters: QualityFilters): Promise<DetailAnalysisResponse> {
@@ -1395,10 +1449,460 @@ export async function insertAgentMaster(agent: { masId: string; agentName: strin
 
 // ── Magical Script ────────────────────────────────────────────────────────────
 
+// Bellavita's outbound funnel is driven by a different set of CallDetails columns (Opening,
+// ContactSettingCategory, ContactSettingContext, OpeningPitchCategory, Offered, Category/
+// SubCategory) than the generic AfterListeningOfferRejected/ObjectionHandlingContext-based flow
+// every other client used to use — see getColumnBasedMagicalScript. GNC and Neemans' CallDetails
+// data was verified to follow the exact same column conventions (same literal ContactSettingCategory
+// values, same '0'/'1'/'None' Opening/Offered pattern), so they share this calculation path too.
+// Bellavita's OP/CSP scripts stay hardcoded below (verbatim business copy given for it specifically);
+// GNC/Neemans' scripts are stored in shivamgiri.md_magical_scripts, editable via the same "Edit
+// Scripts" admin UI the generic flow uses.
+const BELLAVITA_CLIENT_ID = '375';
+const COLUMN_BASED_CLIENTS: Record<string, string> = {
+  '375': 'Bellavita',
+  '409': 'GNC',
+  '475': "Neeman's",
+};
+
+const BELLAVITA_OP_SCRIPT =
+  `Good Morning/Afternoon/Evening.\n\n` +
+  `Thank you for choosing Bella Vita Organic.\n\n` +
+  `Am I speaking with Mr./Ms. {Customer Name}?\n\n` +
+  `We're calling regarding your recent Bella Vita purchase to understand your experience and to share an exclusive benefit available only for our existing customers.\n\n` +
+  `Is this a good time to talk for two minutes?`;
+
+const BELLAVITA_CSP_SCRIPTS: { category: string; label: string; text: string }[] = [
+  {
+    category: 'Feedback before Offer Pitch',
+    label: 'Feedback before Offer Pitch',
+    text:
+      `Sir/Ma'am, yeh call aapke recent purchase {Product Name} ke feedback ke liye hai.\n\n` +
+      `Mujhe umeed hai ki aapko product use karne ka mauka mila hoga.\n\n` +
+      `Main bas yeh jaana chahta/chahti hoon ki aapka overall experience kaisa raha?\n\n` +
+      `Kya aapko product ki quality, fragrance aur performance pasand aayi?`,
+  },
+  {
+    category: 'Feedback&Offer Pitch Same Time',
+    label: 'Feedback & Offer Pitch Same Time',
+    text:
+      `Sir/Ma'am, yeh call aapke recent purchase {Product Name} ke feedback ke liye hai. Mujhe umeed hai ki aapko product pasand aaya hoga. ` +
+      `Saath hi, aaj hum aapke liye ek exclusive Bella Vita repeat customer offer bhi lekar aaye hain. Offer share karne se pehle, main aapka feedback jaana chahta/chahti hoon.`,
+  },
+];
+
+// First-match-wins — mirrors the exact CASE the categories were specified with. Two entries key off
+// SubCategory rather than Category (their real values happen to live in that column for Bellavita).
+const BELLAVITA_CATEGORY_CASE_SQL = `CASE
+  WHEN cd.Category = 'Already Owns Enough' THEN 'Already Owns Enough'
+  WHEN cd.Category = 'Delivery & Purchase Considerations' THEN 'Delivery & Purchase Considerations'
+  WHEN cd.Category = 'Fragrance Concerns' THEN 'Fragrance Concerns'
+  WHEN cd.SubCategory = 'Not Interested in Perfumes' THEN 'Not Interested in Perfumes'
+  WHEN cd.Category = 'Pricing Concerns' THEN 'Pricing Concerns'
+  WHEN cd.Category = 'Product Issues' THEN 'Product Issues'
+  WHEN cd.SubCategory = 'Overstock/No Need for More' THEN 'Overstock/No Need for More'
+  WHEN cd.Category = 'Service Issues' THEN 'Service Issues'
+  WHEN cd.Category = 'Product Quality Concerns' THEN 'Product Quality Concerns'
+  ELSE NULL
+END`;
+
+// Bellavita keeps its exact hand-specified taxonomy (above) so its already-verified category
+// breakdown never changes. Every other column-based client (GNC, Neemans, ...) gets a generic
+// fallback: raw Category value, or SubCategory if Category is blank/None — no per-client CASE
+// needed, since the objection-script editor lets you map a script to whatever real value shows up.
+const RESOLVED_CATEGORY_CASE_SQL = `CASE
+  WHEN cd.client_id = 375 THEN (${BELLAVITA_CATEGORY_CASE_SQL})
+  ELSE (
+    CASE
+      WHEN cd.Category IS NOT NULL AND cd.Category NOT IN ('', 'None') THEN LEFT(cd.Category, 120)
+      WHEN cd.SubCategory IS NOT NULL AND cd.SubCategory NOT IN ('', 'None') THEN LEFT(cd.SubCategory, 120)
+      ELSE NULL
+    END
+  )
+END`;
+
+const BELLAVITA_CATEGORY_SCRIPTS: Record<string, string> = {
+  'Already Owns Enough':
+    `Ma'am, main samajh sakta hoon ki aapke paas already similar products hain. Lekin agar aap site se purchase karte hain, toh cost ₹1500-₹1600 hogi. ` +
+    `Par main aapko sirf ₹999 mein 3 premium 100ml perfumes offer kar sakta hoon. Iske saath exclusive discounts aur additional gifts bhi milenge, jo sirf limited time ke liye available hain. ` +
+    `Ye ek special deal hai jo aapko app par nahi milegi. Kya main aapke liye best fragrance options share karoon?`,
+  'Delivery & Purchase Considerations':
+    `Sir, main aapki concern bilkul samajh sakta hoon. Agar aapko payment mein koi issue ho raha hai, toh main aapki madad kar sakta hoon taaki transaction smoothly complete ho sake. ` +
+    `Agar delivery ya order receive karne mein koi dikkat hai, toh main ensure karunga ki wo jaldi se resolve ho jaye. Saath hi, main aapko payment process guide kar sakta hoon aur turant aapko payment link share kar deta hoon. ` +
+    `Aap chahein toh on-call hi apna order place kar sakte hain.`,
+  'Fragrance Concerns':
+    `Sir, I sincerely appreciate your feedback and apologize for any inconvenience you faced. I want to assure you that based on customer insights, we have upgraded our perfumes with an improved oil concentration, ` +
+    `providing long-lasting fragrance for up to 7-8 hours. Additionally, we have recently launched four new premium perfumes, which offer a superior experience. As a valued customer, we also have an exclusive offer for you. ` +
+    `Would you like me to share the details?`,
+  'Not Interested in Perfumes':
+    `Sir/Ma'am, 🔹 Gifting Angle – Samajhta hoon ki agar aap khud perfumes nahi use karte, toh aapke friends ya family mein koi aisa ho sakta hai jo fragrances ka fan ho. 👑 ` +
+    `Aur haan, agar aapko body care ya skincare products chahiye, toh humare paas killer shower gels, body lotions, aur skincare options bhi hain jo gift ke liye always hit hote hain. Aapke loved ones ko definitely pasand aayenge! 🎁`,
+  'Pricing Concerns':
+    `Exclusive Limited-Time Offer Just for You! Sir/Ma'am, agar aap prepaid karte ho toh delivery charges free milenge plus ek ₹99 ke mast gift bhi milega! Aur haan, products humare totally high-quality, zero side-effect wale hain, ` +
+    `bilkul daily use ke liye perfect. Samajh sakta hoon ki budget matter karta hai, lekin sach ye hai ki prices abhi stable hain par jaldi badh sakte hain aur stocks bhi tez sell ho rahe hain. ` +
+    `Toh abhi le lo apne fave products, warna baad mein price zyada dena padega? 😊`,
+  'Product Issues':
+    `Sir, maafi chaahenge iske regarding. Main aapka feedback share kar doongi. Agar aap long-lasting fragrance chaahte hain, to hamari newly launched Uniquex category try kijiye. Iski fragrance aur lasting power dono hi kaafi demand mein hain. ` +
+    `Agar aapko specific fragrance chaahiye, to main aapke preference ke according best option suggest kar sakti hoon. Saath hi, agar aap allow karein, to main aapke liye ek exclusive offer bhi add karwa sakti hoon, jo aapke last purchase se bhi better hoga. ` +
+    `Aapko premium quality aur best discount dono milega. Kya main aapke order mein add kar doon?`,
+  'Overstock/No Need for More':
+    `Bilkul samajh sakta hoon! Waise bhi, jo deal main aaj de raha hoon, wo future mein mile, ye guaranteed nahi. Agar aap aaj lene ka decide karte hain toh aapko price bhi best milega. ` +
+    `Aur haan, BellaVita products ki shelf life bhi kaafi lambi hoti hai, toh fresh stock mil jayega. Waise aapko bataun, skincare aur body care mein bhi hamare kuch killer products hain, jo aapke routine ko next level banayenge. Thoda suggest karoon?`,
+  'Service Issues':
+    `Sir/Ma'am, I completely understand your concerns, and I truly appreciate your time. I want to assure you that we are here to provide you with the best service. Regarding your previous concerns, we have improved our delivery process to ensure that parcels are handed directly to the customer with proper notification. ` +
+    `Additionally, I understand that you've already been informed about our offers, but I just wanted to highlight a special deal that might interest you. We're offering an exclusive discount along with a hassle-free return policy and a secure payment method for your convenience. Let me know how I can assist you further!`,
+  'Product Quality Concerns':
+    `Maafi chaahoongi sir, jo bhi aapko concern raha. Kya aap mujhe bata sakte hain ki exact issue kya tha—long-lasting ya fragrance ka. Sir, aapke feedback ke liye dhanyavaad. Humne is concern par kaafi kaam kiya hai aur ab fragrances ko aur long-lasting aur premium quality ka banaya gaya hai. ` +
+    `Iske saath hi, hum aaj ke liye sirf valuable customers ke liye ek exclusive offer bhi la rahe hain. Agar aap chahein to main aapko mild aur long-lasting category ke kuchh naye options suggest kar sakti hoon jo aapke preference ke according best rahenge. ` +
+    `Is baar sir, ek special trial pack bhi diya ja raha hai jo aapke pasand ke fragrance ke saath aata hai. Kya main aapke liye is offer ka benefit check kar sakti hoon?`,
+};
+
+// ── Magical Script cache ────────────────────────────────────────────────────────
+// Every query above (Bellavita's 5 + the generic flow's 2) was a live scan over CallDetails —
+// none of Opening/ContactSettingContext/OpeningPitchCategory/Offered/Category/SubCategory/
+// CustomerObjectionCategory/ObjectionHandlingContext/AfterListeningOfferRejected are indexed, so
+// each one costs real per-row evaluation time. Measured at ~2.5 minutes for Bellavita alone
+// (178K rows) even after parallelizing. Same fix as Outbound Customer Interaction Insights: a
+// background job pre-classifies every call once into a small, fully-indexed cache table in
+// db_masmis, and both getBellavitaMagicalScript/getMagicalScript read only from that cache.
+//
+// Unlike the Insights cache (which only needed a recent rolling window), Magical Script supports
+// picking any historical date range, so this cache needs full-table coverage, not just "last 30
+// days". The backfill walks id DESCENDING (newest calls classified first, so whatever date range
+// a user is actually looking at right now — usually the current/last month — becomes fast almost
+// immediately) and eventually reaches every historical row.
+export async function initMagicalScriptCacheTables(): Promise<void> {
+  const pool = getMasmisPool();
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.magical_script_cache (
+        call_id             INT PRIMARY KEY,
+        client_id           INT NOT NULL,
+        call_date           DATETIME NOT NULL,
+        op_success          TINYINT(1) NULL,
+        csp_success         TINYINT(1) NOT NULL DEFAULT 0,
+        csp_call_end        TINYINT(1) NOT NULL DEFAULT 0,
+        csp_variant         VARCHAR(20) NULL,
+        offer_success       TINYINT(1) NOT NULL DEFAULT 0,
+        product_offering    VARCHAR(255) NULL,
+        resolved_category   VARCHAR(120) NULL,
+        sale_done           TINYINT(1) NOT NULL DEFAULT 0,
+        call_stage          VARCHAR(20) NOT NULL DEFAULT 'opening_rejected',
+        objection_category  VARCHAR(120) NULL,
+        computed_at         DATETIME DEFAULT NOW(),
+        INDEX idx_client_date (client_id, call_date)
+      )
+    `);
+
+    // Migration for a table created before GNC/Neemans support widened resolved_category to hold
+    // arbitrary real Category/SubCategory text (not just Bellavita's short hand-picked labels).
+    const [colRows] = await pool.execute(`
+      SELECT CHARACTER_MAXIMUM_LENGTH AS len FROM information_schema.columns
+      WHERE TABLE_SCHEMA = 'db_masmis' AND TABLE_NAME = 'magical_script_cache' AND COLUMN_NAME = 'resolved_category'
+    `);
+    const currentLen = Number((colRows as { len: number }[])[0]?.len ?? 120);
+    let migrated = false;
+    if (currentLen < 120) {
+      await pool.execute(`ALTER TABLE db_masmis.magical_script_cache MODIFY COLUMN resolved_category VARCHAR(120) NULL`);
+      migrated = true;
+    }
+
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.magical_script_cursor (
+        id      TINYINT PRIMARY KEY DEFAULT 1,
+        next_id INT NOT NULL DEFAULT 0
+      )
+    `);
+    const [cursorRows] = await pool.execute(`SELECT next_id FROM db_masmis.magical_script_cursor WHERE id = 1`);
+    if ((cursorRows as any[]).length === 0) {
+      const seedRows = await querySource<{ maxId: number }>(`SELECT COALESCE(MAX(id), 0) AS maxId FROM db_external.CallDetails`);
+      const seedId = Number(seedRows[0]?.maxId ?? 0) + 1;
+      await pool.execute(`INSERT INTO db_masmis.magical_script_cursor (id, next_id) VALUES (1, ?)`, [seedId]);
+    } else if (migrated) {
+      const seedRows = await querySource<{ maxId: number }>(`SELECT COALESCE(MAX(id), 0) AS maxId FROM db_external.CallDetails`);
+      const seedId = Number(seedRows[0]?.maxId ?? 0) + 1;
+      await pool.execute(`UPDATE db_masmis.magical_script_cursor SET next_id = ? WHERE id = 1`, [seedId]);
+    }
+  } catch (err) {
+    console.error('[quality] initMagicalScriptCacheTables warning:', (err as Error).message);
+  }
+}
+
+async function processMagicalScriptBatch(batchSize = 1000): Promise<number> {
+  const [cursorRow] = await queryMasmis<{ next_id: number }>(
+    `SELECT next_id FROM db_masmis.magical_script_cursor WHERE id = 1`
+  );
+  const nextId = cursorRow?.next_id ?? 0;
+  if (nextId <= 0) return 0; // fully backfilled — nothing older left to classify
+
+  type Row = {
+    id: number; client_id: number; CallDate: string;
+    op_success: number | null; csp_success: number; csp_call_end: number; csp_variant: string | null;
+    offer_success: number; product_offering: string | null; resolved_category: string | null;
+    sale_done: number; call_stage: string; objection_category: string | null;
+  };
+
+  const rows = await querySource<Row>(`
+    SELECT
+      cd.id, cd.client_id, cd.CallDate,
+      CASE WHEN cd.Opening IS NULL OR cd.Opening = 'None' THEN NULL
+           WHEN cd.Opening IN ('', '0') THEN 0 ELSE 1 END AS op_success,
+      CASE WHEN cd.ContactSettingContext IS NOT NULL AND cd.ContactSettingContext NOT IN ('', 'None') THEN 1 ELSE 0 END AS csp_success,
+      CASE WHEN
+            (cd.OpeningPitchCategory IS NOT NULL AND cd.OpeningPitchCategory NOT IN ('', 'None', '["None"]', '[]'))
+            AND (cd.ContactSettingContext IS NULL OR cd.ContactSettingContext = 'None')
+          THEN 1 ELSE 0 END AS csp_call_end,
+      CASE WHEN cd.ContactSettingCategory = 'Feedback before Offer Pitch' THEN 'before'
+           WHEN cd.ContactSettingCategory IN ('Feedback&Offer Pitch Same Time', 'Feedback & Offer Pitch Same Time') THEN 'same'
+           ELSE NULL END AS csp_variant,
+      CASE WHEN cd.Offered = '1' THEN 1 ELSE 0 END AS offer_success,
+      CASE WHEN cd.Offered = '1' AND cd.ProductOffering IS NOT NULL AND cd.ProductOffering NOT IN ('', 'None') THEN LEFT(cd.ProductOffering, 255) ELSE NULL END AS product_offering,
+      ${RESOLVED_CATEGORY_CASE_SQL} AS resolved_category,
+      CASE WHEN cd.SaleDone = '1' THEN 1 ELSE 0 END AS sale_done,
+      CASE
+        WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'post_offer'
+        WHEN cd.ObjectionHandlingContext = 'None'                   THEN 'offering_rejected'
+        WHEN cd.ContactSettingContext    = 'None'                   THEN 'context_rejected'
+        ELSE 'opening_rejected'
+      END AS call_stage,
+      CASE WHEN cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory NOT IN ('', 'None') THEN cd.CustomerObjectionCategory ELSE NULL END AS objection_category
+    FROM db_external.CallDetails cd
+    WHERE cd.id < ? AND cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
+      AND cd.client_id IS NOT NULL
+    ORDER BY cd.id DESC
+    LIMIT ${Number(batchSize)}
+  `, [nextId]);
+
+  if (rows.length === 0) {
+    await queryMasmis(`UPDATE db_masmis.magical_script_cursor SET next_id = 0 WHERE id = 1`);
+    return 0;
+  }
+
+  const cols = [
+    'call_id', 'client_id', 'call_date',
+    'op_success', 'csp_success', 'csp_call_end', 'csp_variant',
+    'offer_success', 'product_offering', 'resolved_category',
+    'sale_done', 'call_stage', 'objection_category',
+  ];
+  const placeholders = rows.map(() => `(${cols.map(() => '?').join(',')},NOW())`).join(',');
+  const flat = rows.flatMap(r => [
+    r.id, r.client_id, r.CallDate,
+    r.op_success, r.csp_success, r.csp_call_end, r.csp_variant,
+    r.offer_success, r.product_offering, r.resolved_category,
+    r.sale_done, r.call_stage, r.objection_category,
+  ]);
+  const updateCols = cols.filter(c => c !== 'call_id').map(c => `${c} = VALUES(${c})`).join(', ');
+
+  await queryMasmis(`
+    INSERT INTO db_masmis.magical_script_cache (${cols.join(', ')}, computed_at)
+    VALUES ${placeholders}
+    ON DUPLICATE KEY UPDATE ${updateCols}, computed_at = NOW()
+  `, flat);
+
+  const newNextId = rows[rows.length - 1].id; // smallest id in this DESC-ordered batch
+  await queryMasmis(`UPDATE db_masmis.magical_script_cursor SET next_id = ? WHERE id = 1`, [newNextId]);
+
+  return rows.length;
+}
+
+let magicalScriptCacheRunning = false;
+async function runMagicalScriptCatchUp(): Promise<void> {
+  if (magicalScriptCacheRunning) return;
+  magicalScriptCacheRunning = true;
+  try {
+    let processed = 0;
+    do {
+      processed = await processMagicalScriptBatch(1000);
+      if (processed > 0) await new Promise(r => setTimeout(r, 300));
+    } while (processed > 0);
+  } catch (err) {
+    console.error('[quality] magical script cache batch error:', (err as Error).message);
+  } finally {
+    magicalScriptCacheRunning = false;
+  }
+}
+
+export function startMagicalScriptCacheJob(): void {
+  runMagicalScriptCatchUp().catch(() => {});
+  const timer = setInterval(() => { runMagicalScriptCatchUp().catch(() => {}); }, 5 * 60 * 1000);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
+async function magicalScriptCacheStatus(): Promise<{ cachedThrough: string | null }> {
+  const [row] = await queryMasmis<{ last_computed: string | null }>(
+    `SELECT MAX(computed_at) AS last_computed FROM db_masmis.magical_script_cache`
+  );
+  return { cachedThrough: row?.last_computed ? String(row.last_computed) : null };
+}
+
+export interface BellavitaStageMetrics {
+  total_in: number;
+  call_end: number;
+  success: number;
+  success_rate: number;
+  contribution: number;
+  contribution_rate: number;
+}
+export interface BellavitaMagicalScriptData {
+  variant: 'bellavita';
+  op: BellavitaStageMetrics & { script: string };
+  csp: BellavitaStageMetrics & { scripts: { label: string; text: string; count: number }[] };
+  offer: BellavitaStageMetrics & { script: string; topProduct: string | null; products: { product: string; count: number }[] };
+  categories: { category: string; script: string; total: number; contribution_pct: number; call_end: number; sale_done: number; conv_pct: number }[];
+  cachedThrough: string | null;
+}
+
+async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<BellavitaMagicalScriptData> {
+  const { startDate, endDate } = filters;
+  const dialdeskClientId = Number(filters.clientId);
+  const isBellavita = filters.clientId === BELLAVITA_CLIENT_ID;
+  const baseParams = [startDate, endDate];
+  const pct = (n: number, d: number) => d > 0 ? Math.round((n / d) * 1000) / 10 : 0;
+
+  // All 5 reads come from the pre-classified db_masmis cache (see initMagicalScriptCacheTables /
+  // processMagicalScriptBatch above) instead of scanning CallDetails live — that's what cut this
+  // from ~2.5 minutes down to near-instant.
+  const [opRows, cspRows, offerRows, products, categoryRows, status, configRows] = await Promise.all([
+    // OP: op_success is NULL for the excluded population (Opening IS NULL/'None'); COUNT(op_success)
+    // naturally skips those rows, matching "do not count None value".
+    queryMasmis<{ total: number; call_end: number; success: number; sale_contrib: number }>(`
+      SELECT
+        COUNT(op_success) AS total,
+        SUM(CASE WHEN op_success = 0 THEN 1 ELSE 0 END) AS call_end,
+        SUM(CASE WHEN op_success = 1 THEN 1 ELSE 0 END) AS success,
+        SUM(CASE WHEN op_success IS NOT NULL AND sale_done = 1 THEN 1 ELSE 0 END) AS sale_contrib
+      FROM db_masmis.magical_script_cache
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?
+    `, baseParams),
+
+    // CSP: population = calls that passed Opening.
+    queryMasmis<{
+      total: number; call_end: number; success: number; sale_contrib: number;
+      feedback_before: number; feedback_same: number;
+    }>(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(csp_call_end) AS call_end,
+        SUM(csp_success) AS success,
+        SUM(sale_done) AS sale_contrib,
+        SUM(CASE WHEN csp_variant = 'before' THEN 1 ELSE 0 END) AS feedback_before,
+        SUM(CASE WHEN csp_variant = 'same' THEN 1 ELSE 0 END) AS feedback_same
+      FROM db_masmis.magical_script_cache
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND op_success = 1
+    `, baseParams),
+
+    // Offer: population = calls that passed CSP.
+    queryMasmis<{ total: number; call_end: number; success: number; sale_contrib: number }>(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN offer_success = 0 THEN 1 ELSE 0 END) AS call_end,
+        SUM(offer_success) AS success,
+        SUM(CASE WHEN offer_success = 1 AND sale_done = 1 THEN 1 ELSE 0 END) AS sale_contrib
+      FROM db_masmis.magical_script_cache
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND op_success = 1 AND csp_success = 1
+    `, baseParams),
+
+    queryMasmis<{ product: string; n: number }>(`
+      SELECT product_offering AS product, COUNT(*) AS n
+      FROM db_masmis.magical_script_cache
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?
+        AND offer_success = 1 AND product_offering IS NOT NULL
+      GROUP BY product_offering
+      ORDER BY n DESC
+    `, baseParams),
+
+    queryMasmis<{ resolved_category: string; total: number; sales: number }>(`
+      SELECT resolved_category, COUNT(*) AS total, SUM(sale_done) AS sales
+      FROM db_masmis.magical_script_cache
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND resolved_category IS NOT NULL
+      GROUP BY resolved_category
+      ORDER BY total DESC
+      LIMIT 4
+    `, baseParams),
+
+    magicalScriptCacheStatus(),
+
+    // Bellavita's OP/CSP scripts stay hardcoded (below) — everyone else's come from
+    // shivamgiri.md_magical_scripts, editable via the same "Edit Scripts" admin UI the generic
+    // flow uses, so a new column-based client never needs a code change to get real script text.
+    isBellavita ? Promise.resolve([]) : getMagicalScriptConfig(dialdeskClientId),
+  ]);
+  const [opRow] = opRows;
+  const [cspRow] = cspRows;
+  const [offerRow] = offerRows;
+
+  const stage = (r: { total: number; call_end: number; success: number; sale_contrib: number } | undefined): BellavitaStageMetrics => {
+    const total = Number(r?.total ?? 0);
+    const success = Number(r?.success ?? 0);
+    const contribution = Number(r?.sale_contrib ?? 0);
+    return {
+      total_in: total,
+      call_end: Number(r?.call_end ?? 0),
+      success,
+      success_rate: pct(success, total),
+      contribution,
+      contribution_rate: pct(contribution, total),
+    };
+  };
+
+  const totalCategoryCalls = categoryRows.reduce((s, r) => s + Number(r.total), 0) || 1;
+
+  const opConfig    = configRows.find(r => r.stage === 'op');
+  const cspConfig    = configRows.find(r => r.stage === 'csp');
+  const offerConfig = configRows.find(r => r.stage === 'offer');
+  const objectionConfig = configRows.filter(r => r.stage === 'objection');
+
+  return {
+    variant: 'bellavita',
+    op: {
+      ...stage(opRow),
+      script: isBellavita ? BELLAVITA_OP_SCRIPT : (opConfig?.scriptText ?? ''),
+    },
+    csp: {
+      ...stage(cspRow),
+      scripts: isBellavita
+        ? BELLAVITA_CSP_SCRIPTS.map(s => ({
+            label: s.label,
+            text: s.text,
+            count: s.category === 'Feedback before Offer Pitch' ? Number(cspRow?.feedback_before ?? 0) : Number(cspRow?.feedback_same ?? 0),
+          }))
+        : (cspConfig ? [{ label: cspConfig.stageTitle, text: cspConfig.scriptText ?? '', count: Number(cspRow?.total ?? 0) }] : []),
+    },
+    offer: {
+      ...stage(offerRow),
+      script: isBellavita ? '' : (offerConfig?.scriptText ?? ''),
+      topProduct: isBellavita ? (products[0]?.product ?? null) : null,
+      products: isBellavita ? products.map(p => ({ product: p.product, count: Number(p.n) })) : [],
+    },
+    categories: categoryRows.map(r => {
+      const total = Number(r.total);
+      const sales = Number(r.sales);
+      const script = isBellavita
+        ? (BELLAVITA_CATEGORY_SCRIPTS[r.resolved_category] ?? '')
+        : (objectionConfig.find(c => c.objectionCategory === r.resolved_category)?.scriptText ?? '');
+      return {
+        category: r.resolved_category,
+        script,
+        total,
+        contribution_pct: pct(total, totalCategoryCalls),
+        call_end: total - sales,
+        sale_done: sales,
+        conv_pct: pct(sales, total),
+      };
+    }),
+    cachedThrough: status.cachedThrough,
+  };
+}
+
 export async function getMagicalScript(filters: QualityFilters) {
+  if (filters.clientId && COLUMN_BASED_CLIENTS[filters.clientId]) {
+    return getColumnBasedMagicalScript(filters);
+  }
+
   const { startDate, endDate, clientId } = filters;
-  const { sql: cf, params: cfParams } = clientClause(filters);
-  const dateParams = [startDate, endDate, ...cfParams];
+  const cacheDateParams = [startDate, endDate];
+  const cacheClientFilter = clientId ? ' AND client_id = ?' : '';
+  const cacheParams = clientId ? [...cacheDateParams, Number(clientId)] : cacheDateParams;
 
   // Resolve internal client id for the scripts config table
   const internalRow = clientId
@@ -1409,7 +1913,10 @@ export async function getMagicalScript(filters: QualityFilters) {
     : null;
   const internalClientId = internalRow?.id ?? null;
 
-  const [scripts, flowRaw, objRaw] = await Promise.all([
+  // flow/objections read from the same pre-classified db_masmis cache Bellavita uses (see
+  // initMagicalScriptCacheTables / processMagicalScriptBatch above) instead of scanning
+  // CallDetails live — same fix, same reason.
+  const [scripts, flowRaw, objRaw, status] = await Promise.all([
     internalClientId
       ? querySource<{ stage: string; stage_title: string; objection_category: string | null; script_text: string | null; display_order: number }>(
           `SELECT stage, stage_title, objection_category, script_text, display_order
@@ -1420,44 +1927,30 @@ export async function getMagicalScript(filters: QualityFilters) {
         )
       : ([] as { stage: string; stage_title: string; objection_category: string | null; script_text: string | null; display_order: number }[]),
 
-    querySource<{ total: number; op_pass: number; csp_pass: number; offer_pass: number; sale_done: number }>(`
-      WITH base AS (
-        SELECT
-          CASE
-            WHEN cd.AfterListeningOfferRejected = 1 OR cd.SaleDone = 1 THEN 'post_offer'
-            WHEN cd.ObjectionHandlingContext = 'None'                   THEN 'offering_rejected'
-            WHEN cd.ContactSettingContext    = 'None'                   THEN 'context_rejected'
-            ELSE 'opening_rejected'
-          END AS call_stage,
-          COALESCE(cd.SaleDone, 0) AS is_sale
-        FROM db_external.CallDetails cd
-        WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-          AND cd.CallDate BETWEEN ? AND ? ${cf}
-      )
+    queryMasmis<{ total: number; op_pass: number; csp_pass: number; offer_pass: number; sale_done: number }>(`
       SELECT
-        COUNT(*)                                                                   AS total,
-        SUM(CASE WHEN call_stage != 'opening_rejected' THEN 1 ELSE 0 END)          AS op_pass,
+        COUNT(*)                                                             AS total,
+        SUM(CASE WHEN call_stage != 'opening_rejected' THEN 1 ELSE 0 END)    AS op_pass,
         SUM(CASE WHEN call_stage IN ('offering_rejected','post_offer') THEN 1 ELSE 0 END) AS csp_pass,
-        SUM(CASE WHEN call_stage = 'post_offer'        THEN 1 ELSE 0 END)          AS offer_pass,
-        SUM(is_sale)                                                               AS sale_done
-      FROM base
-    `, dateParams),
+        SUM(CASE WHEN call_stage = 'post_offer'        THEN 1 ELSE 0 END)    AS offer_pass,
+        SUM(sale_done)                                                       AS sale_done
+      FROM db_masmis.magical_script_cache
+      WHERE call_date BETWEEN ? AND ? ${cacheClientFilter}
+    `, cacheParams),
 
-    querySource<{ cat: string; total: number; sales: number; conv_pct: number }>(`
+    queryMasmis<{ cat: string; total: number; sales: number; conv_pct: number }>(`
       SELECT
-        cd.CustomerObjectionCategory                                                            AS cat,
-        COUNT(*)                                                                                AS total,
-        SUM(CASE WHEN COALESCE(cd.SaleDone,0)=1 THEN 1 ELSE 0 END)                            AS sales,
-        ROUND(SUM(CASE WHEN COALESCE(cd.SaleDone,0)=1 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) AS conv_pct
-      FROM db_external.CallDetails cd
-      WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-        AND cd.CallDate BETWEEN ? AND ?
-        AND cd.CustomerObjectionCategory IS NOT NULL
-        AND cd.CustomerObjectionCategory != ''
-        AND cd.CustomerObjectionCategory != 'None' ${cf}
-      GROUP BY cd.CustomerObjectionCategory
+        objection_category                                            AS cat,
+        COUNT(*)                                                       AS total,
+        SUM(sale_done)                                                 AS sales,
+        ROUND(SUM(sale_done) * 100.0 / NULLIF(COUNT(*), 0), 1)         AS conv_pct
+      FROM db_masmis.magical_script_cache
+      WHERE call_date BETWEEN ? AND ? AND objection_category IS NOT NULL ${cacheClientFilter}
+      GROUP BY objection_category
       ORDER BY total DESC
-    `, dateParams),
+    `, cacheParams),
+
+    magicalScriptCacheStatus(),
   ]);
 
   const f       = flowRaw[0] ?? { total: 0, op_pass: 0, csp_pass: 0, offer_pass: 0, sale_done: 0 };
@@ -1508,6 +2001,7 @@ export async function getMagicalScript(filters: QualityFilters) {
     });
 
   return {
+    variant: 'generic' as const,
     summary: {
       total_calls:   Number(f.total),
       op_pass:       opPass,
@@ -1518,7 +2012,100 @@ export async function getMagicalScript(filters: QualityFilters) {
     },
     flow:       flowStages,
     objections,
+    cachedThrough: status.cachedThrough,
   };
+}
+
+// ── Magical Script config editor (admin) ───────────────────────────────────────
+// Lets a manager/admin type each process's OP/CSP/Offer + objection-handling scripts straight into
+// the dashboard instead of needing a code change per process — this is what getMagicalScript above
+// reads via shivamgiri.md_magical_scripts for every non-Bellavita outbound client.
+export interface MagicalScriptConfigRow {
+  id: number;
+  stage: 'op' | 'csp' | 'offer' | 'objection';
+  stageTitle: string;
+  objectionCategory: string | null;
+  scriptText: string | null;
+  displayOrder: number;
+}
+
+async function resolveInternalClientId(dialdeskClientId: number, createIfMissing: boolean): Promise<number | null> {
+  const row = (await querySource<{ id: number }>(
+    'SELECT id FROM shivamgiri.md_clients WHERE dialdesk_client_id = ? LIMIT 1', [dialdeskClientId]
+  ))[0];
+  if (row) return row.id;
+  if (!createIfMissing) return null;
+  const [result] = await getSourcePool().execute(
+    'INSERT INTO shivamgiri.md_clients (name, dialdesk_client_id) VALUES (?, ?)',
+    [`Client ${dialdeskClientId}`, dialdeskClientId],
+  );
+  return (result as { insertId: number }).insertId;
+}
+
+export async function getMagicalScriptConfig(dialdeskClientId: number): Promise<MagicalScriptConfigRow[]> {
+  const internalClientId = await resolveInternalClientId(dialdeskClientId, false);
+  if (!internalClientId) return [];
+  const rows = await querySource<{
+    id: number; stage: string; stage_title: string; objection_category: string | null;
+    script_text: string | null; display_order: number;
+  }>(`
+    SELECT id, stage, stage_title, objection_category, script_text, display_order
+    FROM shivamgiri.md_magical_scripts
+    WHERE client_id = ? AND is_active = 1
+    ORDER BY FIELD(stage, 'op', 'csp', 'offer', 'objection'), display_order, id
+  `, [internalClientId]);
+  return rows.map(r => ({
+    id: r.id,
+    stage: r.stage as MagicalScriptConfigRow['stage'],
+    stageTitle: r.stage_title,
+    objectionCategory: r.objection_category,
+    scriptText: r.script_text,
+    displayOrder: Number(r.display_order),
+  }));
+}
+
+export async function getMagicalScriptObjectionOptions(dialdeskClientId: number): Promise<string[]> {
+  const rows = await queryMasmis<{ objection_category: string }>(`
+    SELECT DISTINCT objection_category
+    FROM db_masmis.magical_script_cache
+    WHERE client_id = ? AND objection_category IS NOT NULL
+    ORDER BY objection_category
+  `, [dialdeskClientId]);
+  return rows.map(r => r.objection_category);
+}
+
+export async function saveMagicalScriptConfig(dialdeskClientId: number, input: {
+  id?: number; stage: string; stageTitle: string; objectionCategory: string | null; scriptText: string; displayOrder: number;
+}): Promise<MagicalScriptConfigRow> {
+  const internalClientId = await resolveInternalClientId(dialdeskClientId, true);
+  const objectionCategory = input.stage === 'objection' ? (input.objectionCategory || null) : null;
+
+  if (input.id) {
+    await getSourcePool().execute(
+      `UPDATE shivamgiri.md_magical_scripts
+       SET stage = ?, stage_title = ?, objection_category = ?, script_text = ?, display_order = ?, updated_at = NOW()
+       WHERE id = ? AND client_id = ?`,
+      [input.stage, input.stageTitle, objectionCategory, input.scriptText, input.displayOrder, input.id, internalClientId],
+    );
+    return { id: input.id, stage: input.stage as MagicalScriptConfigRow['stage'], stageTitle: input.stageTitle, objectionCategory, scriptText: input.scriptText, displayOrder: input.displayOrder };
+  }
+
+  const [result] = await getSourcePool().execute(
+    `INSERT INTO shivamgiri.md_magical_scripts (client_id, stage, stage_title, objection_category, script_text, display_order, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, 1)`,
+    [internalClientId, input.stage, input.stageTitle, objectionCategory, input.scriptText, input.displayOrder],
+  );
+  const id = (result as { insertId: number }).insertId;
+  return { id, stage: input.stage as MagicalScriptConfigRow['stage'], stageTitle: input.stageTitle, objectionCategory, scriptText: input.scriptText, displayOrder: input.displayOrder };
+}
+
+export async function deleteMagicalScriptConfig(dialdeskClientId: number, id: number): Promise<void> {
+  const internalClientId = await resolveInternalClientId(dialdeskClientId, false);
+  if (!internalClientId) return;
+  await getSourcePool().execute(
+    `DELETE FROM shivamgiri.md_magical_scripts WHERE id = ? AND client_id = ?`,
+    [id, internalClientId],
+  );
 }
 
 // ─── Customer Interaction Insights (Outbound) ─────────────────────────────────
@@ -1526,49 +2113,142 @@ export async function getMagicalScript(filters: QualityFilters) {
 // CallDetails table has no pre-computed sentiment/VOC columns — everything here is
 // derived by keyword-matching the raw TranscribeText column directly.
 
-// Plain LIKE '%...%' substring matching — no FULLTEXT index exists on TranscribeText (a live
-// insert pipeline writes to this table and building one caused real contention; see project notes).
-// Terms may carry MATCH...AGAINST-style decoration ("phrase", word*) from when this used FULLTEXT —
-// stripped here so the keyword lists below didn't need to change.
+// Word-boundary-safe keyword matching — MySQL 8's ICU regex engine supports \b. This replaces a
+// prior plain LIKE '%...%' approach that produced real false positives: "fir" (meant as the legal
+// term) matched as a substring inside unrelated words like "first", and even matched as a whole
+// word it collides with the common Hindi filler "fir" ("then") — pure noise in Hinglish transcripts.
+// Bare "court" similarly matched inside unrelated mentions like "Court Road" (a street name, not a
+// threat). Fix is two-fold: (1) enforce word boundaries so short tokens can't match mid-word, and
+// (2) prefer specific multi-word phrases ("consumer court", "fir karunga") over bare ambiguous
+// single words in the lists below — word-boundaries alone don't stop "court" the address word from
+// matching "court" the legal term, only the phrase does. Terms ending in "*" are prefix/stems (left
+// boundary only, e.g. "frustrat*" also matches "frustrated"/"frustrating"); terms without "*" must
+// match as a whole word/phrase (both boundaries).
+const esc = (term: string) => term.toLowerCase().replace(/'/g, "\\'");
 const against = (terms: string[]) => {
-  const clean = terms.map(t => t.replace(/^"|"$/g, '').replace(/\*$/, '').toLowerCase());
-  return '(' + clean.map(k => `LOWER(cd.TranscribeText) LIKE '%${k}%'`).join(' OR ') + ')';
+  const parts = terms.map(t => {
+    const stem = t.endsWith('*');
+    const body = esc(stem ? t.slice(0, -1) : t);
+    return stem ? `\\\\b${body}` : `\\\\b${body}\\\\b`;
+  });
+  return `REGEXP_LIKE(LOWER(cd.TranscribeText), '(${parts.join('|')})')`;
 };
+const stripStar = (k: string) => k.endsWith('*') ? k.slice(0, -1) : k;
 
-const SOCIAL_COURT_KEYWORDS = [
-  'social media', 'consumer court', 'consumer forum', 'legal action',
-  'lawyer', 'fir', 'police complaint', 'blackmail', 'court case', 'legal notice',
+// ── Legal / Social / Financial escalation, Refund & Cancellation intent — each an independent
+// flag (a call can be both "Frustration" AND "Legal Escalation" at once), surfaced as their own
+// headline cards / Critical Signal chips instead of being folded together under one "Threat" bucket.
+const LEGAL_ESCALATION_KEYWORDS = [
+  'consumer court', 'consumer forum', 'court case', 'court me jaunga', 'court me milte hain',
+  'legal action', 'legal notice', 'court notice', 'notice bhejunga',
+  'advocate', 'lawyer', 'vakil',
+  'case karunga', 'case kar dunga',
+  'police complaint', 'fir karunga',
+  'cyber cell', 'cyber crime',
+  'sue', 'lawsuit', 'consumer protection', 'ipc', 'national consumer helpline',
 ];
-const OUTBOUND_SOCIAL_COURT_COND = against(SOCIAL_COURT_KEYWORDS.map(k => `"${k}"`));
+const OUTBOUND_LEGAL_COND = against(LEGAL_ESCALATION_KEYWORDS);
 
-const SCAM_KEYWORDS = ['scam', 'fraud', 'cheat', 'fake', 'loot'];
-const OUTBOUND_SCAM_COND = against(SCAM_KEYWORDS.map(k => `${k}*`));
+const SOCIAL_ESCALATION_KEYWORDS = [
+  'social media', 'facebook', 'instagram', 'twitter', 'youtube', 'linkedin',
+  'google review', 'negative review', '1 star review', 'viral',
+  'post karunga', 'tweet', 'reel', 'complaint online',
+  'social media par dalunga', 'viral kar dunga', 'facebook par dalunga',
+  'instagram par dalunga', 'youtube par video banaunga', 'review dunga',
+];
+const OUTBOUND_SOCIAL_COND = against(SOCIAL_ESCALATION_KEYWORDS);
+
+const FRAUD_KEYWORDS = [
+  'fraud', 'financial fraud', 'scam', 'fake', 'cheat', 'cheated', 'cheating', 'dhokha',
+  'loot', 'money lost', 'upi fraud', 'bank fraud', 'credit card fraud', 'debit card fraud',
+  'payment fraud', 'cyber fraud', 'otp fraud', 'fraud hai', 'fraud kar rahe ho', 'dhokha diya',
+  'fake company', 'fake product', 'paisa le liya',
+];
+const OUTBOUND_SCAM_COND = against(FRAUD_KEYWORDS);
+
+const REFUND_KEYWORDS = [
+  'refund', 'return money', 'money back', 'refund my payment', 'return my amount',
+  'paisa wapas', 'refund chahiye', 'refund nahi diya',
+];
+const OUTBOUND_REFUND_COND = against(REFUND_KEYWORDS);
+
+const CANCELLATION_KEYWORDS = [
+  'cancel my order', 'dont want', 'not interested', 'close my request',
+  'cancel kar do', 'nahi chahiye',
+];
+const OUTBOUND_CANCELLATION_COND = against(CANCELLATION_KEYWORDS);
 
 const OUTBOUND_GOLDEN_WORDS: { category: string; keywords: string[] }[] = [
-  { category: 'Courtesy & Gratitude',      keywords: ['thank', 'appreciat'] },
-  { category: 'Support & Assistance',      keywords: ['help', 'assist'] },
-  { category: 'Acknowledgement & Underst.', keywords: ['understand'] },
-  { category: 'Positive Reinforcement',    keywords: ['nice', 'good', 'great'] },
-  { category: 'Customer Satisfaction',     keywords: ['satisf'] },
-  { category: 'Other Keywords',            keywords: ['patient', 'happy', 'excellent', 'wonder'] },
+  { category: 'Courtesy & Gratitude', keywords: [
+    'thank you', 'thanks', 'thank you so much', 'much appreciated', 'appreciate it',
+    'thanks for your help', 'thank you for calling', 'thanks for explaining',
+    'dhanyawad', 'bahut dhanyawad', 'shukriya', 'thanks bhai', 'thanks sir', 'thanks madam',
+  ] },
+  { category: 'Support & Assistance', keywords: [
+    'can you help me', 'please help', 'need your support', 'guide me', 'please explain',
+    'can you check', 'please assist', 'can you verify', 'help me understand',
+    'help kar dijiye', 'samjha dijiye', 'please check', 'support chahiye',
+  ] },
+  { category: 'Acknowledgement & Underst.', keywords: [
+    'i understand', 'understood', 'got it', 'okay', 'makes sense', 'i agree', 'correct',
+    'samajh gaya', 'samajh gayi', 'theek hai', 'achha', 'bilkul',
+  ] },
+  { category: 'Positive Reinforcement', keywords: [
+    'sounds good', 'looks good', 'thats fine', 'perfect', 'excellent', 'great', 'awesome',
+    'wonderful', 'nice', 'good service', 'impressive', 'best service', 'very helpful',
+    'achha hai', 'badhiya hai', 'theek lag raha hai', 'pasand aaya',
+  ] },
+  { category: 'Customer Satisfaction', keywords: [
+    'satisfied', 'happy', 'no issues', 'everything is fine', 'no complaints', 'resolved',
+    'issue solved', 'very good experience', 'good experience',
+    'problem solve ho gaya', 'sab theek hai', 'satisfied hoon',
+  ] },
+  { category: 'Buying Intent', keywords: [
+    'ill buy', 'book it', 'confirm order', 'proceed', 'go ahead', 'place my order',
+    'im interested', 'ill take it', 'yes confirm', 'lets do it',
+    'order kar dijiye', 'book kar dijiye', 'le lunga', 'le leti hoon',
+  ] },
+  { category: 'Trust Signals', keywords: [
+    'i trust your company', 'reliable', 'authentic', 'genuine', 'original', 'official',
+    'verified', 'company par trust hai', 'original product',
+  ] },
 ];
 
-// First-match-wins, mirroring the Inbound NEG_CAT_EXPR priority ordering.
+// First-match-wins, mirroring the Inbound NEG_CAT_EXPR priority ordering. Legal/Social/Financial
+// escalation and Refund/Cancellation intent live above as their own flags, not here — folding them
+// into "Threat" used to double-count the same call under two different cards.
 const CRITICAL_SIGNAL_GROUPS: { label: string; keywords: string[] }[] = [
-  { label: 'Abuse',       keywords: ['abusive', 'insult', 'offensive', 'rude', 'misbehave', 'harass'] },
-  { label: 'Threat',      keywords: ['fraud', 'scam', 'cheat', 'legal action', 'consumer court', 'police complaint', 'blackmail', 'lawyer', 'social media'] },
-  { label: 'Slang',       keywords: ['bakvaas', 'ghatiya', 'bullshit', 'farzi', 'paagal', 'barbaad', 'nonsense'] },
-  { label: 'Sarcasm',     keywords: ['sarcastic', 'yeah right', 'whatever'] },
-  { label: 'Frustration', keywords: ['frustrat', 'disappoint', 'dissatisf', 'pathetic', 'terrible', 'horrible',
-    'awful', 'worst', 'angry', 'not happy', 'not satisfied', 'pareshaan', 'inconvenien', 'irritat', 'annoying'] },
+  { label: 'Abuse', keywords: [
+    'abusive*', 'insult*', 'offensive*', 'rude*', 'misbehave*', 'harass*',
+    'idiot', 'stupid', 'cheater', 'shut up', 'fraud company',
+  ] },
+  { label: 'Threat', keywords: [
+    'ill complain', 'complaint karunga', 'manager se baat karao', 'disconnect',
+    'never buy again', 'escalate',
+  ] },
+  { label: 'Slang', keywords: [
+    'bakvaas*', 'ghatiya*', 'bullshit*', 'farzi*', 'paagal*', 'barbaad*', 'nonsense*',
+  ] },
+  { label: 'Sarcasm', keywords: [
+    'sarcastic*', 'yeah right', 'whatever*', 'haan haan', 'bahut badhiya',
+  ] },
+  { label: 'Frustration', keywords: [
+    'frustrat*', 'disappoint*', 'dissatisf*', 'pathetic*', 'terrible*', 'horrible*',
+    'awful*', 'worst*', 'angry*', 'not happy', 'not satisfied', 'pareshaan*', 'inconvenien*',
+    'irritat*', 'annoying*', 'fed up', 'still not solved', 'poor service', 'bad service',
+    'waste of time', 'tang aa gaya', 'bahut problem hai', 'bekar service',
+  ] },
 ];
 
 const OUTBOUND_CRITICAL_SIGNAL_CASE = `CASE
-  ${CRITICAL_SIGNAL_GROUPS.map(g => `WHEN ${against(g.keywords.map(k => k.includes(' ') ? `"${k}"` : `${k}*`))}\n    THEN '${g.label}'`).join('\n  ')}
+  ${CRITICAL_SIGNAL_GROUPS.map(g => `WHEN ${against(g.keywords)}\n    THEN '${g.label}'`).join('\n  ')}
   ELSE 'No'
 END`;
 
-const GOLDEN_COLS = ['golden_courtesy', 'golden_support', 'golden_ack', 'golden_positive', 'golden_satisfaction', 'golden_other'];
+const GOLDEN_COLS = [
+  'golden_courtesy', 'golden_support', 'golden_ack', 'golden_positive',
+  'golden_satisfaction', 'golden_buying', 'golden_trust',
+];
 
 // ─── Cache tables (db_masmis — ours, safe to index/write freely) ──────────────
 // Classifying every request live against raw TranscribeText was measured at 70s+ even for a single
@@ -1588,22 +2268,65 @@ export async function initOutboundInsightsTables(): Promise<void> {
         lead_id             VARCHAR(100),
         agent_name          VARCHAR(100),
         mobile_no           VARCHAR(50),
-        social_court_flag   TINYINT(1) NOT NULL DEFAULT 0,
+        legal_flag          TINYINT(1) NOT NULL DEFAULT 0,
+        social_flag         TINYINT(1) NOT NULL DEFAULT 0,
         scam_flag           TINYINT(1) NOT NULL DEFAULT 0,
+        refund_flag         TINYINT(1) NOT NULL DEFAULT 0,
+        cancellation_flag   TINYINT(1) NOT NULL DEFAULT 0,
         golden_courtesy     TINYINT(1) NOT NULL DEFAULT 0,
         golden_support      TINYINT(1) NOT NULL DEFAULT 0,
         golden_ack          TINYINT(1) NOT NULL DEFAULT 0,
         golden_positive     TINYINT(1) NOT NULL DEFAULT 0,
         golden_satisfaction TINYINT(1) NOT NULL DEFAULT 0,
-        golden_other        TINYINT(1) NOT NULL DEFAULT 0,
+        golden_buying       TINYINT(1) NOT NULL DEFAULT 0,
+        golden_trust        TINYINT(1) NOT NULL DEFAULT 0,
         critical_signal     VARCHAR(20) NOT NULL DEFAULT 'No',
         computed_at         DATETIME DEFAULT NOW(),
         INDEX idx_client_date   (client_id, call_date),
-        INDEX idx_client_social (client_id, social_court_flag),
+        INDEX idx_client_legal  (client_id, legal_flag),
+        INDEX idx_client_social (client_id, social_flag),
         INDEX idx_client_scam   (client_id, scam_flag),
+        INDEX idx_client_refund (client_id, refund_flag),
+        INDEX idx_client_cancel (client_id, cancellation_flag),
         INDEX idx_client_signal (client_id, critical_signal)
       )
     `);
+
+    // Migration path for a table created before this taxonomy expansion (legal_flag/social_flag
+    // replacing the old merged social_court_flag; golden_buying/golden_trust new; refund_flag/
+    // cancellation_flag new). MySQL 8.0 doesn't support "ADD COLUMN IF NOT EXISTS" — check
+    // information_schema first, same pattern used for the Neemans monthly_target migration.
+    const [existingCols] = await pool.execute(`
+      SELECT COLUMN_NAME FROM information_schema.columns
+      WHERE TABLE_SCHEMA = 'db_masmis' AND TABLE_NAME = 'outbound_call_insights'
+    `);
+    const colNames = new Set((existingCols as { COLUMN_NAME: string }[]).map(c => c.COLUMN_NAME));
+    const newCols: [string, string][] = [
+      ['legal_flag',        'TINYINT(1) NOT NULL DEFAULT 0'],
+      ['social_flag',       'TINYINT(1) NOT NULL DEFAULT 0'],
+      ['refund_flag',       'TINYINT(1) NOT NULL DEFAULT 0'],
+      ['cancellation_flag', 'TINYINT(1) NOT NULL DEFAULT 0'],
+      ['golden_buying',     'TINYINT(1) NOT NULL DEFAULT 0'],
+      ['golden_trust',      'TINYINT(1) NOT NULL DEFAULT 0'],
+    ];
+    let migrated = false;
+    for (const [col, def] of newCols) {
+      if (!colNames.has(col)) {
+        await pool.execute(`ALTER TABLE db_masmis.outbound_call_insights ADD COLUMN ${col} ${def}`);
+        migrated = true;
+      }
+    }
+    if (migrated) {
+      for (const stmt of [
+        `ALTER TABLE db_masmis.outbound_call_insights ADD INDEX idx_client_legal (client_id, legal_flag)`,
+        `ALTER TABLE db_masmis.outbound_call_insights ADD INDEX idx_client_social (client_id, social_flag)`,
+        `ALTER TABLE db_masmis.outbound_call_insights ADD INDEX idx_client_refund (client_id, refund_flag)`,
+        `ALTER TABLE db_masmis.outbound_call_insights ADD INDEX idx_client_cancel (client_id, cancellation_flag)`,
+      ]) {
+        try { await pool.execute(stmt); } catch { /* index may already exist on a fresh table */ }
+      }
+    }
+
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS db_masmis.outbound_insights_cursor (
         id TINYINT PRIMARY KEY DEFAULT 1,
@@ -1611,14 +2334,18 @@ export async function initOutboundInsightsTables(): Promise<void> {
       )
     `);
     const [cursorRows] = await pool.execute(`SELECT last_call_id FROM db_masmis.outbound_insights_cursor WHERE id = 1`);
+    // Seed ~30 days back so recent (dashboard-relevant) data backfills first, instead of
+    // starting the catch-up from the oldest row in a 400K+ row table.
+    const seedRows = await querySource<{ minId: number }>(
+      `SELECT COALESCE(MIN(id), 0) AS minId FROM db_external.CallDetails WHERE CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
+    );
+    const seedId = Math.max(0, Number(seedRows[0]?.minId ?? 0) - 1);
     if ((cursorRows as any[]).length === 0) {
-      // Seed ~30 days back so recent (dashboard-relevant) data backfills first, instead of
-      // starting the catch-up from the oldest row in a 400K+ row table.
-      const seedRows = await querySource<{ minId: number }>(
-        `SELECT COALESCE(MIN(id), 0) AS minId FROM db_external.CallDetails WHERE CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
-      );
-      const seedId = Math.max(0, Number(seedRows[0]?.minId ?? 0) - 1);
       await pool.execute(`INSERT INTO db_masmis.outbound_insights_cursor (id, last_call_id) VALUES (1, ?)`, [seedId]);
+    } else if (migrated) {
+      // Rewind so the catch-up job reclassifies the whole cached window under the new keyword
+      // lists — otherwise previously-cached rows would keep stale classifications forever.
+      await pool.execute(`UPDATE db_masmis.outbound_insights_cursor SET last_call_id = ? WHERE id = 1`, [seedId]);
     }
   } catch (err) {
     console.error('[quality] initOutboundInsightsTables warning:', (err as Error).message);
@@ -1632,19 +2359,23 @@ async function processOutboundInsightsBatch(batchSize = 300): Promise<number> {
   const lastId = cursorRow?.last_call_id ?? 0;
 
   const goldenSelect = OUTBOUND_GOLDEN_WORDS
-    .map((g, i) => `${against(g.keywords.map(k => `${k}*`))} AS golden_${i}`)
+    .map((g, i) => `${against(g.keywords)} AS golden_${i}`)
     .join(',\n      ');
 
   type Row = {
     id: number; client_id: number; CallDate: string; LeadID: string | null;
     AgentName: string | null; MobileNo: string | null;
-    social_court: number; scam: number; critical_signal: string;
+    legal: number; social: number; scam: number; refund: number; cancellation: number;
+    critical_signal: string;
   } & Record<string, number>;
 
   const rows = await querySource<Row>(`
     SELECT cd.id, cd.client_id, cd.CallDate, cd.LeadID, cd.AgentName, cd.MobileNo,
-      ${OUTBOUND_SOCIAL_COURT_COND} AS social_court,
+      ${OUTBOUND_LEGAL_COND} AS legal,
+      ${OUTBOUND_SOCIAL_COND} AS social,
       ${OUTBOUND_SCAM_COND} AS scam,
+      ${OUTBOUND_REFUND_COND} AS refund,
+      ${OUTBOUND_CANCELLATION_COND} AS cancellation,
       ${goldenSelect},
       ${OUTBOUND_CRITICAL_SIGNAL_CASE} AS critical_signal
     FROM db_external.CallDetails cd
@@ -1655,22 +2386,28 @@ async function processOutboundInsightsBatch(batchSize = 300): Promise<number> {
 
   if (rows.length === 0) return 0;
 
-  const placeholders = rows.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())').join(',');
+  // Column list drives both the placeholder count and the ON DUPLICATE UPDATE clause — generated
+  // rather than hand-counted, since a manual mismatch here has bitten this exact query before.
+  const cols = [
+    'call_id', 'client_id', 'call_date', 'lead_id', 'agent_name', 'mobile_no',
+    'legal_flag', 'social_flag', 'scam_flag', 'refund_flag', 'cancellation_flag',
+    'golden_courtesy', 'golden_support', 'golden_ack', 'golden_positive', 'golden_satisfaction',
+    'golden_buying', 'golden_trust',
+    'critical_signal',
+  ];
+  const placeholders = rows.map(() => `(${cols.map(() => '?').join(',')},NOW())`).join(',');
   const flat = rows.flatMap(r => [
     r.id, r.client_id, r.CallDate, r.LeadID, r.AgentName, r.MobileNo,
-    r.social_court, r.scam,
-    r.golden_0, r.golden_1, r.golden_2, r.golden_3, r.golden_4, r.golden_5,
+    r.legal, r.social, r.scam, r.refund, r.cancellation,
+    r.golden_0, r.golden_1, r.golden_2, r.golden_3, r.golden_4, r.golden_5, r.golden_6,
     r.critical_signal,
   ]);
+  const updateCols = cols.filter(c => c !== 'call_id').map(c => `${c} = VALUES(${c})`).join(', ');
 
   await queryMasmis(`
-    INSERT INTO db_masmis.outbound_call_insights
-      (call_id, client_id, call_date, lead_id, agent_name, mobile_no,
-       social_court_flag, scam_flag,
-       golden_courtesy, golden_support, golden_ack, golden_positive, golden_satisfaction, golden_other,
-       critical_signal, computed_at)
+    INSERT INTO db_masmis.outbound_call_insights (${cols.join(', ')}, computed_at)
     VALUES ${placeholders}
-    ON DUPLICATE KEY UPDATE computed_at = VALUES(computed_at)
+    ON DUPLICATE KEY UPDATE ${updateCols}, computed_at = NOW()
   `, flat);
 
   const newLastId = rows[rows.length - 1].id;
@@ -1704,8 +2441,11 @@ export function startOutboundInsightsJob(): void {
 
 export interface OutboundCustomerInsights {
   audit_count: number;
-  social_media_court_threat: number;
+  legal_escalation_count: number;
+  social_escalation_count: number;
   potential_scam: number;
+  refund_count: number;
+  cancellation_count: number;
   frustration_count: number;
   threat_count: number;
   cuss_abuse_count: number;
@@ -1723,11 +2463,14 @@ export async function getCustomerInteractionInsights(filters: QualityFilters): P
   const goldenSelect = GOLDEN_COLS.map((c, i) => `SUM(${c}) AS gw_${i}`).join(',\n      ');
 
   const [[summary], signalRows, cursorRows] = await Promise.all([
-    queryMasmis<{ audit_count: number; social: number; scam: number } & Record<string, number>>(`
+    queryMasmis<{ audit_count: number; legal: number; social: number; scam: number; refund: number; cancellation: number } & Record<string, number>>(`
       SELECT
         COUNT(*) AS audit_count,
-        SUM(social_court_flag) AS social,
+        SUM(legal_flag) AS legal,
+        SUM(social_flag) AS social,
         SUM(scam_flag) AS scam,
+        SUM(refund_flag) AS refund,
+        SUM(cancellation_flag) AS cancellation,
         ${goldenSelect}
       FROM db_masmis.outbound_call_insights
       WHERE call_date BETWEEN ? AND ? ${cf}
@@ -1748,14 +2491,17 @@ export async function getCustomerInteractionInsights(filters: QualityFilters): P
   const signalMap = new Map(signalRows.map(r => [String(r.critical_signal), Number(r.cnt)]));
 
   return {
-    audit_count:                Number(summary?.audit_count ?? 0),
-    social_media_court_threat:  Number(summary?.social ?? 0),
-    potential_scam:              Number(summary?.scam ?? 0),
-    frustration_count:          signalMap.get('Frustration') ?? 0,
-    threat_count:                signalMap.get('Threat')      ?? 0,
-    cuss_abuse_count:            signalMap.get('Abuse')       ?? 0,
-    slang_count:                signalMap.get('Slang')       ?? 0,
-    sarcasm_count:                signalMap.get('Sarcasm')     ?? 0,
+    audit_count:              Number(summary?.audit_count ?? 0),
+    legal_escalation_count:   Number(summary?.legal ?? 0),
+    social_escalation_count:  Number(summary?.social ?? 0),
+    potential_scam:           Number(summary?.scam ?? 0),
+    refund_count:             Number(summary?.refund ?? 0),
+    cancellation_count:       Number(summary?.cancellation ?? 0),
+    frustration_count:        signalMap.get('Frustration') ?? 0,
+    threat_count:              signalMap.get('Threat')      ?? 0,
+    cuss_abuse_count:          signalMap.get('Abuse')       ?? 0,
+    slang_count:               signalMap.get('Slang')       ?? 0,
+    sarcasm_count:              signalMap.get('Sarcasm')     ?? 0,
     golden_words: OUTBOUND_GOLDEN_WORDS.map((g, i) => ({
       category: g.category,
       count:    Number(summary?.[`gw_${i}`] ?? 0),
@@ -1771,21 +2517,29 @@ export interface OutboundInsightLead {
 }
 export interface OutboundInsightDrillResponse { leads: OutboundInsightLead[]; }
 
+const CATEGORY_TYPE_LABEL: Record<string, string> = {
+  legal: 'Legal Escalation', social: 'Social Media', scam: 'Financial Fraud',
+  refund: 'Refund Demand', cancellation: 'Cancellation Intent',
+};
+
 function keywordsForCategory(category: string): string[] {
-  if (category === 'social') return SOCIAL_COURT_KEYWORDS;
-  if (category === 'scam') return SCAM_KEYWORDS;
+  if (category === 'legal') return LEGAL_ESCALATION_KEYWORDS;
+  if (category === 'social') return SOCIAL_ESCALATION_KEYWORDS;
+  if (category === 'scam') return FRAUD_KEYWORDS;
+  if (category === 'refund') return REFUND_KEYWORDS;
+  if (category === 'cancellation') return CANCELLATION_KEYWORDS;
   if (category.startsWith('golden:')) {
     const idx = Number(category.split(':')[1]);
-    return OUTBOUND_GOLDEN_WORDS[idx]?.keywords ?? [];
+    return (OUTBOUND_GOLDEN_WORDS[idx]?.keywords ?? []).map(stripStar);
   }
   if (category.startsWith('signal:')) {
     const label = category.slice('signal:'.length);
-    return CRITICAL_SIGNAL_GROUPS.find(g => g.label === label)?.keywords ?? [];
+    return (CRITICAL_SIGNAL_GROUPS.find(g => g.label === label)?.keywords ?? []).map(stripStar);
   }
   return [];
 }
 
-// category: 'social' | 'scam' | 'golden:0'..'golden:5' | 'signal:Frustration'|'signal:Threat'|...
+// category: 'legal' | 'social' | 'scam' | 'refund' | 'cancellation' | 'golden:0'..'golden:6' | 'signal:Frustration'|'signal:Threat'|...
 export async function getOutboundInsightDrill(filters: QualityFilters, category: string): Promise<OutboundInsightDrillResponse> {
   const { startDate, endDate, clientId } = filters;
   const cf = clientId ? ' AND client_id = ?' : '';
@@ -1793,8 +2547,11 @@ export async function getOutboundInsightDrill(filters: QualityFilters, category:
 
   let whereExtra = '1=0';
   const extraParams: (string | number)[] = [];
-  if (category === 'social') whereExtra = 'social_court_flag = 1';
+  if (category === 'legal') whereExtra = 'legal_flag = 1';
+  else if (category === 'social') whereExtra = 'social_flag = 1';
   else if (category === 'scam') whereExtra = 'scam_flag = 1';
+  else if (category === 'refund') whereExtra = 'refund_flag = 1';
+  else if (category === 'cancellation') whereExtra = 'cancellation_flag = 1';
   else if (category.startsWith('golden:')) {
     const idx = Number(category.split(':')[1]);
     if (GOLDEN_COLS[idx]) whereExtra = `${GOLDEN_COLS[idx]} = 1`;
@@ -1812,8 +2569,7 @@ export async function getOutboundInsightDrill(filters: QualityFilters, category:
   `, [...params, ...extraParams]);
 
   // The cache only stores boolean flags — pull transcripts for this (small, already-filtered)
-  // set of calls to surface which specific word/phrase triggered the match, and (for the social
-  // category) whether it was a social-media mention or a court/legal one.
+  // set of calls to surface which specific word/phrase triggered the match.
   const callIds = rows.map(r => Number(r.call_id));
   const transcriptMap = new Map<number, string>();
   if (callIds.length > 0) {
@@ -1826,20 +2582,19 @@ export async function getOutboundInsightDrill(filters: QualityFilters, category:
   }
 
   const keywords = keywordsForCategory(category);
-  const isSocial = category === 'social';
+  const typeLabel = CATEGORY_TYPE_LABEL[category] ?? '';
 
   return {
     leads: rows.map(r => {
       const text = transcriptMap.get(Number(r.call_id)) ?? '';
       const matchedWord = keywords.find(k => text.includes(k.toLowerCase())) ?? '';
-      const type = isSocial ? (text.includes('social media') ? 'Social Media' : 'Court & Legal') : '';
       return {
         callId:      Number(r.call_id),
         leadId:      String(r.lead_id ?? ''),
         agentName:   String(r.agent_name ?? 'Unknown'),
         mobileNo:    String(r.mobile_no ?? ''),
         callDate:    String(r.call_date),
-        type,
+        type:        typeLabel,
         matchedWord,
       };
     }),
