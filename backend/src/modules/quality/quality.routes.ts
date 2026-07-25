@@ -26,6 +26,7 @@ router.get('/missing-agents',     ctrl.getMissingAgents);
 router.post('/agent-master',      ctrl.insertAgentMaster);
 router.get('/magical-script',     ctrl.getMagicalScript);
 router.get('/magical-script-config',    ctrl.getMagicalScriptConfig);
+router.get('/export-all-csv',           ctrl.exportAllCsv);
 router.post('/magical-script-config',   requireRole('super_admin', 'manager', 'client_admin'), ctrl.saveMagicalScriptConfig);
 router.delete('/magical-script-config/:id', requireRole('super_admin', 'manager', 'client_admin'), ctrl.deleteMagicalScriptConfig);
 

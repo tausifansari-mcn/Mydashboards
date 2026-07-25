@@ -9,6 +9,7 @@ const router = Router();
 
 router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin', 'qa'), enforceClientScope());
 
+router.get('/export-all-csv', ctrl.exportAllCsv);
 router.get('/clients',        ctrl.getInboundClients);
 router.get('/kpis',           ctrl.getInboundProcessKPIs);
 router.get('/top-performers', ctrl.getTopPerformers);

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import * as svc from './inbound-quality.service';
+import { resolveUserScope } from '../call-master/call-master.service';
 
 function parseFilters(req: Request): svc.InboundQualityFilters {
   const now = new Date();
@@ -567,5 +568,20 @@ export async function getClapProductVocQuotes(req: Request, res: Response) {
     res.json({ data });
   } catch (err: unknown) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function exportAllCsv(req: Request, res: Response) {
+  try {
+    const { startDate, endDate } = parseFilters(req);
+    const scope = await resolveUserScope(req.user!.id, req.tenantId ?? null);
+    await svc.streamInboundExportCsv(res, startDate, endDate, scope.clientIds);
+  } catch (err: unknown) {
+    if (!res.headersSent) {
+      const msg = err instanceof Error ? err.message : 'Export failed';
+      res.status(500).json({ message: msg });
+    } else {
+      res.end();
+    }
   }
 }

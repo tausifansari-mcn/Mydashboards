@@ -1,4 +1,6 @@
+import type { Response } from 'express';
 import { querySource } from '../../lib/sourceDb';
+import { csvEscape } from '../../lib/csv';
 
 // ─── Negative signal categorisation CASE expression ──────────────────────────
 // First: exact matches (highest priority, first match wins in SQL CASE)
@@ -4666,4 +4668,67 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
       };
     })(),
   };
+}
+
+// ─── Full raw export — every column, every client the requester can see ──────────
+// "All columns" genuinely means all 86 (verified via information_schema, not guessed). Same
+// keyset-paginated streaming approach as the outbound export — memory stays bounded and the
+// browser starts receiving bytes immediately regardless of row count.
+const CQA_EXPORT_COLUMNS = [
+  'id', 'ClientId', 'length_in_sec', 'start_epoch', 'end_epoch', 'MobileNo', 'User', 'lead_id', 'CallDate', 'Campaign',
+  'call_answered_within_5_seconds', 'customer_concern_acknowledged', 'professionalism_maintained',
+  'assurance_or_appreciation_provided', 'pronunciation_and_clarity', 'enthusiasm_and_no_fumbling', 'active_listening',
+  'politeness_and_no_sarcasm', 'proper_grammar', 'accurate_issue_probing', 'proper_hold_procedure',
+  'proper_transfer_and_language', 'dead_air_under_10_seconds', 'case_escalated_correctly', 'address_recorded_completely',
+  'correct_and_complete_information', 'upselling_or_offers_suggested', 'further_assistance_offered',
+  'proper_call_closure', 'total_score', 'max_score', 'quality_percentage', 'created_at', 'express_empathy',
+  'areas_for_improvement', 'top_positive_words', 'top_negative_words', 'agent_english_cuss_words',
+  'agent_english_cuss_count', 'agent_hindi_cuss_words', 'agent_hindi_cuss_count', 'customer_hindi_cuss_words',
+  'customer_hindi_cuss_count', 'customer_english_cuss_words', 'customer_english_cuss_count', 'scenario', 'scenario1',
+  'scenario2', 'scenario3', 'Transcribe_Text', 'Competitor_Name', 'Positive_Comparison', 'Reason_for_Positive_Comparison',
+  'Exact_Positive_Language', 'Negative_Comparison', 'Reason_for_Negative_Comparison', 'Exact_Negative_Language',
+  'sensetive_word', 'data_theft_or_misuse', 'unprofessional_behavior', 'system_manipulation', 'financial_fraud',
+  'escalation_failure', 'collusion', 'policy_communication_failure', 'overall_fraud_risk_score',
+  'fraud_potentiality_percentage', 'areas_for_improvement_fraud', 'top_positive_words_agent', 'top_negative_words_agent',
+  'sensitive_word_context', 'Data_Theft_or_Misuse_Text', 'Unprofessional_Behavior_Text', 'System_Manipulation_Text',
+  'Financial_Fraud_Text', 'Escalation_Failure_Text', 'Collusion_Text', 'Policy_Communication_Failure_Text',
+  'outstanding_amount', 'customer_voc_logistic_positive', 'customer_voc_logistic_negative', 'customer_voc_agent_positive',
+  'customer_voc_agent_negative', 'customer_voc_product_positive', 'customer_voc_product_negative',
+  'Social_Media_Phone_Number_Order_ID_Email_ID',
+];
+
+export async function streamInboundExportCsv(
+  res: Response, startDate: string, endDate: string, clientIds: number[] | null,
+): Promise<void> {
+  const fname = `inbound-export-${startDate.slice(0, 10)}_to_${endDate.slice(0, 10)}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  res.write(CQA_EXPORT_COLUMNS.join(',') + '\n');
+
+  // clientIds === null → unrestricted (super_admin); [] → no accessible clients at all → empty export
+  const clientFilter = clientIds !== null
+    ? (clientIds.length ? ` AND q.ClientId IN (${clientIds.map(() => '?').join(',')})` : ' AND 1 = 0')
+    : '';
+  const clientParams: number[] = clientIds ?? [];
+
+  const BATCH = 2000;
+  let lastId = 0;
+  for (;;) {
+    const rows = await querySource<Record<string, unknown>>(`
+      SELECT ${CQA_EXPORT_COLUMNS.map(c => `q.${c}`).join(', ')}
+      FROM db_audit.call_quality_assessment q
+      WHERE q.id > ? AND q.CallDate BETWEEN ? AND ? ${clientFilter}
+      ORDER BY q.id ASC
+      LIMIT ${BATCH}
+    `, [lastId, startDate, endDate, ...clientParams]);
+
+    if (rows.length === 0) break;
+    for (const r of rows) {
+      res.write(CQA_EXPORT_COLUMNS.map(c => csvEscape(r[c])).join(',') + '\n');
+    }
+    lastId = Number(rows[rows.length - 1].id);
+    if (rows.length < BATCH) break;
+    await new Promise(r => setTimeout(r, 150)); // stay gentle on the shared DB server between batches
+  }
+  res.end();
 }

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   BarChart3, Building2, ChevronLeft, ChevronRight,
   PhoneCall, ShoppingCart, TrendingUp, Star, ThumbsUp, Target,
-  ClipboardCheck, Activity,
+  ClipboardCheck, Activity, Download, Loader2,
 } from 'lucide-react';
 import api from '@/lib/axios';
 import { useProcessStore } from '@/store/processStore';
@@ -98,6 +98,20 @@ function KPIChip({ icon: Icon, label, value, color }: KPIChipProps) {
   );
 }
 
+/* ── Export-all button — sits on the date bar, downloads every column for every client the
+   current user can access, for whatever date range is currently selected. ── */
+function ExportAllButton({ loading, onClick }: { loading: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} disabled={loading}
+      title="Export all columns, all clients, for this date range"
+      className="ml-auto flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-wait"
+      style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', color: '#fff' }}>
+      {loading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+      {loading ? 'Exporting…' : 'Export All'}
+    </button>
+  );
+}
+
 export default function AIQualityDashboard() {
   const navigate = useNavigate();
   const { canAccessInboundClient, canAccessOutboundClient } = useProcessStore();
@@ -121,6 +135,31 @@ export default function AIQualityDashboard() {
   const ibEd = ibEnd.replace('T', ' ');
   const sd   = startDate.replace('T', ' ');
   const ed   = endDate.replace('T', ' ');
+
+  const [exporting, setExporting] = useState<'inbound' | 'outbound' | null>(null);
+  const handleExportAll = async (kind: 'inbound' | 'outbound') => {
+    setExporting(kind);
+    try {
+      const [rangeStart, rangeEnd] = kind === 'inbound' ? [ibSd, ibEd] : [sd, ed];
+      const url = kind === 'inbound'
+        ? `/inbound-quality/export-all-csv?startDate=${encodeURIComponent(rangeStart)}&endDate=${encodeURIComponent(rangeEnd)}`
+        : `/quality/export-all-csv?startDate=${encodeURIComponent(rangeStart)}&endDate=${encodeURIComponent(rangeEnd)}`;
+      const res = await api.get(url, { responseType: 'blob' });
+      const blob = new Blob([res.data as BlobPart], { type: 'text/csv' });
+      const objUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = `${kind}-export-${rangeStart.slice(0, 10)}_to_${rangeEnd.slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(objUrl);
+    } catch {
+      alert('Export failed. Please try again.');
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const fetchInboundClients = useCallback(() => {
     setIbLoading(true);
@@ -221,6 +260,7 @@ export default function AIQualityDashboard() {
               <input type="datetime-local" value={ibEnd} onChange={e => setIbEnd(e.target.value)}
                 className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-all"
                 style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} />
+              <ExportAllButton loading={exporting === 'inbound'} onClick={() => handleExportAll('inbound')} />
             </div>
 
             {/* Section header */}
@@ -318,6 +358,7 @@ export default function AIQualityDashboard() {
               <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
                 className="rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none transition-all"
                 style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} />
+              <ExportAllButton loading={exporting === 'outbound'} onClick={() => handleExportAll('outbound')} />
             </div>
 
             {/* Section header */}

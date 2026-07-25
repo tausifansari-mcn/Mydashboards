@@ -1,5 +1,7 @@
+import type { Response } from 'express';
 import { querySource, getSourcePool } from '../../lib/sourceDb';
 import { queryMasmis, getMasmisPool } from '../../lib/masmisDb';
+import { csvEscape } from '../../lib/csv';
 
 export interface QualityFilters {
   startDate: string;
@@ -2804,4 +2806,61 @@ export async function getOutboundCallTranscript(callId: number): Promise<Outboun
     callDate:  String(r.CallDate),
     transcript: String(r.TranscribeText ?? ''),
   };
+}
+
+// ─── Full raw export — every column, every client the requester can see ──────────
+// "All columns" genuinely means all 78 (verified via information_schema, not guessed).
+// Streamed in keyset-paginated batches (not one big query) so memory stays bounded and the
+// browser starts receiving bytes immediately, regardless of how many rows match the date range.
+const CALL_DETAILS_EXPORT_COLUMNS = [
+  'id', 'client_id', 'campaign_id', 'length_in_sec', 'start_epoch', 'end_epoch', 'CallDate', 'LeadID', 'AgentName', 'MobileNo',
+  'CompetitorName', 'Opening', 'Offered', 'ObjectionHandling', 'PrepaidPitch', 'UpsellingEfforts', 'OfferUrgency',
+  'SensitiveWordUsed', 'SensitiveWordContext', 'AreaForImprovement', 'TranscribeText', 'TopNegativeWordsByAgent',
+  'TopNegativeWordsByCustomer', 'LengthSec', 'StartTime', 'EndTime', 'CallDisposition', 'OpeningRejected', 'OfferingRejected',
+  'AfterListeningOfferRejected', 'SaleDone', 'NotInterestedReasonCallContext', 'NotInterestedBucketReason',
+  'OpeningPitchContext', 'OfferedPitchContext', 'ObjectionHandlingContext', 'PrepaidPitchContext', 'FileName', 'Status',
+  'Category', 'SubCategory', 'CustomerObjectionCategory', 'CustomerObjectionSubCategory', 'AgentRebuttalCategory',
+  'AgentRebuttalSubCategory', 'ProductOffering', 'DiscountType', 'OpeningPitchCategory', 'ContactSettingContext',
+  'ContactSettingCategory', 'ContactSetting2', 'Feedback_Category', 'FeedbackContext', 'Feedback', 'Age', 'ConsumptionType',
+  'AgeofConsumption', 'ReasonforQuitting', 'entrydate', 'Sale_Pitch_Discount_Structure', 'Limited_Time_Offer',
+  'Snapmint_Pitch', 'Feedback_Capture', 'Acknowledgement', 'Apology_Assurance', 'Pronunciation_Skills_Checklist',
+  'Product_Appreciation', 'Customer_Details_Confirmation', 'Delivery_TAT', 'Order_Consent', 'Reconfirmation',
+  'Order_Summary', 'Further_Assistance', 'Call_Closing', 'Product_Description_Guideline', 'Alternative_Suggestion',
+  'Reason_for_Not_Placing_Order', 'Pricing_and_Discount_Structure',
+];
+
+export async function streamOutboundExportCsv(
+  res: Response, startDate: string, endDate: string, clientIds: number[] | null,
+): Promise<void> {
+  const fname = `outbound-export-${startDate.slice(0, 10)}_to_${endDate.slice(0, 10)}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  res.write(CALL_DETAILS_EXPORT_COLUMNS.join(',') + '\n');
+
+  // clientIds === null → unrestricted (super_admin); [] → no accessible clients at all → empty export
+  const clientFilter = clientIds !== null
+    ? (clientIds.length ? ` AND cd.client_id IN (${clientIds.map(() => '?').join(',')})` : ' AND 1 = 0')
+    : '';
+  const clientParams: number[] = clientIds ?? [];
+
+  const BATCH = 2000;
+  let lastId = 0;
+  for (;;) {
+    const rows = await querySource<Record<string, unknown>>(`
+      SELECT ${CALL_DETAILS_EXPORT_COLUMNS.map(c => `cd.${c}`).join(', ')}
+      FROM db_external.CallDetails cd
+      WHERE cd.id > ? AND cd.CallDate BETWEEN ? AND ? ${clientFilter}
+      ORDER BY cd.id ASC
+      LIMIT ${BATCH}
+    `, [lastId, startDate, endDate, ...clientParams]);
+
+    if (rows.length === 0) break;
+    for (const r of rows) {
+      res.write(CALL_DETAILS_EXPORT_COLUMNS.map(c => csvEscape(r[c])).join(',') + '\n');
+    }
+    lastId = Number(rows[rows.length - 1].id);
+    if (rows.length < BATCH) break;
+    await new Promise(r => setTimeout(r, 150)); // stay gentle on the shared DB server between batches
+  }
+  res.end();
 }

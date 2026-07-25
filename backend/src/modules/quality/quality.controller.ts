@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import * as svc from './quality.service';
+import { resolveUserScope } from '../call-master/call-master.service';
 
 function parseDateRange(req: Request): svc.QualityFilters {
   const now = new Date();
@@ -243,5 +244,20 @@ export async function deleteMagicalScriptConfig(req: Request, res: Response) {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ message: msg });
+  }
+}
+
+export async function exportAllCsv(req: Request, res: Response) {
+  try {
+    const { startDate, endDate } = parseDateRange(req);
+    const scope = await resolveUserScope(req.user!.id, req.tenantId ?? null);
+    await svc.streamOutboundExportCsv(res, startDate, endDate, scope.clientIds);
+  } catch (err: unknown) {
+    if (!res.headersSent) {
+      const msg = err instanceof Error ? err.message : 'Export failed';
+      res.status(500).json({ message: msg });
+    } else {
+      res.end();
+    }
   }
 }

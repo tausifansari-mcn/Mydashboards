@@ -18,7 +18,7 @@ const iconMap: Record<string, React.ElementType> = {
   Phone, Star, TrendingUp, Users, BarChart2, UserCheck, BarChart3,
 };
 
-const HIDDEN_SLUGS = ['sales', 'call-master'];
+const HIDDEN_SLUGS = ['sales', 'call-master', 'client', 'operations', 'agent'];
 
 const slugToRoute: Record<string, string> = {
   quality: '/quality',
