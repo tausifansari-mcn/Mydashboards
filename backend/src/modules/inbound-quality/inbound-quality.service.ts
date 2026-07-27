@@ -909,6 +909,7 @@ export interface SocialThreatDetailRow {
   date:         string;
   client_id:    string;
   transcript:   string;
+  social_media_info: string;
 }
 
 export async function getSocialThreatDetail(
@@ -921,7 +922,7 @@ export async function getSocialThreatDetail(
   const rows = await querySource<{
     lead_id: string; agent_id: string; mobile_no: string; threat_word: string;
     threat_type: string; scenario: string; scenario1: string;
-    date: string; client_id: string; transcript: string;
+    date: string; client_id: string; transcript: string; social_media_info: string;
   }>(`
     SELECT
       COALESCE(q.lead_id, '')                                                 AS lead_id,
@@ -936,7 +937,8 @@ export async function getSocialThreatDetail(
       COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')                     AS scenario1,
       DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                              AS date,
       q.ClientId                                                              AS client_id,
-      COALESCE(q.Transcribe_Text, '')                                         AS transcript
+      COALESCE(q.Transcribe_Text, '')                                         AS transcript,
+      COALESCE(q.Social_Media_Phone_Number_Order_ID_Email_ID, '')             AS social_media_info
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -973,6 +975,7 @@ export async function getSocialThreatDetail(
       date:        String(r.date),
       client_id:   String(r.client_id),
       transcript:  String(r.transcript ?? ''),
+      social_media_info: String(r.social_media_info ?? ''),
     })),
   };
 }
@@ -2004,6 +2007,7 @@ export interface ScamWordRow {
   date?:       string;
   flag?:       string;
   transcript?: string;
+  social_media_info?: string;
 }
 
 export interface PotentialScamDetail {
@@ -2037,7 +2041,7 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
         AND ${SCAM_CONDITION}
     `, params),
 
-    querySource<{ lead_id: string; agent_id: string; mobile_no: string; word: string; scenario: string; scenario1: string; date: string; flag: string; transcript: string }>(`
+    querySource<{ lead_id: string; agent_id: string; mobile_no: string; word: string; scenario: string; scenario1: string; date: string; flag: string; transcript: string; social_media_info: string }>(`
       SELECT
         COALESCE(q.lead_id, '')       AS lead_id,
         q.User                         AS agent_id,
@@ -2049,7 +2053,8 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
         CASE WHEN LOWER(TRIM(q.financial_fraud)) = 'yes'
              THEN 'Financial Fraud'
              ELSE 'Scam' END AS flag,
-        COALESCE(q.Transcribe_Text, '') AS transcript
+        COALESCE(q.Transcribe_Text, '') AS transcript,
+        COALESCE(q.Social_Media_Phone_Number_Order_ID_Email_ID, '') AS social_media_info
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -2079,6 +2084,7 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
       date:       String(r.date),
       flag:       String(r.flag),
       transcript: String(r.transcript ?? ''),
+      social_media_info: String(r.social_media_info ?? ''),
     })),
   };
 }

@@ -37,6 +37,7 @@ interface ScamWordRow {
   mobile_no?:  string;
   date?:       string;
   flag?:       string;
+  social_media_info?: string;
   transcript?: string;
 }
 interface PotentialScamDetail { flags: ScamFlagCounts; wordRows: ScamWordRow[]; }
@@ -120,6 +121,7 @@ interface SocialThreatDetailRow {
   date:        string;
   client_id:   string;
   transcript:  string;
+  social_media_info: string;
 }
 interface SocialThreatDetailResponse { total: number; rows: SocialThreatDetailRow[]; }
 
@@ -1010,11 +1012,28 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent 
 }
 
 function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }: { detail: PotentialScamDetail | null; loading: boolean; onClose: () => void; onLeadClick: (leadId: string) => void; resolveAgent: (masId: string) => string }) {
+  const [tab, setTab] = useState<'Call Details' | 'Date Wise'>('Call Details');
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
+
+  // Date-wise breakdown (YYYY-MM-DD, dropping the time portion of `date`) — most recent day first.
+  const dateWise = (() => {
+    const rows = detail?.wordRows ?? [];
+    const map = new Map<string, { fraud: number; scam: number }>();
+    for (const r of rows) {
+      const day = (r.date ?? '').slice(0, 10) || 'Unknown';
+      const entry = map.get(day) ?? { fraud: 0, scam: 0 };
+      if (r.flag === 'Financial Fraud') entry.fraud++; else entry.scam++;
+      map.set(day, entry);
+    }
+    return [...map.entries()]
+      .map(([day, c]) => ({ day, ...c, total: c.fraud + c.scam }))
+      .sort((a, b) => b.day.localeCompare(a.day));
+  })();
 
   const FLAGS = [
     { key: 'financial_fraud' as const, label: 'Financial Fraud', desc: 'AI flagged financial fraud indicators in the call', color: '#EF4444', bg: '#FEF2F2' },
@@ -1040,7 +1059,8 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
             <ExportBtn onClick={() => downloadCSV(detail.wordRows.map(r => ({
               Flag: r.flag ?? 'Scam', 'Lead ID': r.lead_id ?? '', 'Agent Name': resolveAgent(r.agent_id ?? ''),
               'Mobile No': r.mobile_no ?? '', 'Word / Phrase': r.word, Scenario: r.scenario,
-              'Sub-Scenario': r.scenario1, Date: r.date ?? '', Transcript: r.transcript ?? '',
+              'Sub-Scenario': r.scenario1, Date: r.date ?? '', 'Social Media Info': r.social_media_info ?? '',
+              Transcript: r.transcript ?? '',
             })), 'potential-scam.csv')} />
           )}
           <button onClick={onClose} className="text-slate-400 hover:text-slate-900 transition-colors p-1">
@@ -1084,7 +1104,56 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
                 </div>
               </div>
 
+              {/* ── Tabs: Call Details vs Date Wise ── */}
+              <div className="pill-tabs">
+                {([
+                  { key: 'Call Details' as const, label: 'Call Details', count: detail.wordRows.length },
+                  { key: 'Date Wise'    as const, label: '📅 Date Wise', count: dateWise.length },
+                ]).map(t => (
+                  <button key={t.key} onClick={() => setTab(t.key)}
+                    className={`pill-tab ${tab === t.key ? 'pill-tab-active' : ''}`}>
+                    {t.label} ({t.count})
+                  </button>
+                ))}
+              </div>
+
+              {/* ── Date Wise Table ── */}
+              {tab === 'Date Wise' && (
+                <div>
+                  {dateWise.length === 0 ? (
+                    <p className="text-center text-slate-400 text-sm py-6">No data available for this period</p>
+                  ) : (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="overflow-auto max-h-[400px]">
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50">
+                              {['Date', 'Financial Fraud', 'Scam Detected', 'Total'].map(h => (
+                                <th key={h} className="px-3 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">
+                                  {h}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dateWise.map(d => (
+                              <tr key={d.day} className="hover:bg-slate-50 border-b border-slate-100 last:border-0">
+                                <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap">{d.day}</td>
+                                <td className="px-3 py-2 font-semibold text-red-600">{d.fraud.toLocaleString()}</td>
+                                <td className="px-3 py-2 font-semibold text-orange-600">{d.scam.toLocaleString()}</td>
+                                <td className="px-3 py-2 font-bold text-slate-900">{d.total.toLocaleString()}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* ── Call Detail Table ── */}
+              {tab === 'Call Details' && (
               <div>
                 <p className="text-label mb-3">
                   Call Details
@@ -1143,6 +1212,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
                   </div>
                 )}
               </div>
+              )}
             </>
           )}
         </div>
@@ -1162,7 +1232,7 @@ function SocialThreatDetailModal({
   onLeadClick: (leadId: string) => void;
   resolveAgent: (masId: string) => string;
 }) {
-  const [tab, setTab] = useState<'All' | 'Social Media' | 'Court & Legal'>('All');
+  const [tab, setTab] = useState<'All' | 'Social Media' | 'Court & Legal' | 'Date Wise'>('All');
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -1173,12 +1243,27 @@ function SocialThreatDetailModal({
   const rows = detail?.rows ?? [];
   const socialCount = rows.filter(r => r.threat_type === 'Social Media').length;
   const courtCount  = rows.filter(r => r.threat_type === 'Court & Legal').length;
-  const visible     = tab === 'All' ? rows : rows.filter(r => r.threat_type === tab);
+  const visible     = tab === 'All' || tab === 'Date Wise' ? rows : rows.filter(r => r.threat_type === tab);
+
+  // Date-wise breakdown (YYYY-MM-DD, dropping the time portion of `date`) — most recent day first.
+  const dateWise = (() => {
+    const map = new Map<string, { social: number; court: number }>();
+    for (const r of rows) {
+      const day = (r.date ?? '').slice(0, 10) || 'Unknown';
+      const entry = map.get(day) ?? { social: 0, court: 0 };
+      if (r.threat_type === 'Social Media') entry.social++; else entry.court++;
+      map.set(day, entry);
+    }
+    return [...map.entries()]
+      .map(([day, c]) => ({ day, ...c, total: c.social + c.court }))
+      .sort((a, b) => b.day.localeCompare(a.day));
+  })();
 
   const TABS: { key: typeof tab; label: string; count: number; color: string }[] = [
     { key: 'All',           label: 'All',            count: rows.length,  color: '#F97316' },
     { key: 'Social Media',  label: '📱 Social Media', count: socialCount,  color: '#3B82F6' },
     { key: 'Court & Legal', label: '⚖️ Court & Legal', count: courtCount,  color: '#EF4444' },
+    { key: 'Date Wise',     label: '📅 Date Wise',    count: dateWise.length, color: '#7C3AED' },
   ];
 
   return createPortal(
@@ -1203,7 +1288,8 @@ function SocialThreatDetailModal({
               <ExportBtn onClick={() => downloadCSV(visible.map(r => ({
                 Type: r.threat_type, 'Lead ID': r.lead_id, 'Agent Name': resolveAgent(r.agent_id),
                 'Mobile No': r.mobile_no, 'Threat Word / Phrase': r.threat_word,
-                Scenario: r.scenario, 'Sub-Scenario': r.scenario1, Date: r.date, Transcript: r.transcript,
+                Scenario: r.scenario, 'Sub-Scenario': r.scenario1, Date: r.date,
+                'Social Media Info': r.social_media_info, Transcript: r.transcript,
               })), 'social-court-threat.csv')} />
             )}
             <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors">
@@ -1257,7 +1343,33 @@ function SocialThreatDetailModal({
             </div>
           )}
 
-          {!loading && visible.length > 0 && (
+          {!loading && tab === 'Date Wise' && dateWise.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-orange-50">
+                    {['Date', '📱 Social Media', '⚖️ Court & Legal', 'Total'].map(h => (
+                      <th key={h} className="text-left px-3 py-2.5 font-semibold text-orange-700 whitespace-nowrap border-b border-orange-100 uppercase tracking-wider text-[10px]">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {dateWise.map(d => (
+                    <tr key={d.day} className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0">
+                      <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap">{d.day}</td>
+                      <td className="px-3 py-2 font-semibold text-blue-600">{d.social.toLocaleString()}</td>
+                      <td className="px-3 py-2 font-semibold text-red-600">{d.court.toLocaleString()}</td>
+                      <td className="px-3 py-2 font-bold text-slate-900">{d.total.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!loading && tab !== 'Date Wise' && visible.length > 0 && (
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-xs border-collapse">
                 <thead>
