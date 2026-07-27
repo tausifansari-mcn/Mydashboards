@@ -61,6 +61,47 @@ export async function getMagicalCategorySaleDoneCalls(req: Request, res: Respons
   }
 }
 
+export async function getMagicalCategoryCallEndCalls(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const category = String(req.query.category ?? '');
+    const variant = req.query.variant === 'generic' ? 'generic' : 'bellavita';
+    if (!category) { res.status(400).json({ message: 'category is required' }); return; }
+    const data = await svc.getMagicalCategoryCallEndCalls(filters, category, variant);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getMagicalStageCallEndCalls(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const stage = req.query.stage === 'csp' ? 'csp' : req.query.stage === 'offer' ? 'offer' : 'op';
+    const variant = req.query.variant === 'generic' ? 'generic' : 'bellavita';
+    const data = await svc.getMagicalStageCallEndCalls(filters, stage, variant);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getRawCallData(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const mobileNo = (req.query.mobileNo as string | undefined)?.trim() || undefined;
+    const cursor = req.query.cursor ? Number(req.query.cursor) : undefined;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+    const data = await svc.getRawCallData(filters, mobileNo, cursor, limit);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
 export async function getDetailAnalysis(req: Request, res: Response) {
   try {
     const filters = parseDateRange(req);
@@ -249,9 +290,17 @@ export async function deleteMagicalScriptConfig(req: Request, res: Response) {
 
 export async function exportAllCsv(req: Request, res: Response) {
   try {
-    const { startDate, endDate } = parseDateRange(req);
+    const { startDate, endDate, clientId } = parseDateRange(req);
     const scope = await resolveUserScope(req.user!.id, req.tenantId ?? null);
-    await svc.streamOutboundExportCsv(res, startDate, endDate, scope.clientIds);
+    // No clientId → export every client the user can see (scope.clientIds, or null = unrestricted).
+    // A specific clientId (per-process export button) narrows to just that one — but still fails
+    // closed to an empty export if it's outside the requester's own scope, same as enforceClientScope.
+    let clientIds = scope.clientIds;
+    if (clientId) {
+      const requested = Number(clientId);
+      clientIds = (scope.clientIds === null || scope.clientIds.includes(requested)) ? [requested] : [];
+    }
+    await svc.streamOutboundExportCsv(res, startDate, endDate, clientIds);
   } catch (err: unknown) {
     if (!res.headersSent) {
       const msg = err instanceof Error ? err.message : 'Export failed';

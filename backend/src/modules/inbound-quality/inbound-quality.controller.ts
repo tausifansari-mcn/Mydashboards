@@ -50,6 +50,15 @@ export async function getDailyScores(req: Request, res: Response) {
   }
 }
 
+export async function getDailyScoresRange(req: Request, res: Response) {
+  try {
+    const data = await svc.getDailyScoresRange(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function getScenarios(req: Request, res: Response) {
   try {
     const data = await svc.getScenarios(parseFilters(req));
@@ -128,6 +137,19 @@ export async function getClapKeywordDrill(req: Request, res: Response) {
 export async function getClapWords(req: Request, res: Response) {
   try {
     const data = await svc.getClapWords(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getRawCallData(req: Request, res: Response) {
+  try {
+    const filters = parseFilters(req);
+    const mobileNo = (req.query.mobileNo as string | undefined)?.trim() || undefined;
+    const cursor = req.query.cursor ? Number(req.query.cursor) : undefined;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+    const data = await svc.getRawCallData(filters, mobileNo, cursor, limit);
     res.json({ data });
   } catch (err: unknown) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
@@ -443,6 +465,15 @@ export async function getRawData(req: Request, res: Response) {
 export async function getScoreComponentDetail(req: Request, res: Response) {
   try {
     const data = await svc.getScoreComponentDetail(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getDateWiseParameterScores(req: Request, res: Response) {
+  try {
+    const data = await svc.getDateWiseParameterScores(parseFilters(req));
     res.json({ data });
   } catch (err: unknown) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });

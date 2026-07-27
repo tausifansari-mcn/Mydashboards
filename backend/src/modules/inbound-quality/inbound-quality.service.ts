@@ -708,6 +708,33 @@ export async function getDailyScores(filters: InboundQualityFilters): Promise<Da
   }));
 }
 
+// Same shape as getDailyScores above, but honors the caller's actual startDate instead of always
+// hardcoding a 7-day window — powers the "expand to full range" popup on the Last 7 Days chart.
+export async function getDailyScoresRange(filters: InboundQualityFilters): Promise<DailyScore[]> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  const rows = await querySource<{ call_date: string; avg_score: number | null; audit_count: number }>(`
+    SELECT
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d')        AS call_date,
+      ROUND(AVG(q.quality_percentage), 1)        AS avg_score,
+      COUNT(*)                                   AS audit_count
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+    GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
+    ORDER BY call_date ASC
+  `, params);
+
+  return rows.map(r => ({
+    call_date:   String(r.call_date),
+    avg_score:   Number(r.avg_score ?? 0),
+    audit_count: Number(r.audit_count),
+  }));
+}
+
 // ─── New Alert Field CASE expression ─────────────────────────────────────────
 // Priority: Scam Leads > Social Media/Court Threat > Top Negative Signals > Not
 const ALERT_FIELD = `CASE
@@ -1046,6 +1073,45 @@ export async function getPosKeywordPhrases(
   ].sort((a, b) => b.count - a.count);
 }
 
+// ─── Raw Data tab ───────────────────────────────────────────────────────────
+// Every call_quality_assessment column (same "all columns" set the CSV export uses — see
+// CQA_EXPORT_COLUMNS / exportSelectExpr below), most-recent first, with id-based keyset pagination
+// so "Load More" stays cheap regardless of how far back the user goes. No recording link exists for
+// inbound — CQA_EXPORT_COLUMNS has no file/recording column — the frontend uses lead_id instead to
+// key the transcript-reader button off.
+export async function getRawCallData(
+  filters: InboundQualityFilters, mobileNo: string | undefined, cursor: number | undefined, limit: number,
+): Promise<{ columns: string[]; rows: Record<string, unknown>[]; nextCursor: number | null }> {
+  const { startDate, endDate, clientId } = filters;
+  const cf = clientId ? ' AND q.ClientId = ?' : '';
+  const mf = mobileNo ? ' AND q.MobileNo LIKE ?' : '';
+  const cursorClause = cursor ? ' AND q.id < ?' : '';
+  // A mobile-number search intentionally ignores the date range — the caller may be looking for a
+  // call from before or after whatever window happens to be selected, so search all-time instead.
+  const dateClause = mobileNo ? '' : ' AND q.CallDate BETWEEN ? AND ?';
+  const dateParams = mobileNo ? [] : [startDate, endDate];
+  const params: (string | number)[] = [
+    ...dateParams,
+    ...(clientId ? [clientId] : []),
+    ...(mobileNo ? [`%${mobileNo}%`] : []),
+    ...(cursor ? [cursor] : []),
+  ];
+
+  const rows = await querySource<Record<string, unknown>>(`
+    SELECT ${CQA_EXPORT_COLUMNS.map(c => exportSelectExpr(c)).join(', ')}
+    FROM db_audit.call_quality_assessment q
+    WHERE 1=1 ${dateClause} ${cf} ${mf} ${cursorClause}
+    ORDER BY q.id DESC
+    LIMIT ${limit}
+  `, params);
+
+  return {
+    columns: CQA_EXPORT_COLUMNS,
+    rows,
+    nextCursor: rows.length === limit ? Number(rows[rows.length - 1].id) : null,
+  };
+}
+
 // ─── Transcript fetch ─────────────────────────────────────────────────────────
 export async function getTranscript(leadId: string): Promise<{ lead_id: string; agent_id: string; date: string; transcript: string } | null> {
   const rows = await querySource<{ lead_id: string; agent_id: string; date: string; transcript: string }>(`
@@ -1176,6 +1242,78 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
       p('further_assistance_offered'),
       p('proper_call_closure'),
     ],
+  };
+}
+
+// ─── Date-wise all-parameters score table (Detail Analysis) ──────────────────
+// Same 19 columns as getScoreComponentDetail above, but broken out per calendar day instead of
+// aggregated over the whole range, plus a totals row for the full range.
+export interface DateWiseParamRow {
+  date: string;
+  auditCount: number;
+  overallScore: number;
+  params: Record<string, number>;
+}
+export interface DateWiseParamData {
+  paramColumns: { column: string; label: string }[];
+  rows: DateWiseParamRow[];
+  totals: { auditCount: number; overallScore: number; params: Record<string, number> };
+}
+
+const PARAM_COLUMNS = Object.keys(SCORE_LABEL);
+
+export async function getDateWiseParameterScores(filters: InboundQualityFilters): Promise<DateWiseParamData> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? 'AND q.ClientId = ?' : '';
+  const baseParams: (string | number)[] = clientId ? [startDate, endDate, clientId] : [startDate, endDate];
+
+  const paramSelects = PARAM_COLUMNS.map(c =>
+    `ROUND(100.0 * SUM(CASE WHEN COALESCE(q.${c},0) = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS ${c}`
+  ).join(',\n      ');
+
+  const rows = await querySource<Record<string, unknown>>(`
+    SELECT
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d') AS call_date,
+      COUNT(*) AS audit_count,
+      ROUND(AVG(q.quality_percentage), 1) AS overall_score,
+      ${paramSelects}
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+    GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
+    ORDER BY call_date ASC
+  `, baseParams);
+
+  const totalsRows = await querySource<Record<string, unknown>>(`
+    SELECT
+      COUNT(*) AS audit_count,
+      ROUND(AVG(q.quality_percentage), 1) AS overall_score,
+      ${paramSelects}
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+  `, baseParams);
+
+  const toParams = (r: Record<string, unknown>): Record<string, number> =>
+    Object.fromEntries(PARAM_COLUMNS.map(c => [c, Number(r[c] ?? 0)]));
+
+  const t = totalsRows[0];
+
+  return {
+    paramColumns: PARAM_COLUMNS.map(c => ({ column: c, label: SCORE_LABEL[c] })),
+    rows: rows.map(r => ({
+      date:         String(r.call_date),
+      auditCount:   Number(r.audit_count ?? 0),
+      overallScore: Number(r.overall_score ?? 0),
+      params:       toParams(r),
+    })),
+    totals: {
+      auditCount:   Number(t?.audit_count ?? 0),
+      overallScore: Number(t?.overall_score ?? 0),
+      params:       t ? toParams(t) : Object.fromEntries(PARAM_COLUMNS.map(c => [c, 0])),
+    },
   };
 }
 
@@ -4697,12 +4835,22 @@ const CQA_EXPORT_COLUMNS = [
   'Social_Media_Phone_Number_Order_ID_Email_ID',
 ];
 
+// CallDate needs an explicit SQL-side format (dd-mm-yyyy hh:mm:ss) rather than the raw DATETIME —
+// letting mysql2/CSV serialize a Date object directly produces a locale/timezone-dependent string.
+function exportSelectExpr(col: string): string {
+  if (col === 'CallDate') return `DATE_FORMAT(q.CallDate, '%d-%m-%Y %H:%i:%s') AS CallDate`;
+  return `q.${col}`;
+}
+
 export async function streamInboundExportCsv(
   res: Response, startDate: string, endDate: string, clientIds: number[] | null,
 ): Promise<void> {
   const fname = `inbound-export-${startDate.slice(0, 10)}_to_${endDate.slice(0, 10)}.csv`;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  // UTF-8 BOM — without it, Excel misdetects the encoding and garbles the Hindi/Hinglish text that
+  // shows up throughout Transcribe_Text and the other free-text columns.
+  res.write(Buffer.from([0xEF, 0xBB, 0xBF]));
   res.write(CQA_EXPORT_COLUMNS.join(',') + '\n');
 
   // clientIds === null → unrestricted (super_admin); [] → no accessible clients at all → empty export
@@ -4715,7 +4863,7 @@ export async function streamInboundExportCsv(
   let lastId = 0;
   for (;;) {
     const rows = await querySource<Record<string, unknown>>(`
-      SELECT ${CQA_EXPORT_COLUMNS.map(c => `q.${c}`).join(', ')}
+      SELECT ${CQA_EXPORT_COLUMNS.map(c => exportSelectExpr(c)).join(', ')}
       FROM db_audit.call_quality_assessment q
       WHERE q.id > ? AND q.CallDate BETWEEN ? AND ? ${clientFilter}
       ORDER BY q.id ASC

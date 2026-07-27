@@ -3,6 +3,7 @@ import { verifyToken } from '../../middleware/verifyToken';
 import { injectTenant } from '../../middleware/injectTenant';
 import { requireRole } from '../../middleware/requireRole';
 import { enforceClientScope } from '../../middleware/enforceClientScope';
+import { requireDashboardAccess } from '../../middleware/requireDashboardAccess';
 import * as ctrl from './quality.controller';
 
 const router = Router();
@@ -14,6 +15,9 @@ router.get('/clients-summary',    ctrl.getClientsSummary);
 router.get('/kpis',               ctrl.getKPIs);
 router.get('/sale-done-calls',    ctrl.getSaleDoneCalls);
 router.get('/magical-script-category-sale-done', ctrl.getMagicalCategorySaleDoneCalls);
+router.get('/magical-script-category-call-end', ctrl.getMagicalCategoryCallEndCalls);
+router.get('/magical-script-stage-call-end',     ctrl.getMagicalStageCallEndCalls);
+router.get('/raw-data',                          requireDashboardAccess('raw-data'), ctrl.getRawCallData);
 router.get('/detail-analysis',    ctrl.getDetailAnalysis);
 router.get('/customer-interaction-insights', ctrl.getCustomerInteractionInsights);
 router.get('/customer-interaction-insights/drill', ctrl.getOutboundInsightDrill);

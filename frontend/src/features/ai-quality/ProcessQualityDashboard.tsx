@@ -12,9 +12,10 @@ import {
 import {
   BarChart3, ChevronLeft, ChevronDown, PhoneCall, PhoneOff,
   Target, TrendingUp, Users, XCircle, AlertTriangle, ThumbsDown, Info, Download, X, Pencil,
-  ShieldAlert, AlertOctagon, Trash2, Plus, Save,
+  ShieldAlert, AlertOctagon, Trash2, Plus, Save, Loader2,
 } from 'lucide-react';
 import api from '@/lib/axios';
+import RawDataTab from './RawDataTab';
 
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 function downloadCSV(rows: Record<string, unknown>[], filename: string) {
@@ -785,11 +786,11 @@ function MSFlowHeader({ cachedThrough, right }: { cachedThrough: string | null; 
 // preview) and expands on click to show the full script plus its Call End / Sale Done pills. Keeps
 // the tree scannable at a glance while still surfacing full detail on demand, per the "expandable
 // cards, not text boxes" ask.
-function MSBranchCard({ accent, icon, title, contributionPct, script, fallback, metrics, onMetricClick, delay, grown }: {
+function MSBranchCard({ accent, icon, title, contributionPct, script, fallback, metrics, onMetricClick, onCallEndClick, delay, grown }: {
   accent: string; icon: string; title: string; contributionPct: number;
   script: React.ReactNode; fallback?: React.ReactNode;
   metrics: { callEnd: number; saleDone: number; convPct: number };
-  onMetricClick: () => void; delay: number; grown: boolean;
+  onMetricClick: () => void; onCallEndClick?: () => void; delay: number; grown: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -816,7 +817,7 @@ function MSBranchCard({ accent, icon, title, contributionPct, script, fallback, 
       <div className="w-full flex gap-3">
         <div className="flex-1 flex flex-col items-center">
           <MSLine orientation="v" size={12} />
-          <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞">
+          <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞" onClick={onCallEndClick}>
             <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
             <p className="text-sm font-black tabular-nums text-white leading-none">{metrics.callEnd.toLocaleString()}</p>
           </MSMetricPill>
@@ -833,13 +834,16 @@ function MSBranchCard({ accent, icon, title, contributionPct, script, fallback, 
   );
 }
 
-function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSaleDoneClick }: {
+function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSaleDoneClick, onCallEndClick, onStageCallEndClick }: {
   ms: BellavitaMagicalScriptData;
   productModalOpen: boolean;
   onToggleProductModal: (open: boolean) => void;
   onSaleDoneClick: (category: string) => void;
+  onCallEndClick: (category: string) => void;
+  onStageCallEndClick: (stage: 'op' | 'csp' | 'offer') => void;
 }) {
   const [grown, setGrown] = useState(false);
+  const [showAllCategories, setShowAllCategories] = useState(false);
   useEffect(() => {
     setGrown(false);
     const t = setTimeout(() => setGrown(true), 60);
@@ -849,8 +853,8 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
   // Stage row: [badge] —line— [script box] —line— { vertical bracket → [Call End] / [Success·Contribution] }.
   // Badge sits in a fixed-width column so a vertical connector can drop straight down from it into
   // the next row's badge, reading as one continuous OP → CSP → Offer flow instead of 3 loose rows.
-  const StageRow = ({ icon, label, scriptNode, metrics, delay, connectDown }: {
-    icon?: string; label: string; scriptNode: React.ReactNode; metrics: BellavitaStageMetrics; delay: number; connectDown?: boolean;
+  const StageRow = ({ icon, label, scriptNode, metrics, delay, connectDown, onCallEndClick }: {
+    icon?: string; label: string; scriptNode: React.ReactNode; metrics: BellavitaStageMetrics; delay: number; connectDown?: boolean; onCallEndClick?: () => void;
   }) => (
     <div className="mb-5 last:mb-0">
       <div className="flex items-center transition-all ease-out"
@@ -860,8 +864,16 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
           transitionDuration: '500ms',
           transitionDelay: `${delay}ms`,
         }}>
-        <div className="flex flex-col items-center shrink-0" style={{ width: 130 }}>
+        <div className="flex flex-col items-center shrink-0 relative" style={{ width: 130 }}>
           <MSStageBadge icon={icon}>{label}</MSStageBadge>
+          {/* Positioned relative to this exact column (not a separate sibling below the whole row),
+              so it's mathematically centered under the badge regardless of how wide the badge's own
+              text/icon content renders — no risk of drifting from a second, independently-sized box. */}
+          {connectDown && (
+            <div className="absolute flex justify-center" style={{ top: '100%', left: 0, right: 0 }}>
+              <MSLine orientation="v" size={20} dot />
+            </div>
+          )}
         </div>
         <MSLine size={24} dot />
         <MSScriptBox>{scriptNode}</MSScriptBox>
@@ -869,7 +881,7 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
         <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_COLORS.primary}30`, minWidth: 220 }}>
           <div className="flex items-center">
             <MSLine size={16} />
-            <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞">
+            <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞" onClick={onCallEndClick}>
               <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
               <p className="text-base font-black tabular-nums text-white leading-none">{metrics.call_end.toLocaleString()}</p>
             </MSMetricPill>
@@ -883,11 +895,6 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
           </div>
         </div>
       </div>
-      {connectDown && (
-        <div className="flex justify-center" style={{ width: 130 }}>
-          <MSLine orientation="v" size={20} dot />
-        </div>
-      )}
     </div>
   );
 
@@ -896,12 +903,21 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
   return (
     <>
       <div className={`rounded-[24px] overflow-hidden mb-6 ${MS_GLASS}`} style={{ background: MS_COLORS.bg }}>
-        <MSFlowHeader cachedThrough={ms.cachedThrough} />
+        <MSFlowHeader cachedThrough={ms.cachedThrough} right={(
+          // Native browser print-to-PDF (not a canvas screenshot lib) so gradients/blur/shadows in
+          // this view come out identical to what's on screen — see .print-area in index.css.
+          <button onClick={() => window.print()}
+            className="no-print flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold text-white/90 hover:text-white border border-white/30 hover:border-white/60 transition-colors">
+            <Download size={11} /> Download PDF
+          </button>
+        )} />
         <div className="p-6" style={{ background: `radial-gradient(120% 100% at 0% 0%, #EFF6FF 0%, ${MS_COLORS.bg} 60%)` }}>
           <StageRow icon="👋" label="Magical OP" metrics={ms.op} delay={0} connectDown
+            onCallEndClick={() => onStageCallEndClick('op')}
             scriptNode={<span style={{ whiteSpace: 'pre-line' }}>{ms.op.script}</span>} />
 
           <StageRow icon="💬" label="Magical CSP" metrics={ms.csp} delay={150} connectDown
+            onCallEndClick={() => onStageCallEndClick('csp')}
             scriptNode={
               <div className="flex flex-col gap-3 w-full">
                 {ms.csp.scripts.map(s => (
@@ -914,6 +930,7 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
             } />
 
           <StageRow icon="🎁" label="Magical Offer" metrics={ms.offer} delay={300}
+            onCallEndClick={() => onStageCallEndClick('offer')}
             scriptNode={
               ms.offer.products.length > 0 ? (
                 <button onClick={() => onToggleProductModal(true)} className="text-left hover:underline decoration-dotted w-full">
@@ -926,31 +943,49 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
             } />
 
           {/* ── Branches out of Magical Offer into the top objection categories ── */}
-          {ms.categories.length > 0 && (
-            <div className="mt-2">
-              <div className="flex justify-center"><MSLine orientation="v" size={22} /></div>
-              <MSFanBar count={ms.categories.length} />
-              <div className="grid gap-4 mt-0" style={{ gridTemplateColumns: `repeat(${ms.categories.length}, minmax(0, 1fr))` }}>
-                {ms.categories.map((cat, i) => (
-                  <MSBranchCard key={cat.category} delay={450 + i * 100} grown={grown}
-                    accent={CARD_ACCS[i % CARD_ACCS.length]} icon={categoryIcon(cat.category)}
-                    title={cat.category} contributionPct={cat.contribution_pct}
-                    script={cat.script ? <span style={{ whiteSpace: 'pre-line' }}>{cat.script}</span> : null}
-                    fallback={cat.topContext ? (
-                      <div>
-                        <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Most common pitch in calls</p>
-                        <span style={{ whiteSpace: 'pre-line' }}>{cat.topContext}</span>
-                        {cat.contexts.length > 1 && (
-                          <p className="text-[9px] text-slate-400 mt-1.5">+{cat.contexts.length - 1} other variation{cat.contexts.length > 2 ? 's' : ''} seen</p>
-                        )}
-                      </div>
-                    ) : null}
-                    metrics={{ callEnd: cat.call_end, saleDone: cat.sale_done, convPct: cat.conv_pct }}
-                    onMetricClick={() => onSaleDoneClick(cat.category)} />
-                ))}
+          {ms.categories.length > 0 && (() => {
+            const visibleCategories = showAllCategories ? ms.categories : ms.categories.slice(0, 4);
+            const hasMore = ms.categories.length > 4;
+            return (
+              <div className="mt-2">
+                <div className="flex justify-center"><MSLine orientation="v" size={22} /></div>
+                {!showAllCategories && <MSFanBar count={visibleCategories.length} />}
+                <div className={showAllCategories
+                  ? 'grid gap-4 mt-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'
+                  : 'grid gap-4 mt-0'}
+                  style={showAllCategories ? undefined : { gridTemplateColumns: `repeat(${visibleCategories.length}, minmax(0, 1fr))` }}>
+                  {visibleCategories.map((cat, i) => (
+                    <MSBranchCard key={cat.category} delay={450 + i * 100} grown={grown}
+                      accent={CARD_ACCS[i % CARD_ACCS.length]} icon={categoryIcon(cat.category)}
+                      title={cat.category} contributionPct={cat.contribution_pct}
+                      script={cat.script ? <span style={{ whiteSpace: 'pre-line' }}>{cat.script}</span> : null}
+                      fallback={cat.topContext ? (
+                        <div>
+                          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Most common pitch in calls</p>
+                          <span style={{ whiteSpace: 'pre-line' }}>{cat.topContext}</span>
+                          {cat.contexts.length > 1 && (
+                            <p className="text-[9px] text-slate-400 mt-1.5">+{cat.contexts.length - 1} other variation{cat.contexts.length > 2 ? 's' : ''} seen</p>
+                          )}
+                        </div>
+                      ) : null}
+                      metrics={{ callEnd: cat.call_end, saleDone: cat.sale_done, convPct: cat.conv_pct }}
+                      onMetricClick={() => onSaleDoneClick(cat.category)}
+                      onCallEndClick={() => onCallEndClick(cat.category)} />
+                  ))}
+                </div>
+                {hasMore && (
+                  <div className="flex justify-center mt-4">
+                    <button onClick={() => setShowAllCategories(v => !v)}
+                      className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[11px] font-bold border transition-all"
+                      style={{ color: MS_COLORS.primary, borderColor: `${MS_COLORS.primary}40`, background: `${MS_COLORS.primary}08` }}>
+                      <ChevronDown size={13} className="transition-transform duration-300" style={{ transform: showAllCategories ? 'rotate(180deg)' : 'none' }} />
+                      {showAllCategories ? 'Show top 4 only' : `Expand — show all ${ms.categories.length} categories`}
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
 
@@ -993,8 +1028,11 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
 
 // ─── Every other outbound process: DB-configured OP → CSP → Offer flow + objection scripts,
 // rendered through the same tree/connector style as Bellavita's flow above. ───────────────────────
-function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick }: {
-  ms: GenericMagicalScriptData; canEdit: boolean; onOpenEditor: () => void; onSaleDoneClick: (category: string) => void;
+function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick, onCallEndClick, onStageCallEndClick }: {
+  ms: GenericMagicalScriptData; canEdit: boolean; onOpenEditor: () => void;
+  onSaleDoneClick: (category: string) => void;
+  onCallEndClick: (category: string) => void;
+  onStageCallEndClick: (stage: 'op' | 'csp' | 'offer') => void;
 }) {
   const CARD_ACCS = ['#1D4ED8', '#7C3AED', '#0891B2', '#D97706'];
   const [grown, setGrown] = useState(false);
@@ -1016,11 +1054,21 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick }: {
       ]} />
 
       <div className={`rounded-[24px] overflow-hidden mb-6 ${MS_GLASS}`} style={{ background: MS_COLORS.bg }}>
-        <MSFlowHeader cachedThrough={ms.cachedThrough} right={canEdit && (
-          <button onClick={onOpenEditor}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold text-white/90 hover:text-white border border-white/30 hover:border-white/60 transition-colors">
-            <Pencil size={11} /> Edit Scripts
-          </button>
+        <MSFlowHeader cachedThrough={ms.cachedThrough} right={(
+          <>
+            {canEdit && (
+              <button onClick={onOpenEditor}
+                className="no-print flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold text-white/90 hover:text-white border border-white/30 hover:border-white/60 transition-colors">
+                <Pencil size={11} /> Edit Scripts
+              </button>
+            )}
+            {/* Native browser print-to-PDF (not a canvas screenshot lib) so gradients/blur/shadows in
+                this view come out identical to what's on screen — see .print-area in index.css. */}
+            <button onClick={() => window.print()}
+              className="no-print flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold text-white/90 hover:text-white border border-white/30 hover:border-white/60 transition-colors">
+              <Download size={11} /> Download PDF
+            </button>
+          </>
         )} />
         <div className="p-6" style={{ background: `radial-gradient(120% 100% at 0% 0%, #EFF6FF 0%, ${MS_COLORS.bg} 60%)` }}>
           {ms.flow.map((stage, si) => (
@@ -1042,7 +1090,7 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick }: {
               <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_COLORS.primary}30`, minWidth: 200 }}>
                 <div className="flex items-center">
                   <MSLine size={16} />
-                  <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞">
+                  <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞" onClick={() => onStageCallEndClick(stage.stage as 'op' | 'csp' | 'offer')}>
                     <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
                     <p className="text-base font-black tabular-nums text-white leading-none">{stage.dropped.toLocaleString()}</p>
                   </MSMetricPill>
@@ -1069,7 +1117,8 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick }: {
                     title={obj.title} contributionPct={obj.contribution}
                     script={obj.script ? <span style={{ whiteSpace: 'pre-line' }}>{obj.script}</span> : null}
                     metrics={{ callEnd: obj.total - obj.sales, saleDone: obj.sales, convPct: obj.conv_pct }}
-                    onMetricClick={() => onSaleDoneClick(obj.category ?? obj.title)} />
+                    onMetricClick={() => onSaleDoneClick(obj.category ?? obj.title)}
+                    onCallEndClick={() => onCallEndClick(obj.category ?? obj.title)} />
                 ))}
               </div>
             </div>
@@ -1210,7 +1259,8 @@ function MagicalScriptEditorModal({ open, loading, rows, objectionOptions, savin
 export default function ProcessQualityDashboard() {
   const navigate = useNavigate();
   const { clientId } = useParams<{ clientId: string }>();
-  const { canAccessOutboundClient, loaded: processLoaded } = useProcessStore();
+  const { canAccessOutboundClient, loaded: processLoaded, dashboardSlugs } = useProcessStore();
+  const canViewRawData = dashboardSlugs.includes('raw-data');
   const now = new Date();
 
   useEffect(() => {
@@ -1253,6 +1303,31 @@ export default function ProcessQualityDashboard() {
 
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
+
+  const [exportingProcess, setExportingProcess] = useState(false);
+  const handleExportProcess = async () => {
+    if (!clientId) return;
+    setExportingProcess(true);
+    try {
+      const res = await api.get(
+        `/quality/export-all-csv?clientId=${clientId}&startDate=${encodeURIComponent(sd)}&endDate=${encodeURIComponent(ed)}`,
+        { responseType: 'blob' },
+      );
+      const blob = new Blob([res.data as BlobPart], { type: 'text/csv' });
+      const objUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = `outbound-${clientId}-export-${sd.slice(0, 10)}_to_${ed.slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(objUrl);
+    } catch {
+      alert('Export failed. Please try again.');
+    } finally {
+      setExportingProcess(false);
+    }
+  };
 
   const [activeSlide, setActiveSlide] = useState(0);
   const loadedSlides = useRef<Record<number, boolean>>({});
@@ -1312,6 +1387,29 @@ export default function ProcessQualityDashboard() {
     setSaleDoneDrill({ open: true, loading: true, title, rows: [] });
     api.get<{ data: SaleDoneCallRow[] }>(
       `/quality/magical-script-category-sale-done?startDate=${sd}&endDate=${ed}&clientId=${clientId}&category=${encodeURIComponent(category)}&variant=${variant}`
+    )
+      .then(r => setSaleDoneDrill({ open: true, loading: false, title, rows: r.data?.data ?? [] }))
+      .catch(() => setSaleDoneDrill({ open: true, loading: false, title, rows: [] }));
+  };
+
+  const openCategoryCallEndDrill = (category: string, variant: 'bellavita' | 'generic') => {
+    if (!clientId) return;
+    const title = `Call End — ${category}`;
+    setSaleDoneDrill({ open: true, loading: true, title, rows: [] });
+    api.get<{ data: SaleDoneCallRow[] }>(
+      `/quality/magical-script-category-call-end?startDate=${sd}&endDate=${ed}&clientId=${clientId}&category=${encodeURIComponent(category)}&variant=${variant}`
+    )
+      .then(r => setSaleDoneDrill({ open: true, loading: false, title, rows: r.data?.data ?? [] }))
+      .catch(() => setSaleDoneDrill({ open: true, loading: false, title, rows: [] }));
+  };
+
+  const STAGE_TITLES: Record<'op' | 'csp' | 'offer', string> = { op: 'Magical OP', csp: 'Magical CSP', offer: 'Magical Offer' };
+  const openStageCallEndDrill = (stage: 'op' | 'csp' | 'offer', variant: 'bellavita' | 'generic') => {
+    if (!clientId) return;
+    const title = `Call End — ${STAGE_TITLES[stage]}`;
+    setSaleDoneDrill({ open: true, loading: true, title, rows: [] });
+    api.get<{ data: SaleDoneCallRow[] }>(
+      `/quality/magical-script-stage-call-end?startDate=${sd}&endDate=${ed}&clientId=${clientId}&stage=${stage}&variant=${variant}`
     )
       .then(r => setSaleDoneDrill({ open: true, loading: false, title, rows: r.data?.data ?? [] }))
       .catch(() => setSaleDoneDrill({ open: true, loading: false, title, rows: [] }));
@@ -1493,12 +1591,21 @@ export default function ProcessQualityDashboard() {
           <label className="text-[11px] text-slate-500 font-medium">To</label>
           <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
             className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all" />
-          {(loading || magicalLoading || customerInsightsLoading) && (
-            <div className="ml-auto flex items-center gap-2">
-              <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-              <span className="text-[11px] font-semibold text-white">Loading…</span>
-            </div>
-          )}
+          <div className="ml-auto flex items-center gap-3">
+            <button onClick={handleExportProcess} disabled={exportingProcess}
+              title="Export all columns for this process and date range"
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-wait"
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', color: '#fff' }}>
+              {exportingProcess ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+              {exportingProcess ? 'Exporting…' : 'Export Data'}
+            </button>
+            {(loading || magicalLoading || customerInsightsLoading) && (
+              <div className="flex items-center gap-2">
+                <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                <span className="text-[11px] font-semibold text-white">Loading…</span>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ─── Missing agents banner ── */}
@@ -1575,7 +1682,7 @@ export default function ProcessQualityDashboard() {
 
         {/* ─── Pill tab navigation ── */}
         {(() => {
-          const SLIDES = ['✨ Magical Script', 'Dashboard', 'Missed Opportunity', 'NPS & CSAT', 'Detail Analysis'];
+          const SLIDES = ['✨ Magical Script', 'Dashboard', 'Missed Opportunity', 'NPS & CSAT', 'Detail Analysis', ...(canViewRawData ? ['Raw Data'] : [])];
           return (
             <div className="pill-tabs w-fit">
               {SLIDES.map((label, i) => (
@@ -1791,7 +1898,7 @@ export default function ProcessQualityDashboard() {
                             <td className="px-3 py-2 font-mono text-slate-500 whitespace-nowrap">{r.mobileNo || '—'}</td>
                             <td className="px-3 py-2" style={{ minWidth: 220 }}>
                               {r.fileName
-                                ? <audio controls preload="none" src={r.fileName} style={{ height: 30, width: 210 }} />
+                                ? <audio controls preload="metadata" src={r.fileName} style={{ height: 30, width: 210 }} />
                                 : <span className="text-slate-300 italic">No recording</span>}
                             </td>
                             <td className="px-3 py-2">
@@ -3634,21 +3741,33 @@ export default function ProcessQualityDashboard() {
         {/* ─── Slide 0: Magical Script ───────────────────────────────────── */}
         {activeSlide === 0 && (
           <div className="mt-4">
-            {magicalLoading ? (
-              <div className="flex items-center justify-center h-64 gap-3 text-slate-500 text-sm">
-                <div className="w-5 h-5 border-2 border-slate-300 border-t-blue-500 rounded-full animate-spin" />
-                Loading Magical Script…
-              </div>
-            ) : !magicalScript ? (
-              <div className="flex items-center justify-center h-64 text-slate-400 text-sm">No script data available for this period.</div>
-            ) : magicalScript.variant === 'bellavita' ? (
-              <BellavitaMagicalFlow ms={magicalScript} productModalOpen={bellaProductModal} onToggleProductModal={setBellaProductModal}
-                onSaleDoneClick={(category) => openCategorySaleDoneDrill(category, 'bellavita')} />
-            ) : (
-              <GenericMagicalFlow ms={magicalScript} canEdit={canEditScripts} onOpenEditor={openScriptEditor}
-                onSaleDoneClick={(category) => openCategorySaleDoneDrill(category, 'generic')} />
-            )}
+            <div className="print-area">
+              {magicalLoading ? (
+                <div className="flex items-center justify-center h-64 gap-3 text-slate-500 text-sm">
+                  <div className="w-5 h-5 border-2 border-slate-300 border-t-blue-500 rounded-full animate-spin" />
+                  Loading Magical Script…
+                </div>
+              ) : !magicalScript ? (
+                <div className="flex items-center justify-center h-64 text-slate-400 text-sm">No script data available for this period.</div>
+              ) : magicalScript.variant === 'bellavita' ? (
+                <BellavitaMagicalFlow ms={magicalScript} productModalOpen={bellaProductModal} onToggleProductModal={setBellaProductModal}
+                  onSaleDoneClick={(category) => openCategorySaleDoneDrill(category, 'bellavita')}
+                  onCallEndClick={(category) => openCategoryCallEndDrill(category, 'bellavita')}
+                  onStageCallEndClick={(stage) => openStageCallEndDrill(stage, 'bellavita')} />
+              ) : (
+                <GenericMagicalFlow ms={magicalScript} canEdit={canEditScripts} onOpenEditor={openScriptEditor}
+                  onSaleDoneClick={(category) => openCategorySaleDoneDrill(category, 'generic')}
+                  onCallEndClick={(category) => openCategoryCallEndDrill(category, 'generic')}
+                  onStageCallEndClick={(stage) => openStageCallEndDrill(stage, 'generic')} />
+              )}
+            </div>
           </div>
+        )}
+
+        {/* ─── Slide 5: Raw Data ─────────────────────────────────────────── */}
+        {activeSlide === 5 && clientId && canViewRawData && (
+          <RawDataTab clientId={clientId} apiPath="/quality/raw-data" hasRecording hasTranscript wideColumns
+            transcriptApiPath="/quality/customer-interaction-insights/transcript" transcriptParam="callId" />
         )}
 
         <MagicalScriptEditorModal

@@ -846,6 +846,115 @@ export async function getMagicalCategorySaleDoneCalls(
     .sort((a, b) => b.callDate.localeCompare(a.callDate));
 }
 
+// Shared by the two "Call End" drill-downs below — turns a set of magical_script_cache call_ids
+// into the same row shape the Sale Done drill-downs use, so both reuse one frontend modal.
+async function hydrateSaleDoneRows(callIds: number[]): Promise<SaleDoneCallRow[]> {
+  if (callIds.length === 0) return [];
+  const placeholders = callIds.map(() => '?').join(',');
+  const rows = await querySource<{ id: number; CallDate: string; AgentName: string | null; MobileNo: string | null; FileName: string | null }>(
+    `SELECT id, CallDate, AgentName, MobileNo, FileName FROM db_external.CallDetails WHERE id IN (${placeholders})`,
+    callIds,
+  );
+  return rows
+    .map(r => ({
+      callId:    Number(r.id),
+      callDate:  String(r.CallDate),
+      agentName: r.AgentName ?? 'Unknown',
+      mobileNo:  r.MobileNo ?? '',
+      fileName:  r.FileName ?? '',
+    }))
+    .sort((a, b) => b.callDate.localeCompare(a.callDate));
+}
+
+// Drill-down behind a Magical Script category branch's "Call End" pill — mirror of
+// getMagicalCategorySaleDoneCalls above but for calls that did NOT convert in that category.
+export async function getMagicalCategoryCallEndCalls(
+  filters: QualityFilters, category: string, variant: 'bellavita' | 'generic',
+): Promise<SaleDoneCallRow[]> {
+  const { startDate, endDate, clientId } = filters;
+  const field = variant === 'bellavita' ? 'resolved_category' : 'objection_category';
+  const cf = clientId ? ' AND client_id = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, category, ...(clientId ? [Number(clientId)] : [])];
+
+  const cacheRows = await queryMasmis<{ call_id: number }>(`
+    SELECT call_id FROM db_masmis.magical_script_cache
+    WHERE call_date BETWEEN ? AND ? AND ${field} = ? AND sale_done = 0 ${cf}
+    ORDER BY call_date DESC
+    LIMIT 200
+  `, params);
+
+  return hydrateSaleDoneRows(cacheRows.map(r => Number(r.call_id)));
+}
+
+// Drill-down behind a Magical Script stage's "Call End" pill (OP/CSP/Offer) — the calls that
+// dropped out at that exact stage, matching the call_end figure computed in getColumnBasedMagicalScript
+// / getMagicalScript above stage-by-stage.
+export async function getMagicalStageCallEndCalls(
+  filters: QualityFilters, stage: 'op' | 'csp' | 'offer', variant: 'bellavita' | 'generic',
+): Promise<SaleDoneCallRow[]> {
+  const { startDate, endDate, clientId } = filters;
+  const cf = clientId ? ' AND client_id = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [Number(clientId)] : [])];
+
+  const whereExtra = variant === 'bellavita'
+    ? (stage === 'op'   ? 'op_success = 0'
+     : stage === 'csp'  ? 'op_success = 1 AND csp_call_end = 1'
+     :                    'op_success = 1 AND csp_success = 1 AND offer_success = 0')
+    // Generic flow's call_stage only ever takes 3 values (opening_rejected / offering_rejected /
+    // post_offer) — see processMagicalScriptBatch below — so op_pass and csp_pass end up computed
+    // over the exact same population, meaning the CSP stage's dropped count is always 0 (same as
+    // shown on the pill itself). The condition below stays logically correct for that fact rather
+    // than special-casing it, so it keeps matching the pill if that ever changes upstream.
+    : (stage === 'op'   ? "call_stage = 'opening_rejected'"
+     : stage === 'csp'  ? "call_stage IN ('offering_rejected','post_offer') AND call_stage NOT IN ('offering_rejected','post_offer')"
+     :                    "call_stage = 'offering_rejected'");
+
+  const cacheRows = await queryMasmis<{ call_id: number }>(`
+    SELECT call_id FROM db_masmis.magical_script_cache
+    WHERE call_date BETWEEN ? AND ? AND ${whereExtra} ${cf}
+    ORDER BY call_date DESC
+    LIMIT 200
+  `, params);
+
+  return hydrateSaleDoneRows(cacheRows.map(r => Number(r.call_id)));
+}
+
+// Raw Data tab — every CallDetails column (same "all columns" set the CSV export uses — see
+// CALL_DETAILS_EXPORT_COLUMNS / exportSelectExpr below), most-recent first, with id-based keyset
+// pagination so "Load More" stays cheap regardless of how far back the user goes.
+export async function getRawCallData(
+  filters: QualityFilters, mobileNo: string | undefined, cursor: number | undefined, limit: number,
+): Promise<{ columns: string[]; rows: Record<string, unknown>[]; nextCursor: number | null }> {
+  const { startDate, endDate, clientId } = filters;
+  const cf = clientId ? ' AND cd.client_id = ?' : '';
+  const mf = mobileNo ? ' AND cd.MobileNo LIKE ?' : '';
+  const cursorClause = cursor ? ' AND cd.id < ?' : '';
+  // A mobile-number search intentionally ignores the date range — the caller may be looking for a
+  // call from before or after whatever window happens to be selected, so search all-time instead.
+  const dateClause = mobileNo ? '' : ' AND cd.CallDate BETWEEN ? AND ?';
+  const dateParams = mobileNo ? [] : [startDate, endDate];
+  const params: (string | number)[] = [
+    ...dateParams,
+    ...(clientId ? [Number(clientId)] : []),
+    ...(mobileNo ? [`%${mobileNo}%`] : []),
+    ...(cursor ? [cursor] : []),
+  ];
+
+  const rows = await querySource<Record<string, unknown>>(`
+    SELECT ${CALL_DETAILS_EXPORT_COLUMNS.map(c => exportSelectExpr(c, 'cd')).join(', ')}
+    FROM db_external.CallDetails cd
+    WHERE 1=1 ${dateClause} ${cf} ${mf} ${cursorClause}
+    ORDER BY cd.id DESC
+    LIMIT ${limit}
+  `, params);
+
+  return {
+    columns: CALL_DETAILS_EXPORT_COLUMNS,
+    rows,
+    nextCursor: rows.length === limit ? Number(rows[rows.length - 1].id) : null,
+  };
+}
+
 export async function getDetailAnalysis(filters: QualityFilters): Promise<DetailAnalysisResponse> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
@@ -1588,18 +1697,17 @@ const CAMPAIGN_ALLOWLIST: Record<string, string[]> = {};
 
 const BELLAVITA_OP_SCRIPT =
   `Good Morning/Afternoon/Evening.\n\n` +
-  `Thank you for choosing Bella Vita Organic.\n\n` +
+  `Thank you for choosing Bella Vita.\n\n` +
   `Am I speaking with Mr./Ms. {Customer Name}?\n\n` +
-  `We're calling regarding your recent Bella Vita purchase to understand your experience and to share an exclusive benefit available only for our existing customers.\n\n` +
-  `Is this a good time to talk for two minutes?`;
+  `Is this a good time to talk for just two minutes?`;
 
 const BELLAVITA_CSP_SCRIPTS: { category: string; label: string; text: string }[] = [
   {
     category: 'Feedback before Offer Pitch',
     label: 'Feedback before Offer Pitch',
     text:
-      `Sir/Ma'am, yeh call aapke recent purchase {Product Name} ke feedback ke liye hai.\n\n` +
-      `Mujhe umeed hai ki aapko product use karne ka mauka mila hoga.\n\n` +
+      `I'm calling from Bella Vita regarding your recent purchase of {Product Name}.\n\n` +
+      `We're calling to understand your experience with the product and to share an exclusive benefit available only for our existing customers.\n\n` +
       `Main bas yeh jaana chahta/chahti hoon ki aapka overall experience kaisa raha?\n\n` +
       `Kya aapko product ki quality, fragrance aur performance pasand aayi?`,
   },
@@ -1614,7 +1722,16 @@ const BELLAVITA_CSP_SCRIPTS: { category: string; label: string; text: string }[]
 
 // First-match-wins — mirrors the exact CASE the categories were specified with. Two entries key off
 // SubCategory rather than Category (their real values happen to live in that column for Bellavita).
+// Verified against live data (not guessed): the original 9-entry list was silently dropping
+// 'General Disinterest' — Bellavita's single LARGEST category at 30,908 calls, more than every
+// other category combined — plus 'Purchase Readiness' (18,937) and several smaller-but-real ones,
+// because anything not matching a WHEN fell through to ELSE NULL and was excluded from the whole
+// categories breakdown. Extended with every category confirmed to have meaningful, clean volume;
+// left out one-off/inconsistent free-text variants (various "Feedback & Offer ..." labels, each
+// under 20 occurrences) that look like agent typos rather than a real taxonomy entry.
 const BELLAVITA_CATEGORY_CASE_SQL = `CASE
+  WHEN cd.Category = 'General Disinterest' THEN 'General Disinterest'
+  WHEN cd.Category = 'Purchase Readiness' THEN 'Purchase Readiness'
   WHEN cd.Category = 'Already Owns Enough' THEN 'Already Owns Enough'
   WHEN cd.Category = 'Delivery & Purchase Considerations' THEN 'Delivery & Purchase Considerations'
   WHEN cd.Category = 'Fragrance Concerns' THEN 'Fragrance Concerns'
@@ -1624,6 +1741,13 @@ const BELLAVITA_CATEGORY_CASE_SQL = `CASE
   WHEN cd.SubCategory = 'Overstock/No Need for More' THEN 'Overstock/No Need for More'
   WHEN cd.Category = 'Service Issues' THEN 'Service Issues'
   WHEN cd.Category = 'Product Quality Concerns' THEN 'Product Quality Concerns'
+  WHEN cd.Category = 'Satisfied but No Immediate Need' THEN 'Satisfied but No Immediate Need'
+  WHEN cd.Category = 'No Immediate Action' THEN 'No Immediate Action'
+  WHEN cd.Category = 'Gifting & Purchase Motivation' THEN 'Gifting & Purchase Motivation'
+  WHEN cd.Category = 'Trust & Data Security Issues' THEN 'Trust & Data Security Issues'
+  WHEN cd.Category = 'Trust & Payment Concerns' THEN 'Trust & Payment Concerns'
+  WHEN cd.Category = 'Delivery Issues' THEN 'Delivery Issues'
+  WHEN cd.Category = 'Financial & Timing Constraints' THEN 'Financial & Timing Constraints'
   ELSE NULL
 END`;
 
@@ -1970,13 +2094,15 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
       ORDER BY n DESC
     `, params),
 
+    // Capped at 20 (not 4) so the frontend can show the top 4 by default and let the user expand to
+    // see the rest, instead of silently hiding every category past the 4th.
     queryMasmis<{ resolved_category: string; total: number; sales: number }>(`
       SELECT resolved_category, COUNT(*) AS total, SUM(sale_done) AS sales
       FROM db_masmis.magical_script_cache
       WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND resolved_category IS NOT NULL${campaignClause}
       GROUP BY resolved_category
       ORDER BY total DESC
-      LIMIT 4
+      LIMIT 20
     `, params),
 
     // Real per-category pitch text (OfferedPitchContext, cached as offered_pitch_context) for
@@ -2829,12 +2955,23 @@ const CALL_DETAILS_EXPORT_COLUMNS = [
   'Reason_for_Not_Placing_Order', 'Pricing_and_Discount_Structure',
 ];
 
+// CallDate needs an explicit SQL-side format (dd-mm-yyyy hh:mm:ss) rather than the raw DATETIME —
+// letting mysql2/CSV serialize a Date object directly produces a locale/timezone-dependent string.
+function exportSelectExpr(col: string, tableAlias: string): string {
+  if (col === 'CallDate') return `DATE_FORMAT(${tableAlias}.CallDate, '%d-%m-%Y %H:%i:%s') AS CallDate`;
+  return `${tableAlias}.${col}`;
+}
+
 export async function streamOutboundExportCsv(
   res: Response, startDate: string, endDate: string, clientIds: number[] | null,
 ): Promise<void> {
   const fname = `outbound-export-${startDate.slice(0, 10)}_to_${endDate.slice(0, 10)}.csv`;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  // UTF-8 BOM — without it, Excel misdetects the encoding and garbles the Hindi/Hinglish text that
+  // shows up throughout TranscribeText and the other free-text columns (what looked like "wrong"
+  // transcript content was actually a mojibake rendering issue, not bad data).
+  res.write(Buffer.from([0xEF, 0xBB, 0xBF]));
   res.write(CALL_DETAILS_EXPORT_COLUMNS.join(',') + '\n');
 
   // clientIds === null → unrestricted (super_admin); [] → no accessible clients at all → empty export
@@ -2847,7 +2984,7 @@ export async function streamOutboundExportCsv(
   let lastId = 0;
   for (;;) {
     const rows = await querySource<Record<string, unknown>>(`
-      SELECT ${CALL_DETAILS_EXPORT_COLUMNS.map(c => `cd.${c}`).join(', ')}
+      SELECT ${CALL_DETAILS_EXPORT_COLUMNS.map(c => exportSelectExpr(c, 'cd')).join(', ')}
       FROM db_external.CallDetails cd
       WHERE cd.id > ? AND cd.CallDate BETWEEN ? AND ? ${clientFilter}
       ORDER BY cd.id ASC

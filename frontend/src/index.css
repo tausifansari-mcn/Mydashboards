@@ -273,3 +273,26 @@ tbody tr:hover td { color: #0F172A; }
 .portfolio-insight .text-slate-600 { color: #334155 !important; }
 .portfolio-insight .text-slate-700 { color: #0F172A !important; }
 .portfolio-insight .text-slate-900 { color: #0F172A !important; }
+
+/* ── Print-to-PDF: isolate a single element (e.g. the Magical Script flow) on the printed page,
+   using the real browser renderer so gradients/blur/shadows come out matching the on-screen view
+   exactly, instead of a canvas-screenshot library that would render those approximately. Any
+   element that should be the sole content of a "Download PDF" action gets .print-area; everything
+   else on the page is hidden but stays in the DOM, then the target subtree is un-hidden and pulled
+   out to the top of the page. ── */
+@media print {
+  /* Chrome/Firefox strip background colors, gradients, and translucent (rgba) fills by default when
+     printing — that's what makes a printed page come out looking flat/white instead of matching the
+     screen. This forces every element to keep its actual background/gradient, which is most of what
+     "PDF should be exact like the page" needs — without it, only the plain text would survive print. */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 0; }
+  .no-print { display: none !important; }
+  @page { margin: 10mm; }
+}

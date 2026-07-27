@@ -13,6 +13,7 @@ import {
   Eye, EyeOff,
 } from 'lucide-react';
 import api from '@/lib/axios';
+import RawDataTab from './RawDataTab';
 
 function toLocalDT(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -161,6 +162,12 @@ interface InboundProcessKPIs {
 
 interface TopPerformer  { user: string; audit_count: number; avg_score: number; }
 interface DailyScore   { call_date: string; avg_score: number; audit_count: number; }
+interface DateWiseParamRow { date: string; auditCount: number; overallScore: number; params: Record<string, number>; }
+interface DateWiseParamData {
+  paramColumns: { column: string; label: string }[];
+  rows: DateWiseParamRow[];
+  totals: { auditCount: number; overallScore: number; params: Record<string, number> };
+}
 interface Scenario1Item   { scenario1: string; count: number; pct: number; }
 interface ScenarioItem   { scenario: string; count: number; pct: number; children: Scenario1Item[]; }
 interface AlertScenarioRow { scenario: string; scenario1: string; count: number; pct: number; }
@@ -1655,12 +1662,14 @@ const SLIDES = [
   { label: 'Repeat Analysis',     color: 'teal'    },
   { label: 'CLAP Analysis',       color: 'amber'   },
   { label: 'TNI Detection',       color: 'emerald' },
+  { label: 'Raw Data',            color: 'slate'   },
 ] as const;
 
 export default function InboundQualityDashboard() {
   const { clientId } = useParams<{ clientId: string }>();
   const navigate = useNavigate();
-  const { canAccessInboundClient, loaded: processLoaded } = useProcessStore();
+  const { canAccessInboundClient, loaded: processLoaded, dashboardSlugs } = useProcessStore();
+  const canViewRawData = dashboardSlugs.includes('raw-data');
   const now = new Date();
 
   useEffect(() => {
@@ -1674,6 +1683,8 @@ export default function InboundQualityDashboard() {
   const [fatalLoading, setFatalLoading] = useState(false);
   const [detailData, setDetailData] = useState<DetailAnalysis | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [dateWiseParams, setDateWiseParams] = useState<DateWiseParamData | null>(null);
+  const [dateWiseParamsLoading, setDateWiseParamsLoading] = useState(false);
   const [agentParamScenario, setAgentParamScenario] = useState('');
   const [agentParamData, setAgentParamData] = useState<AgentParamRow[]>([]);
   const [agentParamLoading, setAgentParamLoading] = useState(false);
@@ -1848,6 +1859,9 @@ export default function InboundQualityDashboard() {
   const [loading, setLoading]         = useState(true);
   const [performers, setPerformers]       = useState<TopPerformer[]>([]);
   const [dailyScores, setDailyScores]     = useState<DailyScore[]>([]);
+  const [sevenDayExpandOpen, setSevenDayExpandOpen]       = useState(false);
+  const [sevenDayExpandData, setSevenDayExpandData]       = useState<DailyScore[]>([]);
+  const [sevenDayExpandLoading, setSevenDayExpandLoading] = useState(false);
   const [scenarios, setScenarios]             = useState<ScenarioItem[]>([]);
   const [selectedScenario, setSelectedScenario] = useState<string | null>(null);
   const [socialThreats, setSocialThreats]         = useState<AlertScenarioRow[]>([]);
@@ -2050,6 +2064,17 @@ export default function InboundQualityDashboard() {
       .catch(() => setDailyScores([]));
   }, [clientId, ed]);
 
+  const openSevenDayExpand = () => {
+    setSevenDayExpandOpen(true);
+    setSevenDayExpandLoading(true);
+    api.get<{ data: DailyScore[] }>(
+      `/inbound-quality/daily-scores-range?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    )
+      .then(r => setSevenDayExpandData(r.data?.data ?? []))
+      .catch(() => setSevenDayExpandData([]))
+      .finally(() => setSevenDayExpandLoading(false));
+  };
+
   const fetchScenarios = useCallback(() => {
     api.get<{ data: ScenarioItem[] }>(
       `/inbound-quality/scenarios?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
@@ -2076,6 +2101,16 @@ export default function InboundQualityDashboard() {
       .then(r => setDetailData(r.data?.data ?? null))
       .catch(() => setDetailData(null))
       .finally(() => setDetailLoading(false));
+  }, [clientId, sd, ed]);
+
+  const fetchDateWiseParams = useCallback(() => {
+    setDateWiseParamsLoading(true);
+    api.get<{ data: DateWiseParamData }>(
+      `/inbound-quality/date-wise-params?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    )
+      .then(r => setDateWiseParams(r.data?.data ?? null))
+      .catch(() => setDateWiseParams(null))
+      .finally(() => setDateWiseParamsLoading(false));
   }, [clientId, sd, ed]);
 
   const fetchAgentParam = useCallback(() => {
@@ -2185,6 +2220,7 @@ export default function InboundQualityDashboard() {
     fetchAlertTables();
     fetchFatalAnalysis();
     fetchDetailAnalysis();
+    fetchDateWiseParams();
     fetchRepeatAnalysis();
     fetchClapAnalysis();
     // CLAP Customer product analysis
@@ -2208,7 +2244,7 @@ export default function InboundQualityDashboard() {
       .finally(() => setGuidanceLoading(false));
     // TNI Detection slide
     fetchTNI();
-  }, [fetchKPIs, fetchPerformers, fetchDailyScores, fetchScenarios, fetchAlertTables, fetchFatalAnalysis, fetchDetailAnalysis, fetchRepeatAnalysis, fetchClapAnalysis, fetchTNI, clientId, sd, ed]);
+  }, [fetchKPIs, fetchPerformers, fetchDailyScores, fetchScenarios, fetchAlertTables, fetchFatalAnalysis, fetchDetailAnalysis, fetchDateWiseParams, fetchRepeatAnalysis, fetchClapAnalysis, fetchTNI, clientId, sd, ed]);
 
   useEffect(() => { fetchAgentParam(); }, [fetchAgentParam]);
   useEffect(() => { fetchDayWiseQuality(); }, [fetchDayWiseQuality]);
@@ -2291,12 +2327,14 @@ export default function InboundQualityDashboard() {
         {/* Slide tabs */}
         <div className="pill-tabs mb-6">
           {SLIDES.map((s, i) => (
-            <button key={s.label}
-              onClick={() => setActiveSlide(i)}
-              className={`pill-tab ${activeSlide === i ? 'pill-tab-active' : ''}`}
-            >
-              {s.label}
-            </button>
+            s.label === 'Raw Data' && !canViewRawData ? null : (
+              <button key={s.label}
+                onClick={() => setActiveSlide(i)}
+                className={`pill-tab ${activeSlide === i ? 'pill-tab-active' : ''}`}
+              >
+                {s.label}
+              </button>
+            )
           ))}
         </div>
 
@@ -2957,6 +2995,10 @@ export default function InboundQualityDashboard() {
                       <Target size={13} className="text-sky-400" />
                       <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">Last 7 Days vs Target</h3>
                       <ExportBtn onClick={() => downloadCSV(chartData.map(d => ({ Date: d.date, 'Avg Score%': d.score ?? 'No data', 'Audit Count': d.audits, Target: d.target })), 'last-7-days.csv')} />
+                      <button onClick={openSevenDayExpand} title="Expand — view full selected date range"
+                        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-slate-400 hover:text-blue-500 border border-slate-200 hover:border-blue-500/30 transition-colors shrink-0">
+                        <Maximize2 size={11} /> Expand
+                      </button>
                       <span className="ml-auto flex items-center gap-1.5 text-[10px] text-red-400 font-semibold">
                         <span className="w-4 h-0.5 bg-red-400 rounded inline-block" />
                         Target 95%
@@ -3026,6 +3068,68 @@ export default function InboundQualityDashboard() {
                 </div>
               );
             })()}
+
+            {sevenDayExpandOpen && (
+              <DrillModal title={`Quality Score by Day — ${sd.slice(0, 10)} to ${ed.slice(0, 10)}`} accent="#0EA5E9"
+                onClose={() => setSevenDayExpandOpen(false)}>
+                {sevenDayExpandLoading ? (
+                  <div className="py-16 text-center text-slate-500 text-xs">Loading…</div>
+                ) : sevenDayExpandData.length === 0 ? (
+                  <div className="py-16 text-center text-slate-500 text-xs">No data for this period.</div>
+                ) : (() => {
+                  const expandChartData = sevenDayExpandData.map(d => ({
+                    date: d.call_date,
+                    label: new Date(d.call_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
+                    score: d.avg_score || null,
+                    audits: d.audit_count,
+                  }));
+                  return (
+                    <>
+                      <div className="flex justify-end mb-3">
+                        <ExportBtn onClick={() => downloadCSV(sevenDayExpandData.map(d => ({ Date: d.call_date, 'Avg Score%': d.avg_score, 'Audit Count': d.audit_count })), `quality-score-${sd.slice(0, 10)}_to_${ed.slice(0, 10)}.csv`)} />
+                      </div>
+                      <div className="overflow-x-auto">
+                        <div style={{ minWidth: Math.max(600, expandChartData.length * 42) }}>
+                          <ResponsiveContainer width="100%" height={340}>
+                            <ComposedChart data={expandChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                              <XAxis dataKey="label" tick={{ fill: '#64748B', fontSize: 10 }} axisLine={false} tickLine={false} />
+                              <YAxis domain={[0, 100]} tick={{ fill: '#64748B', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
+                              <Tooltip
+                                contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 11, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                                formatter={(val: unknown) => [`${val ?? 'No data'}%`, 'Quality Score']}
+                                labelStyle={{ color: '#0F172A', fontWeight: 600, marginBottom: 4 }}
+                                itemStyle={{ color: '#334155' }}
+                              />
+                              <ReferenceLine y={95} stroke="#EF4444" strokeDasharray="5 3" strokeWidth={1.5} />
+                              <Bar dataKey="score" name="score" radius={[4, 4, 0, 0]} maxBarSize={36}>
+                                {expandChartData.map((d, i) => (
+                                  <Cell key={i}
+                                    fill={d.score === null ? '#F1F5F9' : d.score >= 95 ? '#22C55E' : d.score >= 85 ? '#3B82F6' : '#F59E0B'}
+                                    fillOpacity={d.score === null ? 0.2 : 1} />
+                                ))}
+                              </Bar>
+                            </ComposedChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-center gap-5 mt-2">
+                        {[
+                          { color: '#22C55E', label: '≥95% (On Target)' },
+                          { color: '#3B82F6', label: '85–94%' },
+                          { color: '#F59E0B', label: '<85%' },
+                        ].map(l => (
+                          <div key={l.label} className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: l.color }} />
+                            {l.label}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
+              </DrillModal>
+            )}
 
             {/* ── Agent Audit Summary ───────────────────────────────────── */}
             {agentAuditBand.length > 0 && (() => {
@@ -4248,7 +4352,7 @@ export default function InboundQualityDashboard() {
               </div>
 
               {/* ── Agent & Parameter Wise CQ Score% ── */}
-              <div className="mt-4 rounded-xl overflow-hidden" style={{ border: '1px solid #0369A1' }}>
+              <div className="mt-4 rounded-xl overflow-hidden bg-white" style={{ border: '1px solid #0369A1' }}>
                 <div className="card-header gap-3 px-5 py-3 flex-wrap" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
                   <div className="w-1.5 h-4 rounded-full bg-blue-400 shrink-0" />
                   <h3 className="text-xs font-black text-white uppercase tracking-widest">Agent &amp; Parameter Wise CQ Score%</h3>
@@ -4314,12 +4418,12 @@ export default function InboundQualityDashboard() {
                         </thead>
                         <tbody>
                           {agentParamData.map((r, i) => (
-                            <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
-                              <td className="py-2.5 px-3 text-slate-700 whitespace-nowrap">{agentTag(r.agent_name)}</td>
+                            <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-slate-50/70' : 'bg-white'}`}>
+                              <td className="py-2.5 px-3 text-slate-900 font-medium whitespace-nowrap">{agentTag(r.agent_name)}</td>
                               <td className="py-2.5 px-3">{tqBadge(r.cq_score)}</td>
-                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.audit_count}</td>
+                              <td className="py-2.5 px-3 text-slate-700 tabular-nums">{r.audit_count}</td>
                               <td className="py-2.5 px-3">{scoreCell(r.cq_score)}</td>
-                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.fatal_count}</td>
+                              <td className="py-2.5 px-3 text-slate-700 tabular-nums">{r.fatal_count}</td>
                               <td className="py-2.5 px-3">
                                 <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct}%</span>
                               </td>
@@ -4355,13 +4459,13 @@ export default function InboundQualityDashboard() {
               </div>
 
               {/* ── Week Wise Quality Performance ── */}
-              <div className="mt-4 rounded-xl overflow-hidden" style={{ border: '1px solid #0369A1' }}>
+              <div className="mt-4 rounded-xl overflow-hidden bg-white" style={{ border: '1px solid #0369A1' }}>
                 <div className="card-header gap-3 px-5 py-3 flex-wrap" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
                   <div className="w-1.5 h-4 rounded-full bg-blue-400 shrink-0" />
                   <h3 className="text-xs font-black text-white uppercase tracking-widest">Week Wise Quality Performance</h3>
                   <div className="ml-auto flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-600 uppercase tracking-wider">Scenario Wise</span>
+                      <span className="text-[10px] text-white/80 uppercase tracking-wider font-semibold">Scenario Wise</span>
                       <select
                         value={weekWiseScenario}
                         onChange={e => setWeekWiseScenario(e.target.value)}
@@ -4374,7 +4478,7 @@ export default function InboundQualityDashboard() {
                       </select>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-600 uppercase tracking-wider">Agent Username</span>
+                      <span className="text-[10px] text-white/80 uppercase tracking-wider font-semibold">Agent Username</span>
                       <select
                         value={weekWiseAgent}
                         onChange={e => setWeekWiseAgent(e.target.value)}
@@ -4421,11 +4525,11 @@ export default function InboundQualityDashboard() {
                         </thead>
                         <tbody>
                           {weekWiseData.map((r, i) => (
-                            <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
+                            <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-slate-50/70' : 'bg-white'}`}>
                               <td className="py-2.5 px-3 text-slate-900 font-semibold">{r.week_label}</td>
-                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.audit_count}</td>
+                              <td className="py-2.5 px-3 text-slate-700 tabular-nums">{r.audit_count}</td>
                               <td className="py-2.5 px-3">{scoreCell(r.cq_score)}</td>
-                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.fatal_count}</td>
+                              <td className="py-2.5 px-3 text-slate-700 tabular-nums">{r.fatal_count}</td>
                               <td className="py-2.5 px-3">
                                 <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct}%</span>
                               </td>
@@ -4460,13 +4564,13 @@ export default function InboundQualityDashboard() {
               </div>
 
               {/* ── Day Wise Quality Performance ── */}
-              <div className="mt-4 rounded-xl overflow-hidden" style={{ border: '1px solid #0369A1' }}>
+              <div className="mt-4 rounded-xl overflow-hidden bg-white" style={{ border: '1px solid #0369A1' }}>
                 <div className="card-header gap-3 px-5 py-3 flex-wrap" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
                   <div className="w-1.5 h-4 rounded-full bg-blue-400 shrink-0" />
                   <h3 className="text-xs font-black text-white uppercase tracking-widest">Day Wise Quality Performance</h3>
                   <div className="ml-auto flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 uppercase tracking-wider">Scenario</span>
+                      <span className="text-[10px] text-white/80 uppercase tracking-wider font-semibold">Scenario</span>
                       <select
                         value={dayWiseScenario}
                         onChange={e => setDayWiseScenario(e.target.value)}
@@ -4479,7 +4583,7 @@ export default function InboundQualityDashboard() {
                       </select>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-600 uppercase tracking-wider">Agent</span>
+                      <span className="text-[10px] text-white/80 uppercase tracking-wider font-semibold">Agent</span>
                       <select
                         value={dayWiseAgent}
                         onChange={e => setDayWiseAgent(e.target.value)}
@@ -4526,11 +4630,11 @@ export default function InboundQualityDashboard() {
                         </thead>
                         <tbody>
                           {dayWiseData.map((r, i) => (
-                            <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
-                              <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">{r.call_date.slice(5).replace('-', '/')}</td>
-                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.audit_count}</td>
+                            <tr key={i} className={`border-b border-slate-100 ${i % 2 ? 'bg-slate-50/70' : 'bg-white'}`}>
+                              <td className="py-2.5 px-3 text-slate-900 font-medium whitespace-nowrap">{r.call_date.slice(5).replace('-', '/')}</td>
+                              <td className="py-2.5 px-3 text-slate-700 tabular-nums">{r.audit_count}</td>
                               <td className="py-2.5 px-3">{scoreCell(r.cq_score)}</td>
-                              <td className="py-2.5 px-3 text-slate-600 tabular-nums">{r.fatal_count}</td>
+                              <td className="py-2.5 px-3 text-slate-700 tabular-nums">{r.fatal_count}</td>
                               <td className="py-2.5 px-3">
                                 <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct}%</span>
                               </td>
@@ -4655,6 +4759,83 @@ export default function InboundQualityDashboard() {
                     )}
                   </div>
                 )}
+              </div>
+
+              {/* ── Date Wise — All Parameters ── */}
+              <div className="mt-4 rounded-xl overflow-hidden bg-white" style={{ border: '1px solid #0369A1' }}>
+                <div className="card-header gap-3 px-5 py-3 flex-wrap" style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
+                  <div className="w-1.5 h-4 rounded-full bg-blue-400 shrink-0" />
+                  <h3 className="text-xs font-black text-white uppercase tracking-widest">Date Wise — All Parameters</h3>
+                  <span className="text-[10px] font-semibold ml-1" style={{ color: 'rgba(255,255,255,0.65)' }}>score% per parameter, per day</span>
+                  {dateWiseParams && (
+                    <ExportBtn onClick={() => downloadCSV(
+                      [
+                        ...dateWiseParams.rows.map(r => ({
+                          Date: r.date,
+                          ...Object.fromEntries(dateWiseParams.paramColumns.map(p => [p.label, `${r.params[p.column]}%`])),
+                          Audits: r.auditCount,
+                          'Overall Score%': `${r.overallScore}%`,
+                        })),
+                        {
+                          Date: 'TOTAL',
+                          ...Object.fromEntries(dateWiseParams.paramColumns.map(p => [p.label, `${dateWiseParams.totals.params[p.column]}%`])),
+                          Audits: dateWiseParams.totals.auditCount,
+                          'Overall Score%': `${dateWiseParams.totals.overallScore}%`,
+                        },
+                      ],
+                      'date-wise-all-parameters.csv',
+                    )} />
+                  )}
+                </div>
+                {dateWiseParamsLoading ? (
+                  <div className="py-8 text-center text-slate-600 text-xs">Loading…</div>
+                ) : !dateWiseParams || dateWiseParams.rows.length === 0 ? (
+                  <div className="py-8 text-center text-slate-600 text-xs">No data for this period.</div>
+                ) : (() => {
+                  const cellColor = (v: number) => v >= 90 ? '#22C55E' : v >= 75 ? '#3B82F6' : v > 0 ? '#EF4444' : '#94A3B8';
+                  return (
+                    <div className="overflow-x-auto overflow-y-auto max-h-96">
+                      <table className="w-full text-xs" style={{ minWidth: 260 + dateWiseParams.paramColumns.length * 130 }}>
+                        <thead className="sticky top-0 bg-white z-10">
+                          <tr className="border-b border-slate-200 bg-slate-50">
+                            <th className="py-2.5 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap sticky left-0 bg-slate-50 z-20">Date</th>
+                            {dateWiseParams.paramColumns.map(p => (
+                              <th key={p.column} className="py-2.5 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">{p.label}</th>
+                            ))}
+                            <th className="py-2.5 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">Audits</th>
+                            <th className="py-2.5 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap">Overall Score%</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dateWiseParams.rows.map((r, i) => (
+                            <tr key={r.date} className={`border-b border-slate-100 ${i % 2 ? 'bg-slate-50/70' : 'bg-white'}`}>
+                              <td className={`py-2.5 px-3 text-slate-900 font-medium whitespace-nowrap sticky left-0 z-10 ${i % 2 ? 'bg-slate-50' : 'bg-white'}`}>{r.date.slice(5).replace('-', '/')}</td>
+                              {dateWiseParams.paramColumns.map(p => (
+                                <td key={p.column} className="py-2.5 px-3 font-semibold whitespace-nowrap" style={{ color: cellColor(r.params[p.column]) }}>
+                                  {r.params[p.column]}%
+                                </td>
+                              ))}
+                              <td className="py-2.5 px-3 text-slate-700 tabular-nums">{r.auditCount}</td>
+                              <td className="py-2.5 px-3 font-bold whitespace-nowrap" style={{ color: cellColor(r.overallScore) }}>{r.overallScore}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="border-t-2 border-slate-300">
+                          <tr className="bg-slate-100">
+                            <td className="py-2.5 px-3 text-slate-900 font-black text-[10px] uppercase whitespace-nowrap sticky left-0 bg-slate-100 z-10">Total</td>
+                            {dateWiseParams.paramColumns.map(p => (
+                              <td key={p.column} className="py-2.5 px-3 font-black whitespace-nowrap" style={{ color: cellColor(dateWiseParams.totals.params[p.column]) }}>
+                                {dateWiseParams.totals.params[p.column]}%
+                              </td>
+                            ))}
+                            <td className="py-2.5 px-3 text-slate-900 font-black tabular-nums">{dateWiseParams.totals.auditCount}</td>
+                            <td className="py-2.5 px-3 font-black whitespace-nowrap" style={{ color: cellColor(dateWiseParams.totals.overallScore) }}>{dateWiseParams.totals.overallScore}%</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  );
+                })()}
               </div>
             </>
           );
@@ -6443,6 +6624,12 @@ export default function InboundQualityDashboard() {
             </>
           );
         })()}
+
+        {/* Raw Data slide */}
+        {activeSlide === 6 && clientId && canViewRawData && (
+          <RawDataTab clientId={clientId} apiPath="/inbound-quality/raw-data-tab" hasRecording={false} hasTranscript wideColumns
+            transcriptApiPath="/inbound-quality/transcript" transcriptParam="leadId" />
+        )}
 
       </div>
 
