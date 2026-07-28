@@ -961,11 +961,49 @@ export async function uploadBellavitaOrderExport(rows: BellavitaOrderExportRow[]
   ) VALUES ?`;
   const values = rows.map(r => [
     r.shippingPhone, r.name, r.shippingPhone2, r.email, r.financialStatus, r.total || null, r.name2,
-    r.discountCode, r.createdAtRaw, r.lineitemName, r.shippingName, r.shippingZip, r.tags,
-    r.shippingCity, r.shippingProvinceName, r.orderDate, uploadedBy, batchId,
+    r.discountCode, parseOrderExportDate(r.createdAtRaw), r.lineitemName, r.shippingName, r.shippingZip, r.tags,
+    r.shippingCity, r.shippingProvinceName, parseOrderExportDate(r.orderDate), uploadedBy, batchId,
   ]);
   const [result] = await getMasmisPool().query(sql, [values]);
   return (result as mysql.ResultSetHeader).affectedRows;
+}
+
+function excelSerialToDMY(serial: number): string {
+  const d = new Date((serial - 25569) * 86400 * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getUTCDate())}-${pad(d.getUTCMonth() + 1)}-${d.getUTCFullYear()}`;
+}
+
+// Both "OrderExport For Repeat" date columns → "DD-MM-YYYY". Handles whatever shape the value comes
+// in: an Excel serial number (what XLSX actually returns for date-formatted cells — a real upload
+// showed values like "45351.999..." landing in the DB verbatim, not the displayed "7/31/2024 23:59"
+// text), "M/D/YYYY HH:MM" (Shopify's "Created at"), or "DD-Mon-YY" (the "Date" column) as literal
+// text — a plain-text CSV export has no cell-type metadata, so dates come through as text instead.
+export function parseOrderExportDate(val: string): string | null {
+  if (!val) return null;
+  const trimmed = val.trim();
+  if (!trimmed || trimmed === '-') return null;
+
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const serial = parseFloat(trimmed);
+    if (serial > 20000 && serial < 80000) return excelSerialToDMY(serial);
+  }
+
+  let m = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) {
+    const [, mo, d, y] = m;
+    return `${d.padStart(2, '0')}-${mo.padStart(2, '0')}-${y}`;
+  }
+
+  m = trimmed.match(/^(\d{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2})$/i);
+  if (m) {
+    const months: Record<string, string> = { Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12' };
+    const monthKey = m[2].charAt(0).toUpperCase() + m[2].slice(1, 3).toLowerCase();
+    const year = parseInt(m[3]) < 50 ? `20${m[3]}` : `19${m[3]}`;
+    return `${m[1]}-${months[monthKey]}-${year}`;
+  }
+
+  return null;
 }
 
 // ─── Date Helpers ───────────────────────────────────────────────────────────────
