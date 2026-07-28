@@ -679,6 +679,56 @@ export async function uploadBellavitaCart(req: Request, res: Response) {
   }
 }
 
+// ─── Bellavita "OrderExport For Repeat" Upload (array-based, positional columns) ──
+// Shopify order-export CSV where "Shipping Phone" and "Name" each genuinely appear twice with
+// different values in each occurrence (confirmed against real sample data) — a header-name lookup
+// can't disambiguate two columns with the same header text, so this reads by fixed column index
+// instead, same approach as uploadBellavitaCart above.
+
+export async function uploadBellavitaOrderExport(req: Request, res: Response) {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rawRows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, { header: 1, defval: null, blankrows: false });
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'User not authenticated' });
+    const headerIdx = rawRows.findIndex(r => r.some(c => c != null && String(c).trim().toLowerCase() === 'financial status'));
+    if (headerIdx === -1) return res.status(400).json({ success: false, message: 'Could not find header row (expected "Financial Status" column)' });
+    const dataRows = rawRows.slice(headerIdx + 1);
+    if (!dataRows.length) return res.status(400).json({ success: false, message: 'No data rows found' });
+    // Excel force-texts postal codes with a leading apostrophe (e.g. '411028) to preserve leading
+    // zeros — strip it so the stored zip is the plain digits, matching what's actually printed.
+    const stripLeadingQuote = (v: unknown) => String(v ?? '').replace(/^'/, '');
+    const mapped: svc.BellavitaOrderExportRow[] = dataRows.map(r => ({
+      shippingPhone:        String(r[0] ?? ''),
+      name:                 String(r[1] ?? ''),
+      shippingPhone2:       String(r[2] ?? ''),
+      email:                String(r[3] ?? ''),
+      financialStatus:      String(r[4] ?? ''),
+      total:                parseFloat(String(r[5] ?? '0')) || 0,
+      name2:                String(r[6] ?? ''),
+      discountCode:         String(r[7] ?? ''),
+      createdAtRaw:         String(r[8] ?? ''),
+      lineitemName:         String(r[9] ?? ''),
+      shippingName:         String(r[10] ?? ''),
+      shippingZip:          stripLeadingQuote(r[11]),
+      tags:                 String(r[12] ?? ''),
+      shippingCity:         String(r[13] ?? ''),
+      shippingProvinceName: String(r[14] ?? ''),
+      orderDate:            String(r[15] ?? ''),
+    }));
+    const batchId = svc.generateBatchId();
+    const inserted = await svc.uploadBellavitaOrderExport(mapped, userId, batchId);
+    await svc.logUpload(batchId, 'bvo_order_export', req.file.originalname, inserted, userId);
+    res.json({ success: true, data: { rowsInserted: inserted, totalRows: mapped.length, batchId } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('sales uploadBellavitaOrderExport error:', msg);
+    res.status(500).json({ success: false, message: `Upload failed: ${msg}` });
+  }
+}
+
 // ─── Upload Log Controllers ─────────────────────────────────────────────────
 
 export async function getUploadLogs(req: Request, res: Response) {

@@ -946,6 +946,28 @@ export async function uploadBellavitaCart(rows: BellavitaCartRow[], uploadedBy: 
   return (result as mysql.ResultSetHeader).affectedRows;
 }
 
+export interface BellavitaOrderExportRow {
+  shippingPhone: string; name: string; shippingPhone2: string; email: string;
+  financialStatus: string; total: number; name2: string; discountCode: string;
+  createdAtRaw: string; lineitemName: string; shippingName: string; shippingZip: string;
+  tags: string; shippingCity: string; shippingProvinceName: string; orderDate: string;
+}
+
+export async function uploadBellavitaOrderExport(rows: BellavitaOrderExportRow[], uploadedBy: number, batchId: string): Promise<number> {
+  const sql = `INSERT INTO db_masmis.bvo_order_export (
+    shipping_phone, name, shipping_phone_2, email, financial_status, total, name_2,
+    discount_code, created_at_raw, lineitem_name, shipping_name, shipping_zip, tags,
+    shipping_city, shipping_province_name, order_date, uploaded_by, upload_batch_id
+  ) VALUES ?`;
+  const values = rows.map(r => [
+    r.shippingPhone, r.name, r.shippingPhone2, r.email, r.financialStatus, r.total || null, r.name2,
+    r.discountCode, r.createdAtRaw, r.lineitemName, r.shippingName, r.shippingZip, r.tags,
+    r.shippingCity, r.shippingProvinceName, r.orderDate, uploadedBy, batchId,
+  ]);
+  const [result] = await getMasmisPool().query(sql, [values]);
+  return (result as mysql.ResultSetHeader).affectedRows;
+}
+
 // ─── Date Helpers ───────────────────────────────────────────────────────────────
 
 function parseBellavitaDate(val: string): string | null {
@@ -1602,6 +1624,7 @@ export async function getNeemansCdrExport(startDate: string, endDate: string) {
 const UPLOAD_BATCH_TABLES = new Set([
   'bb_sale', 'gnc_sale', 'gnc_apr', 'gnc_allocation', 'bb_apr', 'bb_chat',
   'neemans_sale_raw', 'neemans_allocation', 'neemans_cart', 'bb_cart', 'neemans_apr',
+  'bvo_order_export',
 ]);
 
 export async function deleteUploadBatch(batchId: string, tableName: string): Promise<{ deleted: number }> {

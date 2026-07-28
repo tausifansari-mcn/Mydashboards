@@ -44,6 +44,7 @@ router.post('/upload-gnc-allocation', upload.single('file'), ctrl.uploadGncAlloc
 router.post('/upload-bellavita-apr',  upload.single('file'), ctrl.uploadBellavitaApr);
 router.post('/upload-bellavita-chat', upload.single('file'), ctrl.uploadBellavitaChat);
 router.post('/upload-bellavita-cart', upload.single('file'), ctrl.uploadBellavitaCart);
+router.post('/upload-bellavita-order-export', upload.single('file'), ctrl.uploadBellavitaOrderExport);
 router.post('/upload-neemans-cart',       upload.single('file'), ctrl.uploadNeemansCart);
 router.post('/upload-neemans-sale-raw',   upload.single('file'), ctrl.uploadNeemansSaleRaw);
 router.post('/upload-neemans-allocation', upload.single('file'), ctrl.uploadNeemansAllocation);

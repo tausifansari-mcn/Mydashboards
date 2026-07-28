@@ -5,6 +5,7 @@ import { useProcessStore } from '@/store/processStore';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LabelList,
   ComposedChart, Bar, XAxis, YAxis, CartesianGrid, ReferenceLine, Legend,
+  LineChart, Line,
 } from 'recharts';
 import {
   ChevronLeft, ChevronDown, Phone, ClipboardCheck, TrendingUp, Star,
@@ -1123,6 +1124,40 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
                   {dateWise.length === 0 ? (
                     <p className="text-center text-slate-400 text-sm py-6">No data available for this period</p>
                   ) : (
+                    <>
+                    {(() => {
+                      const chartData = [...dateWise].reverse(); // ascending (oldest → newest) for a left-to-right trend line
+                      return (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                          <div className="rounded-xl border border-slate-200 p-4">
+                            <p className="text-label mb-2">Financial Fraud vs Scam Detected — Date Wise</p>
+                            <ResponsiveContainer width="100%" height={220}>
+                              <LineChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                                <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+                                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                                <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                                <Legend wrapperStyle={{ fontSize: 11 }} />
+                                <Line type="monotone" dataKey="fraud" name="Financial Fraud" stroke="#EF4444" strokeWidth={2} dot={{ r: 3 }} />
+                                <Line type="monotone" dataKey="scam" name="Scam Detected" stroke="#F97316" strokeWidth={2} dot={{ r: 3 }} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                          <div className="rounded-xl border border-slate-200 p-4">
+                            <p className="text-label mb-2">Total Scam Leads — Date Wise</p>
+                            <ResponsiveContainer width="100%" height={220}>
+                              <LineChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                                <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+                                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                                <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                                <Line type="monotone" dataKey="total" name="Total" stroke="#7C3AED" strokeWidth={2} dot={{ r: 3 }} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <div className="rounded-xl border border-slate-200 overflow-hidden">
                       <div className="overflow-auto max-h-[400px]">
                         <table className="w-full text-xs border-collapse">
@@ -1148,6 +1183,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
                         </table>
                       </div>
                     </div>
+                    </>
                   )}
                 </div>
               )}
@@ -1343,7 +1379,38 @@ function SocialThreatDetailModal({
             </div>
           )}
 
-          {!loading && tab === 'Date Wise' && dateWise.length > 0 && (
+          {!loading && tab === 'Date Wise' && dateWise.length > 0 && (() => {
+            const chartData = [...dateWise].reverse(); // ascending (oldest → newest) for a left-to-right trend line
+            return (
+            <>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+              <div className="rounded-xl border border-slate-200 p-4">
+                <p className="text-label mb-2">Social Media vs Court &amp; Legal — Date Wise</p>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                    <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                    <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Line type="monotone" dataKey="social" name="Social Media" stroke="#3B82F6" strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="court" name="Court & Legal" stroke="#EF4444" strokeWidth={2} dot={{ r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="rounded-xl border border-slate-200 p-4">
+                <p className="text-label mb-2">Total Threats — Date Wise</p>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                    <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                    <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                    <Line type="monotone" dataKey="total" name="Total" stroke="#7C3AED" strokeWidth={2} dot={{ r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-xs border-collapse">
                 <thead>
@@ -1367,7 +1434,9 @@ function SocialThreatDetailModal({
                 </tbody>
               </table>
             </div>
-          )}
+            </>
+            );
+          })()}
 
           {!loading && tab !== 'Date Wise' && visible.length > 0 && (
             <div className="overflow-x-auto rounded-xl border border-slate-200">
