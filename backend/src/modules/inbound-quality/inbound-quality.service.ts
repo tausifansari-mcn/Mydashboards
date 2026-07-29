@@ -910,6 +910,7 @@ export interface SocialThreatDetailRow {
   client_id:    string;
   transcript:   string;
   social_media_info: string;
+  call_recording: string;
 }
 
 export async function getSocialThreatDetail(
@@ -922,7 +923,7 @@ export async function getSocialThreatDetail(
   const rows = await querySource<{
     lead_id: string; agent_id: string; mobile_no: string; threat_word: string;
     threat_type: string; scenario: string; scenario1: string;
-    date: string; client_id: string; transcript: string; social_media_info: string;
+    date: string; client_id: string; transcript: string; social_media_info: string; call_recording: string;
   }>(`
     SELECT
       COALESCE(q.lead_id, '')                                                 AS lead_id,
@@ -938,7 +939,8 @@ export async function getSocialThreatDetail(
       DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                              AS date,
       q.ClientId                                                              AS client_id,
       COALESCE(q.Transcribe_Text, '')                                         AS transcript,
-      COALESCE(q.Social_Media_Phone_Number_Order_ID_Email_ID, '')             AS social_media_info
+      COALESCE(q.Social_Media_Phone_Number_Order_ID_Email_ID, '')             AS social_media_info,
+      COALESCE(q.call_recording, '')                                          AS call_recording
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -976,6 +978,7 @@ export async function getSocialThreatDetail(
       client_id:   String(r.client_id),
       transcript:  String(r.transcript ?? ''),
       social_media_info: String(r.social_media_info ?? ''),
+      call_recording: String(r.call_recording ?? ''),
     })),
   };
 }
@@ -2008,6 +2011,7 @@ export interface ScamWordRow {
   flag?:       string;
   transcript?: string;
   social_media_info?: string;
+  call_recording?: string;
 }
 
 export interface PotentialScamDetail {
@@ -2041,7 +2045,7 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
         AND ${SCAM_CONDITION}
     `, params),
 
-    querySource<{ lead_id: string; agent_id: string; mobile_no: string; word: string; scenario: string; scenario1: string; date: string; flag: string; transcript: string; social_media_info: string }>(`
+    querySource<{ lead_id: string; agent_id: string; mobile_no: string; word: string; scenario: string; scenario1: string; date: string; flag: string; transcript: string; social_media_info: string; call_recording: string }>(`
       SELECT
         COALESCE(q.lead_id, '')       AS lead_id,
         q.User                         AS agent_id,
@@ -2054,7 +2058,8 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
              THEN 'Financial Fraud'
              ELSE 'Scam' END AS flag,
         COALESCE(q.Transcribe_Text, '') AS transcript,
-        COALESCE(q.Social_Media_Phone_Number_Order_ID_Email_ID, '') AS social_media_info
+        COALESCE(q.Social_Media_Phone_Number_Order_ID_Email_ID, '') AS social_media_info,
+        COALESCE(q.call_recording, '') AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -2085,6 +2090,7 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
       flag:       String(r.flag),
       transcript: String(r.transcript ?? ''),
       social_media_info: String(r.social_media_info ?? ''),
+      call_recording: String(r.call_recording ?? ''),
     })),
   };
 }
@@ -3722,6 +3728,7 @@ export interface FatalCallItem {
   failed_params:  string[];
   negative_words: string;
   score?:         number;
+  call_recording?: string;
 }
 
 const FATAL_PARAM_LABELS: Record<string, string> = {
@@ -3802,6 +3809,7 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
       COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')          AS scenario,
       COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')          AS scenario1,
       COALESCE(q.top_negative_words, '')                          AS negative_words,
+      COALESCE(q.call_recording, '')                              AS call_recording,
       COALESCE(q.call_answered_within_5_seconds,     0) AS call_answered_within_5_seconds,
       COALESCE(q.customer_concern_acknowledged,      0) AS customer_concern_acknowledged,
       COALESCE(q.professionalism_maintained,         0) AS professionalism_maintained,
@@ -3844,6 +3852,7 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
       scenario1:      String(r.scenario1),
       failed_params:  failed,
       negative_words: String(r.negative_words),
+      call_recording: String(r.call_recording ?? ''),
     };
   });
 }
@@ -4820,6 +4829,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
 // browser starts receiving bytes immediately regardless of row count.
 const CQA_EXPORT_COLUMNS = [
   'id', 'ClientId', 'length_in_sec', 'start_epoch', 'end_epoch', 'MobileNo', 'User', 'lead_id', 'CallDate', 'Campaign',
+  'call_recording',
   'call_answered_within_5_seconds', 'customer_concern_acknowledged', 'professionalism_maintained',
   'assurance_or_appreciation_provided', 'pronunciation_and_clarity', 'enthusiasm_and_no_fumbling', 'active_listening',
   'politeness_and_no_sarcasm', 'proper_grammar', 'accurate_issue_probing', 'proper_hold_procedure',

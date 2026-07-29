@@ -40,6 +40,7 @@ interface ScamWordRow {
   flag?:       string;
   social_media_info?: string;
   transcript?: string;
+  call_recording?: string;
 }
 interface PotentialScamDetail { flags: ScamFlagCounts; wordRows: ScamWordRow[]; }
 
@@ -109,6 +110,7 @@ interface FatalCallItem {
   failed_params:  string[];
   negative_words: string;
   score?:         number;
+  call_recording?: string;
 }
 
 interface SocialThreatDetailRow {
@@ -123,6 +125,7 @@ interface SocialThreatDetailRow {
   client_id:   string;
   transcript:  string;
   social_media_info: string;
+  call_recording: string;
 }
 interface SocialThreatDetailResponse { total: number; rows: SocialThreatDetailRow[]; }
 
@@ -533,6 +536,7 @@ function FatalCallsModal({
                   <th className="px-3 py-2.5 text-left">Scenario</th>
                   <th className="px-3 py-2.5 text-left">Sub-Scenario</th>
                   <th className="px-3 py-2.5 text-left">Failed Parameters</th>
+                  <th className="px-3 py-2.5 text-left">Recording</th>
                 </tr>
               </thead>
               <tbody>
@@ -569,6 +573,11 @@ function FatalCallsModal({
                           <span className="text-[9px] text-slate-400 italic">Score = 0 (all params)</span>
                         )}
                       </div>
+                    </td>
+                    <td className="px-3 py-2" style={{ minWidth: 220 }}>
+                      {c.call_recording
+                        ? <audio controls preload="metadata" src={c.call_recording} style={{ height: 30, width: 210 }} />
+                        : <span className="text-slate-300 italic">No recording</span>}
                     </td>
                   </tr>
                 ))}
@@ -1061,7 +1070,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
               Flag: r.flag ?? 'Scam', 'Lead ID': r.lead_id ?? '', 'Agent Name': resolveAgent(r.agent_id ?? ''),
               'Mobile No': r.mobile_no ?? '', 'Word / Phrase': r.word, Scenario: r.scenario,
               'Sub-Scenario': r.scenario1, Date: r.date ?? '', 'Social Media Info': r.social_media_info ?? '',
-              Transcript: r.transcript ?? '',
+              'Call Recording': r.call_recording ?? '', Transcript: r.transcript ?? '',
             })), 'potential-scam.csv')} />
           )}
           <button onClick={onClose} className="text-slate-400 hover:text-slate-900 transition-colors p-1">
@@ -1203,7 +1212,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
                       <table className="w-full text-xs border-collapse">
                         <thead>
                           <tr className="bg-slate-50">
-                            {['Flag', 'Lead ID', 'Agent Name', 'Mobile No', 'Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
+                            {['Flag', 'Lead ID', 'Agent Name', 'Mobile No', 'Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date', 'Recording'].map(h => (
                               <th key={h} className="px-3 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">
                                 {h}
                               </th>
@@ -1240,6 +1249,11 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
                               <td className="px-3 py-2 text-slate-600">{r.scenario}</td>
                               <td className="px-3 py-2 text-slate-500">{r.scenario1 === 'Unknown' ? '—' : r.scenario1}</td>
                               <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{r.date ?? '—'}</td>
+                              <td className="px-3 py-2" style={{ minWidth: 220 }}>
+                                {r.call_recording
+                                  ? <audio controls preload="metadata" src={r.call_recording} style={{ height: 30, width: 210 }} />
+                                  : <span className="text-slate-300 italic">No recording</span>}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -1325,7 +1339,7 @@ function SocialThreatDetailModal({
                 Type: r.threat_type, 'Lead ID': r.lead_id, 'Agent Name': resolveAgent(r.agent_id),
                 'Mobile No': r.mobile_no, 'Threat Word / Phrase': r.threat_word,
                 Scenario: r.scenario, 'Sub-Scenario': r.scenario1, Date: r.date,
-                'Social Media Info': r.social_media_info, Transcript: r.transcript,
+                'Social Media Info': r.social_media_info, 'Call Recording': r.call_recording, Transcript: r.transcript,
               })), 'social-court-threat.csv')} />
             )}
             <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors">
@@ -1443,7 +1457,7 @@ function SocialThreatDetailModal({
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-orange-50">
-                    {['Type', 'Lead ID', 'Agent Name', 'Mobile No', 'Threat Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
+                    {['Type', 'Lead ID', 'Agent Name', 'Mobile No', 'Threat Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date', 'Recording'].map(h => (
                       <th key={h} className="text-left px-3 py-2.5 font-semibold text-orange-700 whitespace-nowrap border-b border-orange-100 uppercase tracking-wider text-[10px]">
                         {h}
                       </th>
@@ -1480,6 +1494,11 @@ function SocialThreatDetailModal({
                       <td className="px-3 py-2 text-slate-600">{row.scenario}</td>
                       <td className="px-3 py-2 text-slate-500">{row.scenario1 === 'Unknown' ? '—' : row.scenario1}</td>
                       <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{row.date}</td>
+                      <td className="px-3 py-2" style={{ minWidth: 220 }}>
+                        {row.call_recording
+                          ? <audio controls preload="metadata" src={row.call_recording} style={{ height: 30, width: 210 }} />
+                          : <span className="text-slate-300 italic">No recording</span>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -6808,7 +6827,8 @@ export default function InboundQualityDashboard() {
 
         {/* Raw Data slide */}
         {activeSlide === 6 && clientId && canViewRawData && (
-          <RawDataTab clientId={clientId} apiPath="/inbound-quality/raw-data-tab" hasRecording={false} hasTranscript wideColumns
+          <RawDataTab clientId={clientId} apiPath="/inbound-quality/raw-data-tab" hasRecording hasTranscript wideColumns
+            recordingColumn="call_recording" freezeTranscript
             transcriptApiPath="/inbound-quality/transcript" transcriptParam="leadId" />
         )}
 

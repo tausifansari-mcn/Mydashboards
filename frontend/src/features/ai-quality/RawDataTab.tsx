@@ -50,6 +50,7 @@ const WIDE_PAGE_SIZE = 50; // wide mode renders every CallDetails column, so a s
 // of the fixed Date/Agent/Mobile set, with horizontal scroll controls since the table runs wide.
 export default function RawDataTab({
   clientId, apiPath, hasRecording, hasTranscript, transcriptApiPath, transcriptParam, wideColumns,
+  recordingColumn = 'FileName', freezeTranscript,
 }: {
   clientId: string;
   apiPath: string;
@@ -58,6 +59,8 @@ export default function RawDataTab({
   transcriptApiPath?: string;
   transcriptParam?: 'callId' | 'leadId';
   wideColumns?: boolean;
+  recordingColumn?: string;
+  freezeTranscript?: boolean;
 }) {
   const defaultWeek = currentWeekRange();
   const [fromDate, setFromDate] = useState(defaultWeek.from);
@@ -172,13 +175,22 @@ export default function RawDataTab({
 
   const displayColumns = wideColumns ? columns : ['CallDate', 'AgentName', 'MobileNo'];
 
-  // Which action column, if any, is pinned as the frozen first column — Recording for outbound,
-  // Transcript for inbound (inbound has no recording, so it falls through to transcript instead).
-  const frozenKind: 'recording' | 'transcript' | null = !wideColumns ? null : hasRecording ? 'recording' : hasTranscript ? 'transcript' : null;
-  const bodyColumns = frozenKind === 'recording' ? displayColumns.filter(c => c !== 'FileName') : displayColumns;
-  const totalColCount = bodyColumns.length + (frozenKind ? 1 : 0) + (hasRecording && !wideColumns ? 1 : 0) + (hasTranscript && frozenKind !== 'transcript' ? 1 : 0);
-  const FROZEN_TH = 'sticky left-0 z-10 bg-slate-50 text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-r border-slate-200 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]';
-  const FROZEN_TD = 'sticky left-0 z-10 bg-white px-3 py-2 border-r border-slate-200 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]';
+  // Which action column(s) are pinned as frozen leading columns, in order — Recording first (if
+  // present), then Transcript right after it (only when freezeTranscript is set — inbound wants
+  // both frozen since it now has real recordings too; outbound keeps its Transcript column trailing
+  // and unfrozen, as before, since only inbound asked for both to stay pinned while scrolling).
+  const FROZEN_RECORDING_WIDTH = 220; // matches the audio widget's minWidth below
+  const frozenRecording = wideColumns && hasRecording;
+  const frozenTranscriptCol = wideColumns && hasTranscript && (freezeTranscript || !hasRecording);
+  const transcriptLeft = frozenRecording ? FROZEN_RECORDING_WIDTH : 0;
+  const trailingTranscript = hasTranscript && !frozenTranscriptCol;
+
+  const bodyColumns = frozenRecording ? displayColumns.filter(c => c !== recordingColumn) : displayColumns;
+  const totalColCount = bodyColumns.length
+    + (frozenRecording ? 1 : 0) + (frozenTranscriptCol ? 1 : 0)
+    + (hasRecording && !wideColumns ? 1 : 0) + (trailingTranscript ? 1 : 0);
+  const FROZEN_TH = 'sticky z-10 bg-slate-50 text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-r border-slate-200 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]';
+  const FROZEN_TD = 'sticky z-10 bg-white px-3 py-2 border-r border-slate-200 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]';
 
   const cellValue = (row: Record<string, unknown>, col: string) => {
     const v = row[col];
@@ -243,13 +255,13 @@ export default function RawDataTab({
         <table className="w-full text-xs border-collapse">
           <thead>
             <tr className="bg-slate-50">
-              {frozenKind === 'recording' && <th className={FROZEN_TH}>Recording</th>}
-              {frozenKind === 'transcript' && <th className={FROZEN_TH}>Transcript</th>}
+              {frozenRecording && <th className={FROZEN_TH} style={{ left: 0 }}>Recording</th>}
+              {frozenTranscriptCol && <th className={FROZEN_TH} style={{ left: transcriptLeft }}>Transcript</th>}
               {bodyColumns.map(h => (
                 <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-slate-200">{h}</th>
               ))}
               {hasRecording && !wideColumns && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-slate-200">Recording</th>}
-              {hasTranscript && frozenKind !== 'transcript' && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-slate-200">Transcript</th>}
+              {trailingTranscript && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-slate-200">Transcript</th>}
             </tr>
           </thead>
           <tbody>
@@ -264,15 +276,15 @@ export default function RawDataTab({
                 const r = raw as Record<string, unknown>;
                 return (
                   <tr key={i} className={`${i % 2 ? 'bg-slate-50/70' : 'bg-white'} hover:bg-blue-50/50 transition-colors border-b border-slate-100 last:border-0`}>
-                    {frozenKind === 'recording' && (
-                      <td className={FROZEN_TD} style={{ minWidth: 220 }}>
-                        {r.FileName
-                          ? <audio controls preload="metadata" src={String(r.FileName)} style={{ height: 30, width: 210 }} />
+                    {frozenRecording && (
+                      <td className={FROZEN_TD} style={{ left: 0, minWidth: FROZEN_RECORDING_WIDTH }}>
+                        {r[recordingColumn]
+                          ? <audio controls preload="metadata" src={String(r[recordingColumn])} style={{ height: 30, width: 210 }} />
                           : <span className="text-slate-300 italic">No recording</span>}
                       </td>
                     )}
-                    {frozenKind === 'transcript' && (
-                      <td className={FROZEN_TD}>
+                    {frozenTranscriptCol && (
+                      <td className={FROZEN_TD} style={{ left: transcriptLeft }}>
                         <button onClick={() => openTranscript(raw)}
                           className="font-mono text-[11px] text-blue-600 hover:text-blue-800 hover:underline font-semibold transition-colors">
                           Read Transcript
@@ -299,7 +311,7 @@ export default function RawDataTab({
                         )}
                       </>
                     )}
-                    {hasTranscript && frozenKind !== 'transcript' && (
+                    {trailingTranscript && (
                       <td className="px-3 py-2">
                         <button onClick={() => openTranscript(raw)}
                           className="font-mono text-[11px] text-blue-600 hover:text-blue-800 hover:underline font-semibold transition-colors">
@@ -339,8 +351,9 @@ export default function RawDataTab({
                   </p>
                 )}
               </div>
-              {/* No real recording exists for this row (inbound) — offer text-to-speech playback instead. */}
-              {!hasRecording && transcript.data?.transcript && (
+              {/* Text-to-speech fallback — useful whether or not this specific row has a real
+                  recording (older inbound calls before call_recording existed still have none). */}
+              {transcript.data?.transcript && (
                 <button onClick={() => togglePlay(transcript.data!.transcript)}
                   className={`ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
                     speaking ? 'text-red-600 border-red-200 bg-red-50 hover:bg-red-100' : 'text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100'
@@ -349,7 +362,7 @@ export default function RawDataTab({
                   {speaking ? 'Stop' : 'Play'}
                 </button>
               )}
-              <button onClick={closeTranscript} className={`${!hasRecording && transcript.data?.transcript ? '' : 'ml-auto'} text-slate-400 hover:text-slate-900 transition-colors p-1`}><X size={18} /></button>
+              <button onClick={closeTranscript} className={`${transcript.data?.transcript ? '' : 'ml-auto'} text-slate-400 hover:text-slate-900 transition-colors p-1`}><X size={18} /></button>
             </div>
             <div className="overflow-auto flex-1 p-6">
               {transcript.loading ? (
