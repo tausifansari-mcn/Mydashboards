@@ -4189,7 +4189,7 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   };
 }
 
-export interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; transcript: string; }
+export interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; transcript: string; callRecording: string; }
 export interface ClapVocQuotesResponse { positive: VocQuote[]; negative: VocQuote[]; }
 
 const VOC_COLUMNS: Record<'Logistic' | 'Agent' | 'Product', { pos: string; neg: string }> = {
@@ -4207,7 +4207,7 @@ export async function getClapVocQuotes(
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
   const cols = VOC_COLUMNS[clap];
 
-  type Row = { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; transcript: string };
+  type Row = { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; transcript: string; call_recording: string };
   const runQuery = (column: string) => querySource<Row>(`
     SELECT q.lead_id AS leadId,
            q.User AS agentId,
@@ -4215,7 +4215,8 @@ export async function getClapVocQuotes(
            COALESCE(q.MobileNo, '') AS mobileNo,
            q.CallDate AS callDate,
            q.${column} AS quote,
-           COALESCE(q.Transcribe_Text, '') AS transcript
+           COALESCE(q.Transcribe_Text, '') AS transcript,
+           COALESCE(q.call_recording, '') AS call_recording
     FROM db_audit.call_quality_assessment q
     LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
@@ -4237,6 +4238,7 @@ export async function getClapVocQuotes(
     callDate:   String(r.callDate),
     quote:      String(r.quote),
     transcript: String(r.transcript ?? ''),
+    callRecording: String(r.call_recording ?? ''),
   });
 
   return { positive: positiveRows.map(toQuote), negative: negativeRows.map(toQuote) };
@@ -4244,7 +4246,7 @@ export async function getClapVocQuotes(
 
 // ─── CLAP Product VOC (product name embedded as "Product Name - quote") ────────
 
-interface RawVocRow { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; raw: string; transcript: string; }
+interface RawVocRow { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; raw: string; transcript: string; call_recording: string; }
 
 function fetchRawProductVocRows(
   column: 'customer_voc_product_positive' | 'customer_voc_product_negative',
@@ -4260,7 +4262,8 @@ function fetchRawProductVocRows(
            COALESCE(q.MobileNo, '') AS mobileNo,
            q.CallDate AS callDate,
            q.${column} AS raw,
-           COALESCE(q.Transcribe_Text, '') AS transcript
+           COALESCE(q.Transcribe_Text, '') AS transcript,
+           COALESCE(q.call_recording, '') AS call_recording
     FROM db_audit.call_quality_assessment q
     LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
@@ -4326,10 +4329,11 @@ export async function getClapProductVocQuotes(product: string, filters: InboundQ
         mobileNo:   String(r.mobileNo ?? ''),
         callDate:   String(r.callDate),
         transcript: String(r.transcript ?? ''),
+        callRecording: String(r.call_recording ?? ''),
       }))
       .filter(r => r.product === product)
       .slice(0, 50)
-      .map(r => ({ leadId: r.leadId, agentId: r.agentId, agentName: r.agentName, mobileNo: r.mobileNo, callDate: r.callDate, quote: r.quote, transcript: r.transcript }));
+      .map(r => ({ leadId: r.leadId, agentId: r.agentId, agentName: r.agentName, mobileNo: r.mobileNo, callDate: r.callDate, quote: r.quote, transcript: r.transcript, callRecording: r.callRecording }));
 
   return { positive: toQuotes(posRows), negative: toQuotes(negRows) };
 }

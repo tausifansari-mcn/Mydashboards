@@ -729,6 +729,48 @@ export async function uploadBellavitaOrderExport(req: Request, res: Response) {
   }
 }
 
+// ─── Bellavita "Repeat CDR" Upload (header-name columns) ─────────────────────
+
+export async function uploadBellavitaRepeatCdr(req: Request, res: Response) {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'User not authenticated' });
+
+    const rawRows = XLSX.utils.sheet_to_json<(string | null)[]>(sheet, { header: 1, defval: null, blankrows: false });
+    const headerIdx = rawRows.findIndex(r => r.some(c => c != null && /phone.?number|call.?status/i.test(String(c))));
+    const headers: string[] = headerIdx >= 0
+      ? rawRows[headerIdx].map(c => String(c ?? '').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''))
+      : [];
+    const dataRows = headerIdx >= 0 ? rawRows.slice(headerIdx + 1) : rawRows.slice(1);
+    if (!dataRows.length) return res.status(400).json({ success: false, message: 'No data rows found' });
+
+    const col = (r: (string | null)[], names: string[]): string => {
+      for (const name of names) {
+        const idx = headers.indexOf(name);
+        if (idx >= 0 && r[idx] != null) return String(r[idx]).trim();
+      }
+      return '';
+    };
+
+    const mapped: svc.BellavitaRepeatCdrRow[] = dataRows.map(r => ({
+      phoneNumber: col(r, ['phonenumber', 'phone_number', 'phone', 'mobile', 'mobileno']),
+      callStatus:  col(r, ['callstatus', 'call_status', 'status', 'disposition']),
+      agent:       col(r, ['agent', 'agent_name', 'agentname', 'agentid']),
+    }));
+    const batchId = svc.generateBatchId();
+    const inserted = await svc.uploadBellavitaRepeatCdr(mapped, userId, batchId);
+    await svc.logUpload(batchId, 'bvo_Repeat_cdr', req.file.originalname, inserted, userId);
+    res.json({ success: true, data: { rowsInserted: inserted, totalRows: mapped.length, batchId } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('sales uploadBellavitaRepeatCdr error:', msg);
+    res.status(500).json({ success: false, message: `Upload failed: ${msg}` });
+  }
+}
+
 // ─── Upload Log Controllers ─────────────────────────────────────────────────
 
 export async function getUploadLogs(req: Request, res: Response) {

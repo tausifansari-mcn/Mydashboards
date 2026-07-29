@@ -968,6 +968,21 @@ export async function uploadBellavitaOrderExport(rows: BellavitaOrderExportRow[]
   return (result as mysql.ResultSetHeader).affectedRows;
 }
 
+export interface BellavitaRepeatCdrRow {
+  phoneNumber: string; callStatus: string; agent: string;
+}
+
+export async function uploadBellavitaRepeatCdr(rows: BellavitaRepeatCdrRow[], uploadedBy: number, batchId: string): Promise<number> {
+  const sql = `INSERT INTO db_masmis.bvo_Repeat_cdr (
+    PhoneNumber, CallStatus, Agent, uploaded_by, upload_batch_id
+  ) VALUES ?`;
+  const values = rows.map(r => [
+    r.phoneNumber.slice(0, 15), r.callStatus.slice(0, 20), r.agent.slice(0, 20), uploadedBy, batchId,
+  ]);
+  const [result] = await getMasmisPool().query(sql, [values]);
+  return (result as mysql.ResultSetHeader).affectedRows;
+}
+
 function excelSerialToDMY(serial: number): string {
   const d = new Date((serial - 25569) * 86400 * 1000);
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -1662,7 +1677,7 @@ export async function getNeemansCdrExport(startDate: string, endDate: string) {
 const UPLOAD_BATCH_TABLES = new Set([
   'bb_sale', 'gnc_sale', 'gnc_apr', 'gnc_allocation', 'bb_apr', 'bb_chat',
   'neemans_sale_raw', 'neemans_allocation', 'neemans_cart', 'bb_cart', 'neemans_apr',
-  'bvo_order_export',
+  'bvo_order_export', 'bvo_Repeat_cdr',
 ]);
 
 export async function deleteUploadBatch(batchId: string, tableName: string): Promise<{ deleted: number }> {

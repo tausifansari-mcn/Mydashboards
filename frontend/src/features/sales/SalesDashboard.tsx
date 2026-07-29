@@ -1,5 +1,9 @@
 import { useState, createContext, useContext, useEffect } from 'react';
-import { BarChart3, Upload, Package, ArrowLeft, Database } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  BarChart3, Upload, Package, ArrowLeft, Receipt, Activity, MessageSquare,
+  ShoppingCart, RefreshCw, PhoneCall, ChevronRight,
+} from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/axios';
 import BellavitaUpload from './BellavitaUpload';
@@ -7,6 +11,7 @@ import BellavitaAprUpload from './BellavitaAprUpload';
 import BellavitaChatUpload from './BellavitaChatUpload';
 import BellavitaCartUpload from './BellavitaCartUpload';
 import BellavitaOrderExportUpload from './BellavitaOrderExportUpload';
+import BellavitaRepeatCdrUpload from './BellavitaRepeatCdrUpload';
 import BellavitaDashboard from './BellavitaDashboard';
 import GncUpload from './GncUpload';
 import GncAprUpload from './GncAprUpload';
@@ -19,14 +24,15 @@ import NeemansDashboard from './NeemansDashboard';
 
 type Brand = 'bellavita' | 'gnc' | 'neemans';
 type Section = 'dashboards' | 'uploader';
-type BellavitaUploadType = 'sale' | 'apr' | 'chat' | 'cart' | 'orderExport';
+type BellavitaUploadType = 'sale' | 'apr' | 'chat' | 'cart' | 'orderExport' | 'repeatCdr';
 type GncUploadType = 'sale' | 'apr' | 'allocation';
 type NeemansUploadType = 'cart' | 'sale' | 'allocation' | 'apr';
+type IconType = typeof BarChart3;
 
-const BRAND_THEMES: Record<Brand, { color: string; lightBg: string; label: string }> = {
-  bellavita: { color: '#1A1A1A', lightBg: '#F0F0F0', label: 'Bellavita' },
-  gnc:       { color: '#ED1C24', lightBg: '#FFE0E0', label: 'GNC' },
-  neemans:   { color: '#2D6A4F', lightBg: '#D8F3DC', label: 'Neemans' },
+const BRAND_THEMES: Record<Brand, { color: string; color2: string; label: string }> = {
+  bellavita: { color: '#1A1A1A', color2: '#3F3F46', label: 'Bellavita' },
+  gnc:       { color: '#ED1C24', color2: '#F97066', label: 'GNC' },
+  neemans:   { color: '#2D6A4F', color2: '#40916C', label: 'Neemans' },
 };
 
 const BRANDS: { key: Brand; label: string; desc: string }[] = [
@@ -35,36 +41,89 @@ const BRANDS: { key: Brand; label: string; desc: string }[] = [
   { key: 'neemans',   label: 'Neemans',   desc: 'Manage Neemans sale data' },
 ];
 
-const SECTIONS: { key: Section; icon: typeof BarChart3; label: string; desc: string }[] = [
+const SECTIONS: { key: Section; icon: IconType; label: string; desc: string }[] = [
   { key: 'dashboards', icon: BarChart3, label: 'Dashboards',   desc: 'View charts and analytics' },
   { key: 'uploader',   icon: Upload,    label: 'Data Uploader', desc: 'Upload CSV or Excel files' },
 ];
 
-const BELLAVITA_UPLOAD_TYPES: { key: BellavitaUploadType; label: string; desc: string }[] = [
-  { key: 'sale', label: 'Sale Data', desc: 'Upload Bellavita sale data' },
-  { key: 'apr',  label: 'APR Data',  desc: 'Upload Bellavita APR data' },
-  { key: 'chat', label: 'Chat Data', desc: 'Upload Bellavita chat data' },
-  { key: 'cart', label: 'Cart Data', desc: 'Upload Bellavita cart data' },
-  { key: 'orderExport', label: 'OrderExport For Repeat', desc: 'Upload Bellavita Shopify order export for repeat customer analysis' },
+const BELLAVITA_UPLOAD_TYPES: { key: BellavitaUploadType; icon: IconType; label: string; desc: string }[] = [
+  { key: 'sale',        icon: Receipt,       label: 'Sale Data',              desc: 'Upload Bellavita sale data' },
+  { key: 'apr',         icon: Activity,      label: 'APR Data',               desc: 'Upload Bellavita APR data' },
+  { key: 'chat',        icon: MessageSquare, label: 'Chat Data',              desc: 'Upload Bellavita chat data' },
+  { key: 'cart',        icon: ShoppingCart,  label: 'Cart Data',              desc: 'Upload Bellavita cart data' },
+  { key: 'orderExport', icon: RefreshCw,     label: 'OrderExport For Repeat', desc: 'Shopify order export for repeat customer analysis' },
+  { key: 'repeatCdr',   icon: PhoneCall,     label: 'Repeat CDR',             desc: 'Repeat call-detail records (Phone, Status, Agent)' },
 ];
 
-const GNC_UPLOAD_TYPES: { key: GncUploadType; label: string; desc: string }[] = [
-  { key: 'sale',       label: 'Sale Data',       desc: 'Upload GNC sale data' },
-  { key: 'apr',        label: 'APR Data',        desc: 'Upload GNC APR data' },
-  { key: 'allocation', label: 'Allocation Data', desc: 'Upload GNC allocation data' },
+const GNC_UPLOAD_TYPES: { key: GncUploadType; icon: IconType; label: string; desc: string }[] = [
+  { key: 'sale',       icon: Receipt,  label: 'Sale Data',       desc: 'Upload GNC sale data' },
+  { key: 'apr',        icon: Activity, label: 'APR Data',        desc: 'Upload GNC APR data' },
+  { key: 'allocation', icon: Package,  label: 'Allocation Data', desc: 'Upload GNC allocation data' },
 ];
 
-const NEEMANS_UPLOAD_TYPES: { key: NeemansUploadType; label: string; desc: string }[] = [
-  { key: 'sale',       label: 'Sale Raw Data',   desc: 'Upload Neemans raw sale records' },
-  { key: 'allocation', label: 'Allocation Data', desc: 'Upload Neemans allocation / calling data' },
-  { key: 'cart',       label: 'Cart Data',       desc: 'Upload Neemans cart / abandoned cart data' },
-  { key: 'apr',        label: 'APR Data',        desc: 'Upload Neemans Agent Performance Report' },
+const NEEMANS_UPLOAD_TYPES: { key: NeemansUploadType; icon: IconType; label: string; desc: string }[] = [
+  { key: 'sale',       icon: Receipt,      label: 'Sale Raw Data',   desc: 'Upload Neemans raw sale records' },
+  { key: 'allocation', icon: Package,      label: 'Allocation Data', desc: 'Upload Neemans allocation / calling data' },
+  { key: 'cart',       icon: ShoppingCart, label: 'Cart Data',       desc: 'Upload Neemans cart / abandoned cart data' },
+  { key: 'apr',        icon: Activity,     label: 'APR Data',        desc: 'Upload Neemans Agent Performance Report' },
 ];
 
 const BrandAccentCtx = createContext('#10B981');
 
 export function useBrandAccent() {
   return useContext(BrandAccentCtx);
+}
+
+// ─── Shared animated tile grid ──────────────────────────────────────────────
+const gridVariants = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } };
+const tileVariants = { hidden: { opacity: 0, y: 14 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' } } };
+
+function TileGrid({ children, cols = 2 }: { children: React.ReactNode; cols?: number }) {
+  return (
+    <motion.div
+      variants={gridVariants} initial="hidden" animate="show"
+      className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${cols === 3 ? 'lg:grid-cols-3' : ''}`}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function Tile({
+  icon: Icon, label, desc, accent, accent2, onClick, big,
+}: {
+  icon: IconType; label: string; desc: string; accent: string; accent2: string;
+  onClick: () => void; big?: boolean;
+}) {
+  return (
+    <motion.button
+      variants={tileVariants}
+      whileHover={{ y: -4 }}
+      whileTap={{ scale: 0.98 }}
+      onClick={onClick}
+      className={`group relative overflow-hidden rounded-2xl border border-slate-200 bg-white text-left transition-shadow duration-300 hover:shadow-xl ${big ? 'p-8' : 'p-6'}`}
+      style={{ boxShadow: '0 1px 2px rgba(15,23,42,0.04)' }}
+    >
+      {/* Diagonal accent glow, appears on hover */}
+      <div
+        className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100"
+        style={{ background: `linear-gradient(135deg, ${accent}, ${accent2})` }}
+      />
+      <div className={`relative flex items-center justify-center rounded-xl shrink-0 ${big ? 'h-12 w-12 mb-4' : 'h-10 w-10 mb-3'}`}
+        style={{ background: `linear-gradient(135deg, ${accent}, ${accent2})` }}>
+        <Icon className={big ? 'h-6 w-6' : 'h-5 w-5'} style={{ color: '#fff' }} />
+      </div>
+      <div className="relative flex items-start justify-between gap-2">
+        <div>
+          <h3 className={`font-bold text-slate-900 ${big ? 'text-lg' : 'text-sm'}`}>{label}</h3>
+          <p className={`text-slate-500 mt-1 ${big ? 'text-xs' : 'text-xs'}`}>{desc}</p>
+        </div>
+        <ChevronRight size={16} className="mt-1 shrink-0 text-slate-300 transition-all duration-300 group-hover:translate-x-0.5 group-hover:text-slate-400" />
+      </div>
+      <div className="absolute inset-x-0 bottom-0 h-[3px] scale-x-0 transition-transform duration-300 group-hover:scale-x-100"
+        style={{ background: `linear-gradient(90deg, ${accent}, ${accent2})` }} />
+    </motion.button>
+  );
 }
 
 export default function SalesDashboard() {
@@ -103,8 +162,8 @@ export default function SalesDashboard() {
 
   const brandData  = BRANDS.find((b) => b.key === brand);
   const theme      = brand ? BRAND_THEMES[brand] : null;
-  const accentColor = theme?.color ?? '#10B981';
-  const lightBg    = theme?.lightBg ?? '#ECFDF5';
+  const accentColor  = theme?.color ?? '#10B981';
+  const accentColor2 = theme?.color2 ?? '#34D399';
 
   function getBackLabel(): string {
     if (brand === 'bellavita' && bellavitaUploadType) return `Bellavita / Data Uploader / ${BELLAVITA_UPLOAD_TYPES.find(t => t.key === bellavitaUploadType)?.label}`;
@@ -125,9 +184,9 @@ export default function SalesDashboard() {
   return (
     <div className="min-h-screen p-3 sm:p-6">
       <div className="flex items-center gap-3 mb-6">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl"
-             style={{ backgroundColor: lightBg }}>
-          <Package className="h-5 w-5" style={{ color: accentColor }} />
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl shadow-sm"
+             style={{ background: `linear-gradient(135deg, ${accentColor}, ${accentColor2})` }}>
+          <Package className="h-5 w-5 text-white" />
         </div>
         <div>
           <h1 className="text-lg font-bold text-slate-900">Sales Dashboard</h1>
@@ -135,12 +194,19 @@ export default function SalesDashboard() {
         </div>
       </div>
 
-      {(brand || section || bellavitaUploadType || gncUploadType || neemansUploadType) && (
-        <button onClick={goBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 mb-4 transition-colors">
-          <ArrowLeft size={15} />
-          {getBackLabel()}
-        </button>
-      )}
+      <AnimatePresence mode="wait">
+        {(brand || section || bellavitaUploadType || gncUploadType || neemansUploadType) && (
+          <motion.button
+            key="back"
+            initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}
+            onClick={goBack}
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800 mb-4 transition-colors"
+          >
+            <ArrowLeft size={15} />
+            {getBackLabel()}
+          </motion.button>
+        )}
+      </AnimatePresence>
 
       {/* No brand access state */}
       {!brand && allowedBrands !== null && !isSuperAdmin && visibleBrands.length === 0 && (
@@ -153,110 +219,65 @@ export default function SalesDashboard() {
 
       {/* Brand selector */}
       {!brand && visibleBrands.length > 1 && (
-        <div className="grid grid-cols-2 gap-4">
+        <TileGrid>
           {visibleBrands.map((b) => {
-            const c  = BRAND_THEMES[b.key].color;
-            const bg = BRAND_THEMES[b.key].lightBg;
+            const t = BRAND_THEMES[b.key];
             return (
-              <button key={b.key} onClick={() => setBrand(b.key)}
-                className="rounded-2xl border border-slate-200 bg-white p-8 text-left transition-all"
-                onMouseEnter={e => { e.currentTarget.style.borderColor = c; e.currentTarget.style.boxShadow = `0 4px 12px ${c}20`; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
-              >
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl mb-4"
-                     style={{ backgroundColor: bg }}>
-                  <Package className="h-6 w-6" style={{ color: c }} />
-                </div>
-                <h2 className="text-lg font-bold text-slate-900">{b.label}</h2>
-                <p className="text-xs text-slate-500 mt-1">{b.desc}</p>
-              </button>
+              <Tile key={b.key} big icon={Package} label={b.label} desc={b.desc}
+                accent={t.color} accent2={t.color2} onClick={() => setBrand(b.key)} />
             );
           })}
-        </div>
+        </TileGrid>
       )}
 
       {/* Section selector (Dashboards / Uploader) */}
       {brand && !section && (
-        <div className="grid grid-cols-2 gap-4">
+        <TileGrid>
           {SECTIONS.filter((s) =>
             s.key !== 'uploader' ||
             isSuperAdmin ||
             allowedUploaders === null ||
             allowedUploaders.includes(brand)
           ).map((s) => (
-            <button key={s.key} onClick={() => setSection(s.key)}
-              className="rounded-2xl border border-slate-200 bg-white p-8 text-left transition-all"
-              onMouseEnter={e => { e.currentTarget.style.borderColor = accentColor; e.currentTarget.style.boxShadow = `0 4px 12px ${accentColor}20`; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl mb-4"
-                   style={{ backgroundColor: lightBg }}>
-                <s.icon className="h-6 w-6" style={{ color: accentColor }} />
-              </div>
-              <h2 className="text-lg font-bold text-slate-900">{s.label}</h2>
-              <p className="text-xs text-slate-500 mt-1">{s.desc}</p>
-            </button>
+            <Tile key={s.key} big icon={s.icon} label={s.label} desc={s.desc}
+              accent={accentColor} accent2={accentColor2} onClick={() => setSection(s.key)} />
           ))}
-        </div>
+        </TileGrid>
       )}
 
       {/* Bellavita upload type selector */}
       {brand === 'bellavita' && section === 'uploader' && !bellavitaUploadType && (
-        <div className="grid grid-cols-2 gap-4 mt-6">
-          {BELLAVITA_UPLOAD_TYPES.map((t) => (
-            <button key={t.key} onClick={() => setBellavitaUploadType(t.key)}
-              className="rounded-2xl border border-slate-200 bg-white p-6 text-left transition-all"
-              onMouseEnter={e => { e.currentTarget.style.borderColor = accentColor; e.currentTarget.style.boxShadow = `0 4px 12px ${accentColor}20`; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg mb-3"
-                   style={{ backgroundColor: lightBg }}>
-                <Database className="h-5 w-5" style={{ color: accentColor }} />
-              </div>
-              <h3 className="text-sm font-bold text-slate-900">{t.label}</h3>
-              <p className="text-xs text-slate-500 mt-1">{t.desc}</p>
-            </button>
-          ))}
+        <div className="mt-2">
+          <TileGrid cols={3}>
+            {BELLAVITA_UPLOAD_TYPES.map((t) => (
+              <Tile key={t.key} icon={t.icon} label={t.label} desc={t.desc}
+                accent={accentColor} accent2={accentColor2} onClick={() => setBellavitaUploadType(t.key)} />
+            ))}
+          </TileGrid>
         </div>
       )}
 
       {/* GNC upload type selector */}
       {brand === 'gnc' && section === 'uploader' && !gncUploadType && (
-        <div className="grid grid-cols-3 gap-4 mt-6">
-          {GNC_UPLOAD_TYPES.map((t) => (
-            <button key={t.key} onClick={() => setGncUploadType(t.key)}
-              className="rounded-2xl border border-slate-200 bg-white p-6 text-left transition-all"
-              onMouseEnter={e => { e.currentTarget.style.borderColor = accentColor; e.currentTarget.style.boxShadow = `0 4px 12px ${accentColor}20`; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg mb-3"
-                   style={{ backgroundColor: lightBg }}>
-                <Database className="h-5 w-5" style={{ color: accentColor }} />
-              </div>
-              <h3 className="text-sm font-bold text-slate-900">{t.label}</h3>
-              <p className="text-xs text-slate-500 mt-1">{t.desc}</p>
-            </button>
-          ))}
+        <div className="mt-2">
+          <TileGrid cols={3}>
+            {GNC_UPLOAD_TYPES.map((t) => (
+              <Tile key={t.key} icon={t.icon} label={t.label} desc={t.desc}
+                accent={accentColor} accent2={accentColor2} onClick={() => setGncUploadType(t.key)} />
+            ))}
+          </TileGrid>
         </div>
       )}
 
       {/* Neemans upload type selector */}
       {brand === 'neemans' && section === 'uploader' && !neemansUploadType && (
-        <div className="grid grid-cols-3 gap-4 mt-6">
-          {NEEMANS_UPLOAD_TYPES.map((t) => (
-            <button key={t.key} onClick={() => setNeemansUploadType(t.key)}
-              className="rounded-2xl border border-slate-200 bg-white p-6 text-left transition-all"
-              onMouseEnter={e => { e.currentTarget.style.borderColor = accentColor; e.currentTarget.style.boxShadow = `0 4px 12px ${accentColor}20`; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg mb-3"
-                   style={{ backgroundColor: lightBg }}>
-                <Database className="h-5 w-5" style={{ color: accentColor }} />
-              </div>
-              <h3 className="text-sm font-bold text-slate-900">{t.label}</h3>
-              <p className="text-xs text-slate-500 mt-1">{t.desc}</p>
-            </button>
-          ))}
+        <div className="mt-2">
+          <TileGrid cols={3}>
+            {NEEMANS_UPLOAD_TYPES.map((t) => (
+              <Tile key={t.key} icon={t.icon} label={t.label} desc={t.desc}
+                accent={accentColor} accent2={accentColor2} onClick={() => setNeemansUploadType(t.key)} />
+            ))}
+          </TileGrid>
         </div>
       )}
 
@@ -267,6 +288,7 @@ export default function SalesDashboard() {
         {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'chat' && <div className="mt-6"><BellavitaChatUpload /></div>}
         {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'cart' && <div className="mt-6"><BellavitaCartUpload /></div>}
         {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'orderExport' && <div className="mt-6"><BellavitaOrderExportUpload /></div>}
+        {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'repeatCdr' && <div className="mt-6"><BellavitaRepeatCdrUpload /></div>}
         {brand === 'gnc'       && section === 'uploader' && gncUploadType === 'sale'       && <div className="mt-6"><GncUpload /></div>}
         {brand === 'gnc'       && section === 'uploader' && gncUploadType === 'apr'        && <div className="mt-6"><GncAprUpload /></div>}
         {brand === 'gnc'       && section === 'uploader' && gncUploadType === 'allocation' && <div className="mt-6"><GncAllocationUpload /></div>}

@@ -203,7 +203,7 @@ interface RepeatPivotRow   { mobile_no: string; by_date: Record<string, number>;
 interface RepeatAnalysis   { grand_unique: number; grand_repeat: number; grand_pct: number; day_wise: DayWiseRepeatRow[]; pivot_dates: string[]; pivot_rows: RepeatPivotRow[]; }
 
 interface AgentMasterRow  { masId: string; agentName: string; lob: string; }
-interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; transcript: string; }
+interface VocQuote { leadId: string; agentId: string; agentName: string; mobileNo: string; callDate: string; quote: string; transcript: string; callRecording: string; }
 
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 function downloadCSV(rows: Record<string, unknown>[], filename: string) {
@@ -1738,6 +1738,7 @@ function VocQuoteList({ positive, negative, loading, onQuoteClick, resolveAgent 
       'Agent Name':   resolveAgent(q.agentId),
       'Mobile No':    q.mobileNo,
       'Customer VOC': q.quote,
+      'Call Recording': q.callRecording,
       Transcript:     q.transcript,
     })), `${title.toLowerCase().replace(/\s+/g, '-')}.csv`);
   };
@@ -1770,6 +1771,10 @@ function VocQuoteList({ positive, negative, loading, onQuoteClick, resolveAgent 
             <p className="text-[9px] text-slate-400 font-semibold mt-1">
               {resolveAgent(q.agentId)}{q.mobileNo ? ` · 📱 ${q.mobileNo}` : ''} · {fmtDate(q.callDate)}
             </p>
+            {q.callRecording && (
+              <audio controls preload="metadata" src={q.callRecording} onClick={e => e.stopPropagation()}
+                className="mt-1.5" style={{ height: 28, width: '100%' }} />
+            )}
           </div>
         ))}
       </div>
