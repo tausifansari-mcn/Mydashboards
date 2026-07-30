@@ -771,6 +771,70 @@ export async function uploadBellavitaRepeatCdr(req: Request, res: Response) {
   }
 }
 
+// ─── Bellavita "Repeat Allocation" ────────────────────────────────────────────
+// dd-mm-yyyy <-> yyyy-mm-dd conversion — bvo_order_export.order_date is stored dd-mm-yyyy (see
+// uploadBellavitaOrderExport/parseOrderExportDate), the frontend <input type="date"> gives yyyy-mm-dd.
+function isoToDMY(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}-${m}-${y}`;
+}
+
+export async function createBellavitaRepeatAllocation(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'User not authenticated' });
+    const date = String(req.body?.date ?? '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ success: false, message: 'date is required as YYYY-MM-DD' });
+    }
+    const result = await svc.createBellavitaRepeatAllocation(isoToDMY(date), date, userId);
+    res.json({ success: true, data: result });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('sales createBellavitaRepeatAllocation error:', msg);
+    res.status(500).json({ success: false, message: `Failed to create allocation: ${msg}` });
+  }
+}
+
+function parseDownloadRange(req: Request): { startDate: string; endDate: string } | null {
+  const startDate = req.query.startDate as string | undefined;
+  const endDate = req.query.endDate as string | undefined;
+  if (!startDate || !endDate || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+    return null;
+  }
+  return { startDate, endDate };
+}
+
+export async function downloadBellavitaOrderExport(req: Request, res: Response) {
+  try {
+    const range = parseDownloadRange(req);
+    if (!range) { res.status(400).json({ success: false, message: 'startDate and endDate (YYYY-MM-DD) are required' }); return; }
+    await svc.streamBellavitaOrderExportCsv(res, range.startDate, range.endDate);
+  } catch (err: unknown) {
+    if (!res.headersSent) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, message: `Download failed: ${msg}` });
+    } else {
+      res.end();
+    }
+  }
+}
+
+export async function downloadBellavitaRepeatAllocation(req: Request, res: Response) {
+  try {
+    const range = parseDownloadRange(req);
+    if (!range) { res.status(400).json({ success: false, message: 'startDate and endDate (YYYY-MM-DD) are required' }); return; }
+    await svc.streamBellavitaRepeatAllocationCsv(res, range.startDate, range.endDate);
+  } catch (err: unknown) {
+    if (!res.headersSent) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, message: `Download failed: ${msg}` });
+    } else {
+      res.end();
+    }
+  }
+}
+
 // ─── Upload Log Controllers ─────────────────────────────────────────────────
 
 export async function getUploadLogs(req: Request, res: Response) {

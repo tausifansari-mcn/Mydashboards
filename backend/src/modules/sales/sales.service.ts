@@ -1,7 +1,9 @@
 import crypto from 'crypto';
 import mysql from 'mysql2/promise';
+import { Response } from 'express';
 import { querySource } from '../../lib/sourceDb';
 import { getMasmisPool, queryMasmis } from '../../lib/masmisDb';
+import { csvEscape } from '../../lib/csv';
 
 // ─── One-time table init (called at server startup) ───────────────────────────
 
@@ -981,6 +983,149 @@ export async function uploadBellavitaRepeatCdr(rows: BellavitaRepeatCdrRow[], up
   ]);
   const [result] = await getMasmisPool().query(sql, [values]);
   return (result as mysql.ResultSetHeader).affectedRows;
+}
+
+// ─── Repeat Allocation ──────────────────────────────────────────────────────
+// Bellavita "Repeat Allocation" = bvo_order_export rows for a picked date, kept only where the
+// customer's phone (shipping_phone_2) was actually called (matched in bvo_Repeat_cdr on
+// PhoneNumber), and only the ones not already sitting in bvo_Repeat_allocation from an earlier run
+// — a phone gets allocated exactly once, ever (enforced by the table's own unique key too). The
+// "latest" subquery collapses bvo_order_export down to one row per phone for the picked date, since
+// a repeat customer can have more than one order-export row on the same day.
+const ORDER_EXPORT_LATEST_FOR_DATE = `
+  SELECT shipping_phone_2, MAX(id) AS max_id
+  FROM db_masmis.bvo_order_export
+  WHERE order_date = ?
+  GROUP BY shipping_phone_2
+`;
+
+export interface CreateAllocationResult { matched: number; alreadyAllocated: number; inserted: number; }
+
+// orderDateDMY: "DD-MM-YYYY" (matches bvo_order_export.order_date's stored format).
+// rawDateISO: "YYYY-MM-DD" — stamped onto every row created by this run as RawDate.
+export async function createBellavitaRepeatAllocation(
+  orderDateDMY: string, rawDateISO: string, createdBy: number,
+): Promise<CreateAllocationResult> {
+  const [matchedRow] = await queryMasmis<{ c: number }>(`
+    SELECT COUNT(*) AS c FROM (
+      SELECT oe.shipping_phone_2
+      FROM db_masmis.bvo_order_export oe
+      JOIN (${ORDER_EXPORT_LATEST_FOR_DATE}) latest
+        ON latest.shipping_phone_2 = oe.shipping_phone_2 AND latest.max_id = oe.id
+      INNER JOIN db_masmis.bvo_Repeat_cdr cdr ON cdr.PhoneNumber = oe.shipping_phone_2
+    ) t
+  `, [orderDateDMY]);
+  const matched = Number(matchedRow?.c ?? 0);
+
+  const [alreadyRow] = await queryMasmis<{ c: number }>(`
+    SELECT COUNT(*) AS c FROM (
+      SELECT oe.shipping_phone_2
+      FROM db_masmis.bvo_order_export oe
+      JOIN (${ORDER_EXPORT_LATEST_FOR_DATE}) latest
+        ON latest.shipping_phone_2 = oe.shipping_phone_2 AND latest.max_id = oe.id
+      INNER JOIN db_masmis.bvo_Repeat_cdr cdr ON cdr.PhoneNumber = oe.shipping_phone_2
+      INNER JOIN db_masmis.bvo_Repeat_allocation existing ON existing.phone_number = oe.shipping_phone_2
+    ) t
+  `, [orderDateDMY]);
+  const alreadyAllocated = Number(alreadyRow?.c ?? 0);
+
+  const [result] = await getMasmisPool().query(`
+    INSERT IGNORE INTO db_masmis.bvo_Repeat_allocation (
+      phone_number, name, email, financial_status, total, discount_code, created_at_raw,
+      lineitem_name, shipping_name, shipping_zip, tags, shipping_city, shipping_province_name,
+      order_date, call_status, agent, created_by, RawDate
+    )
+    SELECT
+      oe.shipping_phone_2, oe.name, oe.email, oe.financial_status, oe.total, oe.discount_code, oe.created_at_raw,
+      oe.lineitem_name, oe.shipping_name, oe.shipping_zip, oe.tags, oe.shipping_city, oe.shipping_province_name,
+      oe.order_date, cdr.CallStatus, cdr.Agent, ?, ?
+    FROM db_masmis.bvo_order_export oe
+    JOIN (${ORDER_EXPORT_LATEST_FOR_DATE}) latest
+      ON latest.shipping_phone_2 = oe.shipping_phone_2 AND latest.max_id = oe.id
+    INNER JOIN db_masmis.bvo_Repeat_cdr cdr ON cdr.PhoneNumber = oe.shipping_phone_2
+    LEFT JOIN db_masmis.bvo_Repeat_allocation existing ON existing.phone_number = oe.shipping_phone_2
+    WHERE existing.id IS NULL
+  `, [createdBy, rawDateISO, orderDateDMY]);
+  const inserted = (result as mysql.ResultSetHeader).affectedRows;
+
+  return { matched, alreadyAllocated, inserted };
+}
+
+const ORDER_EXPORT_EXPORT_COLUMNS = [
+  'id', 'shipping_phone', 'name', 'shipping_phone_2', 'email', 'financial_status', 'total', 'name_2',
+  'discount_code', 'created_at_raw', 'lineitem_name', 'shipping_name', 'shipping_zip', 'tags',
+  'shipping_city', 'shipping_province_name', 'order_date',
+];
+
+// startDate/endDate: "YYYY-MM-DD" — order_date is stored as "DD-MM-YYYY" text (Excel-export
+// format, see uploadBellavitaOrderExport), which does NOT sort correctly as a plain string
+// (e.g. "05-07-2026" < "20-06-2026" lexicographically despite being the later date) — STR_TO_DATE
+// converts it for a real chronological range comparison.
+export async function streamBellavitaOrderExportCsv(res: Response, startDate: string, endDate: string): Promise<void> {
+  const fname = `bellavita-order-export-${startDate}_to_${endDate}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  res.write(Buffer.from([0xEF, 0xBB, 0xBF]));
+  res.write(ORDER_EXPORT_EXPORT_COLUMNS.join(',') + '\n');
+
+  const BATCH = 2000;
+  let lastId = 0;
+  for (;;) {
+    const rows = await queryMasmis<Record<string, unknown>>(`
+      SELECT ${ORDER_EXPORT_EXPORT_COLUMNS.join(', ')}
+      FROM db_masmis.bvo_order_export
+      WHERE id > ? AND STR_TO_DATE(order_date, '%d-%m-%Y') BETWEEN ? AND ?
+      ORDER BY id ASC
+      LIMIT ${BATCH}
+    `, [lastId, startDate, endDate]);
+    if (rows.length === 0) break;
+    for (const r of rows) {
+      res.write(ORDER_EXPORT_EXPORT_COLUMNS.map(c => csvEscape(r[c])).join(',') + '\n');
+    }
+    lastId = Number(rows[rows.length - 1].id);
+    if (rows.length < BATCH) break;
+    await new Promise(r => setTimeout(r, 100)); // stay gentle on the shared DB server between batches
+  }
+  res.end();
+}
+
+const REPEAT_ALLOCATION_EXPORT_COLUMNS = [
+  'id', 'phone_number', 'name', 'email', 'financial_status', 'total', 'discount_code',
+  'created_at_raw', 'lineitem_name', 'shipping_name', 'shipping_zip', 'tags',
+  'shipping_city', 'shipping_province_name', 'order_date', 'call_status', 'agent', 'RawDate',
+];
+
+// startDate/endDate: "YYYY-MM-DD" — RawDate is a real DATE column, so this compares directly.
+export async function streamBellavitaRepeatAllocationCsv(res: Response, startDate: string, endDate: string): Promise<void> {
+  const fname = `bellavita-repeat-allocation-${startDate}_to_${endDate}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  res.write(Buffer.from([0xEF, 0xBB, 0xBF]));
+  res.write(REPEAT_ALLOCATION_EXPORT_COLUMNS.join(',') + '\n');
+
+  const selectCols = REPEAT_ALLOCATION_EXPORT_COLUMNS
+    .map(c => c === 'RawDate' ? `DATE_FORMAT(RawDate, '%d-%m-%Y') AS RawDate` : c)
+    .join(', ');
+
+  const BATCH = 2000;
+  let lastId = 0;
+  for (;;) {
+    const rows = await queryMasmis<Record<string, unknown>>(`
+      SELECT ${selectCols}
+      FROM db_masmis.bvo_Repeat_allocation
+      WHERE id > ? AND RawDate BETWEEN ? AND ?
+      ORDER BY id ASC
+      LIMIT ${BATCH}
+    `, [lastId, startDate, endDate]);
+    if (rows.length === 0) break;
+    for (const r of rows) {
+      res.write(REPEAT_ALLOCATION_EXPORT_COLUMNS.map(c => csvEscape(r[c])).join(',') + '\n');
+    }
+    lastId = Number(rows[rows.length - 1].id);
+    if (rows.length < BATCH) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  res.end();
 }
 
 function excelSerialToDMY(serial: number): string {

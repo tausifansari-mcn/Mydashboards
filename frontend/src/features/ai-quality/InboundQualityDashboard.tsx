@@ -168,6 +168,7 @@ interface InboundProcessKPIs {
 
 interface TopPerformer  { user: string; audit_count: number; avg_score: number; }
 interface DailyScore   { call_date: string; avg_score: number; audit_count: number; }
+interface DateWiseAnsweredAudited { call_date: string; answered: number; audited: number; }
 interface DateWiseParamRow { date: string; auditCount: number; overallScore: number; params: Record<string, number>; }
 interface DateWiseParamData {
   paramColumns: { column: string; label: string }[];
@@ -178,8 +179,6 @@ interface Scenario1Item   { scenario1: string; count: number; pct: number; }
 interface ScenarioItem   { scenario: string; count: number; pct: number; children: Scenario1Item[]; }
 interface AlertScenarioRow { scenario: string; scenario1: string; count: number; pct: number; }
 interface NegSignalDetailRow { scenario: string; scenario1: string; neg_signal: string; count: number; pct: number; }
-interface SensitiveWordUseRow { label: string; count: number; pct: number; }
-interface SensitiveWordAnalysis { distribution: SensitiveWordUseRow[]; akash_count: number; akash_label: string; social_count: number; court_count: number; }
 interface FatalContributorRow  { agent_name: string; audit_count: number; fatal_count: number; fatal_pct: number; }
 interface DayWiseFatalRow      { call_date: string; total_count: number; total_fatal: number; fatal_pct: number; query_fatal: number; complaint_fatal: number; request_fatal: number; }
 interface WeekScenarioFatalRow { week_label: string; query_fatal_pct: number; complaint_fatal_pct: number; request_fatal_pct: number; sale_done_fatal_pct: number; total_fatal: number; }
@@ -2073,7 +2072,8 @@ export default function InboundQualityDashboard() {
   const [negSignalDetails, setNegSignalDetails]   = useState<NegSignalDetailRow[]>([]);
   const [posSignals, setPosSignals]               = useState<PosKeywordRow[]>([]);
   const [potentialScams, setPotentialScams]       = useState<AlertScenarioRow[]>([]);
-  const [sensitiveWordAnalysis, setSensitiveWordAnalysis] = useState<SensitiveWordAnalysis | null>(null);
+  const [answeredAudited, setAnsweredAudited]     = useState<DateWiseAnsweredAudited[]>([]);
+  const [answeredAuditedLoading, setAnsweredAuditedLoading] = useState(false);
   const [scamDetailOpen,  setScamDetailOpen]  = useState(false);
   const [scamDetail,      setScamDetail]      = useState<PotentialScamDetail | null>(null);
   const [scamDetailLoading, setScamDetailLoading] = useState(false);
@@ -2413,8 +2413,11 @@ export default function InboundQualityDashboard() {
       .then(r => setPosSignals(r.data?.data ?? [])).catch(() => setPosSignals([]));
     api.get<{ data: AlertScenarioRow[] }>(`/inbound-quality/potential-scams?${q}`)
       .then(r => setPotentialScams(r.data?.data ?? [])).catch(() => setPotentialScams([]));
-    api.get<{ data: SensitiveWordAnalysis }>(`/inbound-quality/sensitive-word-analysis?${q}`)
-      .then(r => setSensitiveWordAnalysis(r.data?.data ?? null)).catch(() => setSensitiveWordAnalysis(null));
+    setAnsweredAuditedLoading(true);
+    api.get<{ data: DateWiseAnsweredAudited[] }>(`/inbound-quality/date-wise-answered-audited?${q}`)
+      .then(r => setAnsweredAudited(r.data?.data ?? []))
+      .catch(() => setAnsweredAudited([]))
+      .finally(() => setAnsweredAuditedLoading(false));
   }, [clientId, sd, ed]);
 
   useEffect(() => {
@@ -3659,7 +3662,7 @@ export default function InboundQualityDashboard() {
             })()}
 
             {/* ── Alert Field Tables ─────────────────────────────────────── */}
-            {(socialThreats.length > 0 || negSignalDetails.length > 0 || potentialScams.length > 0) && (() => {
+            {(socialThreats.length > 0 || negSignalDetails.length > 0 || potentialScams.length > 0 || answeredAuditedLoading || answeredAudited.length > 0) && (() => {
               const negColor: Record<string, string> = {
                 Frustration: '#F97316', Threat: '#EF4444', Abuse: '#A855F7',
                 Slang: '#3B82F6', Sarcasm: '#14B8A6',
@@ -3743,87 +3746,62 @@ export default function InboundQualityDashboard() {
 
               return (
                 <div className="mt-6 mb-6 space-y-4">
-                  {socialThreats.length > 0 && (
-                    <AlertTable
-                      title="Social Media & Consumer Court Threat"
-                      accentColor="#F97316"
-                      rows={socialThreats.map(r => ({ ...r, extra: undefined }))}
-                    />
-                  )}
-
-                  {/* Sensitive Word Analysis — two metrics below the social threats table */}
-                  {sensitiveWordAnalysis && (
+                  {(answeredAuditedLoading || answeredAudited.length > 0) && (
                     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                       <div className="px-5 py-3 card-header gap-2 px-5 py-3">
-                        <div className="w-1 h-4 rounded-full bg-orange-400" />
-                        <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">
-                          Sensitive Word Use Analysis
-                        </h3>
+                        <div className="w-1 h-4 rounded-full bg-sky-500" />
+                        <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">Date Wise — Calls Answered vs Audited</h3>
+                        {answeredAudited.length > 0 && (
+                          <ExportBtn onClick={() => downloadCSV(answeredAudited.map(r => ({
+                            Date: r.call_date, Answered: r.answered, Audited: r.audited,
+                            'Audit %': r.answered > 0 ? `${((r.audited / r.answered) * 100).toFixed(1)}%` : '0%',
+                          })), 'date-wise-answered-audited.csv')} />
+                        )}
+                        <span className="ml-auto text-xs font-bold text-slate-500">
+                          {answeredAuditedLoading ? 'Loading…' : `${answeredAudited.length} day${answeredAudited.length !== 1 ? 's' : ''}`}
+                        </span>
                       </div>
-                      <div className="flex flex-col lg:flex-row">
-                        {/* Left — Sensitive Word Use distribution */}
-                        <div className="lg:w-[65%] overflow-hidden">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="border-b border-slate-200 bg-slate-50">
-                                {['Sensitive Word Use', 'Count', 'Count%'].map(h => (
-                                  <th key={h} className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">
-                                    {h}
-                                  </th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {sensitiveWordAnalysis.distribution.map((r, i) => (
-                                <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? '' : 'bg-transparent'}`}>
-                                  <td className="py-3 px-4 text-slate-700 leading-snug">{r.label}</td>
-                                  <td className="py-3 px-4 text-slate-600 font-bold tabular-nums whitespace-nowrap">{r.count.toLocaleString()}</td>
-                                  <td className="py-3 px-4 tabular-nums whitespace-nowrap">
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden max-w-[60px]">
-                                        <div className="h-full rounded-full bg-orange-400" style={{ width: `${r.pct}%` }} />
-                                      </div>
-                                      <span className="text-slate-600 font-semibold">{r.pct}%</span>
-                                    </div>
-                                  </td>
+                      {answeredAuditedLoading ? (
+                        <div className="flex items-center justify-center py-16 text-slate-400 text-sm">Loading…</div>
+                      ) : (
+                        <>
+                          <div className="p-4">
+                            <ResponsiveContainer width="100%" height={240}>
+                              <LineChart data={answeredAudited.map(r => ({ date: r.call_date.slice(5), answered: r.answered, audited: r.audited }))}
+                                margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                                <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                                <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                                <Legend wrapperStyle={{ fontSize: 11 }} />
+                                <Line type="monotone" dataKey="answered" name="Calls Answered" stroke="#0EA5E9" strokeWidth={2} dot={{ r: 3 }} />
+                                <Line type="monotone" dataKey="audited" name="Calls Audited" stroke="#F97316" strokeWidth={2} dot={{ r: 3 }} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                          <div className="overflow-y-auto max-h-56 border-t border-slate-200">
+                            <table className="w-full text-xs">
+                              <thead className="sticky top-0 bg-white z-10">
+                                <tr className="border-b border-slate-200 bg-slate-50">
+                                  {['Date', 'Answered', 'Audited', 'Audit %'].map(h => (
+                                    <th key={h} className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">{h}</th>
+                                  ))}
                                 </tr>
-                              ))}
-                            </tbody>
-                            <tfoot className="border-t border-slate-200">
-                              <tr className="bg-slate-50">
-                                <td className="py-2.5 px-4 text-slate-600 font-semibold text-[10px] uppercase">Total</td>
-                                <td className="py-2.5 px-4 text-slate-900 font-bold tabular-nums">
-                                  {sensitiveWordAnalysis.distribution.reduce((s, r) => s + r.count, 0).toLocaleString()}
-                                </td>
-                                <td className="py-2.5 px-4 text-slate-900 font-bold">100%</td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        </div>
-
-                        {/* Right — Dimension counts */}
-                        <div className="lg:w-[35%] border-t lg:border-t-0 lg:border-l border-slate-200 p-4 flex flex-col gap-3 justify-center">
-                          <p className="text-[10px] text-slate-600 uppercase tracking-widest font-semibold mb-1">
-                            Dimension
-                          </p>
-                          {[
-                            { label: sensitiveWordAnalysis.akash_label, count: sensitiveWordAnalysis.akash_count,  color: '#A855F7', note: 'CX mentioned co-founder name' },
-                            { label: 'Social Media',                    count: sensitiveWordAnalysis.social_count, color: '#3B82F6', note: 'CX threatened social media' },
-                            { label: 'Consumer Court',                  count: sensitiveWordAnalysis.court_count,  color: '#F97316', note: 'CX mentioned court/legal/FIR' },
-                          ].map(d => (
-                            <div key={d.label} className="flex items-center gap-3 bg-slate-50 rounded-lg px-3 py-3 border border-slate-200">
-                              <div className="w-1 self-stretch rounded-full shrink-0" style={{ background: d.color }} />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[10px] text-slate-600 uppercase tracking-widest">{d.label}</p>
-                                <p className="text-slate-400 text-[9px] leading-tight">{d.note}</p>
-                              </div>
-                              <span className="text-xl font-bold tabular-nums" style={{ color: d.color }}>
-                                {d.count.toLocaleString()}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                              </thead>
+                              <tbody>
+                                {[...answeredAudited].reverse().map((r, i) => (
+                                  <tr key={r.call_date} className={`border-b border-slate-100 ${i % 2 === 0 ? '' : 'bg-transparent'}`}>
+                                    <td className="py-2 px-4 text-slate-700 font-mono whitespace-nowrap">{r.call_date}</td>
+                                    <td className="py-2 px-4 text-slate-900 font-bold tabular-nums">{r.answered.toLocaleString()}</td>
+                                    <td className="py-2 px-4 text-slate-900 font-bold tabular-nums">{r.audited.toLocaleString()}</td>
+                                    <td className="py-2 px-4 text-slate-600 tabular-nums">{r.answered > 0 ? ((r.audited / r.answered) * 100).toFixed(1) : '0'}%</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
                   {negSignalDetails.length > 0 && (

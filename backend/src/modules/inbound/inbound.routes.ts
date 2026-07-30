@@ -19,6 +19,7 @@ router.get('/consolidated-trend',  ctrl.getConsolidatedTrend);
 router.get('/project/:key',         ctrl.getProjectDetail);
 router.get('/project/:key/hourly',  ctrl.getProjectHourly);
 router.get('/project/:key/trend',   ctrl.getProjectTrend);
+router.get('/project/:key/raw-export', ctrl.exportProjectRawCsv);
 
 // Agent-wise
 router.get('/agent-summary',        ctrl.getAgentSummary);

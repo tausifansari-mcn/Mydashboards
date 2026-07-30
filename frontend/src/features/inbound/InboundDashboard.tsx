@@ -61,6 +61,72 @@ function exportCSV(rows: ProjectRow[], startDate: string, endDate: string) {
   URL.revokeObjectURL(url);
 }
 
+// Full date-wise extract: Overall (all-process aggregate) + every individual process, all columns, one file.
+interface FullExtractTrendRow {
+  date: string; offered: number; answered: number; al: number;
+  sl: number; acht: number; repeat_pct: number; fcr_pct: number | null; login_count: number;
+}
+interface FullExtractProject { key: string; name: string; rows: FullExtractTrendRow[]; }
+
+async function exportFullExtract(startDate: string, endDate: string): Promise<void> {
+  const qs = new URLSearchParams({ startDate: startDate.replace('T', ' '), endDate: endDate.replace('T', ' ') });
+  const res = await api.get<{ success: boolean; data: FullExtractProject[] }>(`/inbound/trend?${qs}`);
+  const allProjects = res.data?.data ?? [];
+
+  // Overall per-date aggregate — same weighting logic as the backend's getConsolidatedTrend.
+  const overallMap = new Map<string, { offered: number; answered: number; sl_num: number; acht_weighted: number; login: number }>();
+  for (const proj of allProjects) {
+    for (const row of proj.rows) {
+      const d = overallMap.get(row.date) ?? { offered: 0, answered: 0, sl_num: 0, acht_weighted: 0, login: 0 };
+      d.offered += row.offered;
+      d.answered += row.answered;
+      d.sl_num += row.offered > 0 ? Math.round(row.sl * row.offered / 100) : 0;
+      d.acht_weighted += (row.acht || 0) * row.offered;
+      d.login += row.login_count;
+      overallMap.set(row.date, d);
+    }
+  }
+  const totalMandate  = PROJECT_META.reduce((s, m) => s + m.mandate, 0);
+  const totalRequired = PROJECT_META.reduce((s, m) => s + m.required, 0);
+
+  const headers = ['Date', 'Process', 'Offered', 'Answered', 'Abandoned', 'AL%', 'SL%', 'ACHT(s)', 'Repeat%', 'FCR%', 'Login', 'Mandate', 'Required', 'Deficit'];
+  const lines: (string | number)[][] = [];
+  const allDates = Array.from(new Set(allProjects.flatMap(p => p.rows.map(r => r.date)))).sort();
+
+  for (const date of allDates) {
+    const o = overallMap.get(date);
+    if (o) {
+      const al   = o.offered > 0 ? Math.round(o.answered * 10000 / o.offered) / 100 : 0;
+      const sl   = o.offered > 0 ? Math.round(o.sl_num   * 10000 / o.offered) / 100 : 0;
+      const acht = o.offered > 0 ? Math.round(o.acht_weighted / o.offered) : 0;
+      lines.push([
+        fmtDate(date), 'Overall', o.offered, o.answered, Math.max(0, o.offered - o.answered),
+        al.toFixed(2), sl.toFixed(2), acht, '', '',
+        o.login, totalMandate, totalRequired, totalRequired - o.login,
+      ]);
+    }
+    for (const meta of PROJECT_META) {
+      const row = allProjects.find(p => p.key === meta.key)?.rows.find(r => r.date === date);
+      if (!row) continue;
+      lines.push([
+        fmtDate(date), meta.name, row.offered, row.answered, Math.max(0, row.offered - row.answered),
+        row.al.toFixed(2), row.sl.toFixed(2), row.acht,
+        row.repeat_pct.toFixed(2), row.fcr_pct != null ? row.fcr_pct.toFixed(2) : '',
+        row.login_count, meta.mandate, meta.required, meta.required - row.login_count,
+      ]);
+    }
+  }
+
+  const csv = [headers, ...lines].map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `inbound_full_extract_${startDate.slice(0, 10)}_to_${endDate.slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function downloadChartPNG(containerRef: React.RefObject<HTMLDivElement | null>, filename: string) {
   const svg = containerRef.current?.querySelector('svg');
   if (!svg) return;
@@ -143,6 +209,12 @@ interface ConsolidatedTrendRow {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function todayStr(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 function fmtDate(d: string): string {
   const m = String(d).match(/(\d{4})-(\d{2})-(\d{2})/);
@@ -409,6 +481,10 @@ export default function InboundDashboard() {
   const [consolidatedTrend,  setConsolidatedTrend]  = useState<ConsolidatedTrendRow[]>([]);
   const [loading,            setLoading]            = useState(false);
   const [trendLoading,       setTrendLoading]       = useState(false);
+  const [extracting,         setExtracting]         = useState(false);
+  const [showExtractModal,  setShowExtractModal]   = useState(false);
+  const [extractStart,      setExtractStart]       = useState(`${todayStr().slice(0, 7)}-01`);
+  const [extractEnd,        setExtractEnd]         = useState(todayStr());
   const [error,              setError]              = useState('');
   const [lastRefreshed,      setLastRefreshed]      = useState<Date>(new Date());
   const [countdown,          setCountdown]          = useState(120);
@@ -505,6 +581,21 @@ export default function InboundDashboard() {
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
+  // ── Full data extract: Overall + every process, date-wise, all columns ──
+  // Asks for a date range each time — default is the current month to date.
+  const handleExtractAll = useCallback(async (startDate: string, endDate: string) => {
+    setExtracting(true);
+    try {
+      await exportFullExtract(`${startDate}T00:00`, `${endDate}T23:59`);
+      setShowExtractModal(false);
+    } catch (e) {
+      console.error('inbound extract-all failed:', e);
+      setError('Failed to extract data — please try again');
+    } finally {
+      setExtracting(false);
+    }
+  }, []);
 
   // ── Auto-refresh every 120 seconds ──
   useEffect(() => {
@@ -638,6 +729,16 @@ export default function InboundDashboard() {
             >
               <FileDown size={12} />
               Export CSV
+            </button>
+
+            <button
+              onClick={() => setShowExtractModal(true)}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-50"
+              style={{ background: COLOR_TEAL }}
+              title="Extract full date-wise data for Overall + every process (all columns, one file)"
+            >
+              <FileDown size={12} className={extracting ? 'animate-pulse' : ''} />
+              {extracting ? 'Extracting…' : 'Extract Data'}
             </button>
 
             <div className="ml-auto text-[11px] text-slate-400 font-medium">
@@ -1524,6 +1625,57 @@ export default function InboundDashboard() {
           </DrillModal>
         );
       })()}
+
+      {/* Extract Data — date range prompt (default: current month to date) */}
+      {showExtractModal && createPortal(
+        <div
+          className="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          style={{ zIndex: 9999 }}
+          onClick={e => { if (e.target === e.currentTarget && !extracting) setShowExtractModal(false); }}
+        >
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
+            <div className="flex items-center gap-2.5 px-5 py-3.5" style={{ backgroundColor: COLOR_TEAL }}>
+              <FileDown className="h-4 w-4 text-white" />
+              <h3 className="text-sm font-bold flex-1 text-white">Extract Inbound Data</h3>
+              {!extracting && (
+                <button onClick={() => setShowExtractModal(false)} className="text-white/80 hover:text-white">
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-slate-500">Overall + every process, one row per date per process, all columns.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">From</label>
+                  <input type="date" value={extractStart} max={extractEnd}
+                    onChange={e => setExtractStart(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">To</label>
+                  <input type="date" value={extractEnd} min={extractStart} max={todayStr()}
+                    onChange={e => setExtractEnd(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300" />
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button onClick={() => setShowExtractModal(false)} disabled={extracting}
+                  className="flex-1 rounded-lg border border-slate-200 py-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-40">
+                  Cancel
+                </button>
+                <button onClick={() => handleExtractAll(extractStart, extractEnd)} disabled={extracting}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold text-white transition-colors disabled:opacity-60"
+                  style={{ backgroundColor: COLOR_TEAL }}>
+                  <FileDown className={`h-3.5 w-3.5 ${extracting ? 'animate-pulse' : ''}`} />
+                  {extracting ? 'Extracting…' : 'Extract'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

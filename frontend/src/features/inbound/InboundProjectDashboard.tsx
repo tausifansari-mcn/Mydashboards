@@ -408,6 +408,39 @@ export default function InboundProjectDashboard() {
     trend.map(r => [fmtDate(r.date), meta.mandate, meta.required, r.login_count, meta.required - r.login_count]),
     `${meta.name}_manpower`
   );
+  // Raw extract — every native call record for this process's campaigns, every column
+  // (id, CallDate, Time, AgentId, Disposition, CallDurationSecond, ... the full CDR row).
+  // Equivalent to "SELECT * FROM <this process's CDR table> WHERE CallDate BETWEEN ... AND CampaignName IN (...)".
+  // Asks for a date range each time — default is the current month to date.
+  const [extracting, setExtracting] = useState(false);
+  const [showExtractModal, setShowExtractModal] = useState(false);
+  const [extractStart, setExtractStart] = useState(`${todayStr().slice(0, 7)}-01`);
+  const [extractEnd,   setExtractEnd]   = useState(todayStr());
+
+  const runRawExport = async (startDate: string, endDate: string) => {
+    setExtracting(true);
+    try {
+      const res = await api.get(`/inbound/project/${projectKey}/raw-export`, {
+        params: { startDate: `${startDate} 00:00`, endDate: `${endDate} 23:59` },
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data as BlobPart], { type: 'text/csv' });
+      const objUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = `${meta.name.replace(/\s+/g, '_')}_raw_calls_${startDate}_to_${endDate}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(objUrl);
+      setShowExtractModal(false);
+    } catch (e) {
+      console.error('raw call export failed:', e);
+      alert('Export failed. Please try again.');
+    } finally {
+      setExtracting(false);
+    }
+  };
 
   return (
     <div className="min-h-screen text-slate-900 space-y-6">
@@ -473,6 +506,14 @@ export default function InboundProjectDashboard() {
           >
             <RefreshCw className={`h-3 w-3 ${loading?'animate-spin':''}`} />
             {lastUpdated || 'Refresh'}
+          </button>
+          <button onClick={() => setShowExtractModal(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-white/30 px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-white/10"
+            style={{ color: meta.textOnColor }}
+            title={`Extract every raw call record for ${meta.name} (all columns)`}
+          >
+            <FileDown className="h-3 w-3" />
+            Extract Data
           </button>
         </div>
       </div>
@@ -802,6 +843,57 @@ export default function InboundProjectDashboard() {
       </ExpandableTable>
     </div>
     </div>
+
+    {/* Extract Data — date range prompt (default: current month to date) */}
+    {showExtractModal && createPortal(
+      <div
+        className="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+        style={{ zIndex: 9999 }}
+        onClick={e => { if (e.target === e.currentTarget && !extracting) setShowExtractModal(false); }}
+      >
+        <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
+          <div className="flex items-center gap-2.5 px-5 py-3.5" style={{ backgroundColor: meta.color }}>
+            <FileDown className="h-4 w-4" style={{ color: meta.textOnColor }} />
+            <h3 className="text-sm font-bold flex-1" style={{ color: meta.textOnColor }}>Extract {meta.name} Call Data</h3>
+            {!extracting && (
+              <button onClick={() => setShowExtractModal(false)} style={{ color: meta.textOnColor + 'cc' }}>
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <div className="p-5 space-y-4">
+            <p className="text-xs text-slate-500">Every raw call record (all columns) for the date range below.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">From</label>
+                <input type="date" value={extractStart} max={extractEnd}
+                  onChange={e => setExtractStart(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300" />
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">To</label>
+                <input type="date" value={extractEnd} min={extractStart} max={todayStr()}
+                  onChange={e => setExtractEnd(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300" />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setShowExtractModal(false)} disabled={extracting}
+                className="flex-1 rounded-lg border border-slate-200 py-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-40">
+                Cancel
+              </button>
+              <button onClick={() => runRawExport(extractStart, extractEnd)} disabled={extracting}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold text-white transition-colors disabled:opacity-60"
+                style={{ backgroundColor: meta.color }}>
+                <FileDown className={`h-3.5 w-3.5 ${extracting ? 'animate-pulse' : ''}`} />
+                {extracting ? 'Extracting…' : 'Extract'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )}
     </div>
   );
 }

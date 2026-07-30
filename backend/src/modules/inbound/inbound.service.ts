@@ -1,4 +1,6 @@
+import type { Response } from 'express';
 import { querySource } from '../../lib/sourceDb';
+import { csvEscape } from '../../lib/csv';
 
 // ─── Simple in-memory cache (2-min TTL) ──────────────────────────────────────
 const _cache = new Map<string, { value: unknown; exp: number }>();
@@ -59,6 +61,7 @@ interface ProjectConfig {
   hasFCR: boolean;
   fcrClientId?: number;
   hourlyTimeField?: string; // column with actual call time when CallDate has no time component
+  qaClientId?: number; // ClientId used in db_audit.call_quality_assessment (AI Quality) for this project
 }
 
 const PROJECTS: ProjectConfig[] = [
@@ -74,6 +77,7 @@ const PROJECTS: ProjectConfig[] = [
     required: 6,
     hasFCR: false,
     hourlyTimeField: 'Time',
+    qaClientId: 409,
   },
   {
     key: 'bellavita',
@@ -87,6 +91,7 @@ const PROJECTS: ProjectConfig[] = [
     required: 12,
     hasFCR: false,
     hourlyTimeField: 'Time',
+    qaClientId: 375,
   },
   {
     key: 'clovia',
@@ -100,6 +105,7 @@ const PROJECTS: ProjectConfig[] = [
     required: 6,
     hasFCR: false,
     hourlyTimeField: 'Time',
+    qaClientId: 468,
   },
   {
     key: 'neemans',
@@ -114,6 +120,7 @@ const PROJECTS: ProjectConfig[] = [
     hasFCR: true,
     fcrClientId: 475,
     hourlyTimeField: 'Time',
+    qaClientId: 475,
   },
   {
     key: 'viega',
@@ -127,6 +134,7 @@ const PROJECTS: ProjectConfig[] = [
     required: 2,
     hasFCR: false,
     hourlyTimeField: 'Time',
+    qaClientId: 352,
   },
   {
     key: 'exicom',
@@ -140,6 +148,7 @@ const PROJECTS: ProjectConfig[] = [
     required: 5,
     hasFCR: false,
     hourlyTimeField: 'Time',
+    qaClientId: 326,
   },
   {
     key: 'dubangladesh',
@@ -153,8 +162,16 @@ const PROJECTS: ProjectConfig[] = [
     required: 3,
     hasFCR: false,
     hourlyTimeField: 'Time',
+    qaClientId: 380,
   },
 ];
+
+// ─── QA ClientId → project key lookup (used by AI Quality's date-wise answered/audited) ──
+
+export function getProjectKeyByQaClientId(clientId: number | string): string | undefined {
+  const id = Number(clientId);
+  return PROJECTS.find(p => p.qaClientId === id)?.key;
+}
 
 // ─── Query builders ────────────────────────────────────────────────────────────
 
@@ -673,4 +690,57 @@ export async function getAgentSummary(projectKey: string, filters: InboundFilter
     const fcr_pct      = p.hasFCR ? (fcrMap.get(String(r.agent_id)) ?? null) : null;
     return { agent_id: String(r.agent_id), agent_name: r.agent_name || String(r.agent_id), offered, answered, al, sl, acht, repeat_pct, fcr_pct };
   });
+}
+
+// ─── Raw call-level export ─────────────────────────────────────────────────────
+// "SELECT * FROM <project's CDR table>" — every native column, one row per call, for the
+// selected date range. All dialer_db.cdr_in_* tables share this exact 22-column schema.
+const RAW_CDR_COLUMNS = [
+  'id', 'CallDate', 'Time', 'AgentId', 'AgentName', 'Calltype', 'CampaignName', 'PhoneNumber',
+  'Disposition', 'DisconnBy', 'CallDurationSecond', 'CallDurationMinute', 'QueueDuration',
+  'HoldTime', 'Talkduration', 'Acwduration', 'HoursSlot', 'TotalHandledTime', 'Call20Sec',
+  'EndTime', 'CallTransferId', 'LeadId',
+];
+
+function rawCdrSelectExpr(col: string): string {
+  if (col === 'CallDate') return `DATE_FORMAT(CallDate, '%d-%m-%Y') AS CallDate`;
+  if (col === 'Time')     return `DATE_FORMAT(Time, '%d-%m-%Y %H:%i:%s') AS Time`;
+  return col;
+}
+
+export async function streamProjectRawCsv(
+  res: Response, projectKey: string, startDate: string, endDate: string,
+): Promise<boolean> {
+  const p = PROJECTS.find(proj => proj.key === projectKey);
+  if (!p) return false;
+
+  const fname = `${p.name.replace(/\s+/g, '_')}_raw_calls_${startDate.slice(0, 10)}_to_${endDate.slice(0, 10)}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  res.write(Buffer.from([0xEF, 0xBB, 0xBF]));
+  res.write(RAW_CDR_COLUMNS.join(',') + '\n');
+
+  const inPlaceholders = p.campaigns.map(() => '?').join(',');
+  const BATCH = 2000;
+  let lastId = 0;
+  for (;;) {
+    const rows = await querySource<Record<string, unknown>>(`
+      SELECT ${RAW_CDR_COLUMNS.map(rawCdrSelectExpr).join(', ')}
+      FROM dialer_db.${p.table}
+      WHERE id > ? AND CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+        AND CampaignName IN (${inPlaceholders})
+      ORDER BY id ASC
+      LIMIT ${BATCH}
+    `, [lastId, startDate, endDate, ...p.campaigns]);
+
+    if (rows.length === 0) break;
+    for (const r of rows) {
+      res.write(RAW_CDR_COLUMNS.map(c => csvEscape(r[c])).join(',') + '\n');
+    }
+    lastId = Number(rows[rows.length - 1].id);
+    if (rows.length < BATCH) break;
+    await new Promise(r => setTimeout(r, 150)); // stay gentle on the shared DB server between batches
+  }
+  res.end();
+  return true;
 }

@@ -2,7 +2,7 @@ import { useState, createContext, useContext, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   BarChart3, Upload, Package, ArrowLeft, Receipt, Activity, MessageSquare,
-  ShoppingCart, RefreshCw, PhoneCall, ChevronRight,
+  ShoppingCart, RefreshCw, PhoneCall, ChevronRight, Link2,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import api from '@/lib/axios';
@@ -12,6 +12,7 @@ import BellavitaChatUpload from './BellavitaChatUpload';
 import BellavitaCartUpload from './BellavitaCartUpload';
 import BellavitaOrderExportUpload from './BellavitaOrderExportUpload';
 import BellavitaRepeatCdrUpload from './BellavitaRepeatCdrUpload';
+import BellavitaRepeatAllocation from './BellavitaRepeatAllocation';
 import BellavitaDashboard from './BellavitaDashboard';
 import GncUpload from './GncUpload';
 import GncAprUpload from './GncAprUpload';
@@ -23,7 +24,7 @@ import NeemansAprUpload from './NeemansAprUpload';
 import NeemansDashboard from './NeemansDashboard';
 
 type Brand = 'bellavita' | 'gnc' | 'neemans';
-type Section = 'dashboards' | 'uploader';
+type Section = 'dashboards' | 'uploader' | 'repeatAllocation';
 type BellavitaUploadType = 'sale' | 'apr' | 'chat' | 'cart' | 'orderExport' | 'repeatCdr';
 type GncUploadType = 'sale' | 'apr' | 'allocation';
 type NeemansUploadType = 'cart' | 'sale' | 'allocation' | 'apr';
@@ -41,9 +42,10 @@ const BRANDS: { key: Brand; label: string; desc: string }[] = [
   { key: 'neemans',   label: 'Neemans',   desc: 'Manage Neemans sale data' },
 ];
 
-const SECTIONS: { key: Section; icon: IconType; label: string; desc: string }[] = [
+const SECTIONS: { key: Section; icon: IconType; label: string; desc: string; brandOnly?: Brand }[] = [
   { key: 'dashboards', icon: BarChart3, label: 'Dashboards',   desc: 'View charts and analytics' },
   { key: 'uploader',   icon: Upload,    label: 'Data Uploader', desc: 'Upload CSV or Excel files' },
+  { key: 'repeatAllocation', icon: Link2, label: 'Repeat Allocation', desc: 'Match OrderExport with Repeat CDR and download data', brandOnly: 'bellavita' },
 ];
 
 const BELLAVITA_UPLOAD_TYPES: { key: BellavitaUploadType; icon: IconType; label: string; desc: string }[] = [
@@ -234,10 +236,11 @@ export default function SalesDashboard() {
       {brand && !section && (
         <TileGrid>
           {SECTIONS.filter((s) =>
-            s.key !== 'uploader' ||
-            isSuperAdmin ||
-            allowedUploaders === null ||
-            allowedUploaders.includes(brand)
+            (!s.brandOnly || s.brandOnly === brand) &&
+            (s.key !== 'uploader' ||
+              isSuperAdmin ||
+              allowedUploaders === null ||
+              allowedUploaders.includes(brand))
           ).map((s) => (
             <Tile key={s.key} big icon={s.icon} label={s.label} desc={s.desc}
               accent={accentColor} accent2={accentColor2} onClick={() => setSection(s.key)} />
@@ -301,6 +304,10 @@ export default function SalesDashboard() {
       {/* Dashboards */}
       {brand === 'bellavita' && section === 'dashboards' && (
         <div className="mt-6"><BellavitaDashboard /></div>
+      )}
+
+      {brand === 'bellavita' && section === 'repeatAllocation' && (
+        <div className="mt-6"><BellavitaRepeatAllocation /></div>
       )}
 
       {brand === 'neemans' && section === 'dashboards' && (

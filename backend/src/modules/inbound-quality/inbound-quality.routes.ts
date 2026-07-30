@@ -16,6 +16,7 @@ router.get('/kpis',           ctrl.getInboundProcessKPIs);
 router.get('/top-performers', ctrl.getTopPerformers);
 router.get('/daily-scores',   ctrl.getDailyScores);
 router.get('/daily-scores-range', ctrl.getDailyScoresRange);
+router.get('/date-wise-answered-audited', ctrl.getDateWiseAnsweredAudited);
 router.get('/scenarios',              ctrl.getScenarios);
 router.get('/social-media-threats',   ctrl.getSocialMediaThreats);
 router.get('/social-threat-detail',   ctrl.getSocialThreatDetail);

@@ -1,6 +1,7 @@
 import type { Response } from 'express';
 import { querySource } from '../../lib/sourceDb';
 import { csvEscape } from '../../lib/csv';
+import { getProjectTrend, getProjectKeyByQaClientId } from '../inbound/inbound.service';
 
 // ─── Negative signal categorisation CASE expression ──────────────────────────
 // First: exact matches (highest priority, first match wins in SQL CASE)
@@ -732,6 +733,59 @@ export async function getDailyScoresRange(filters: InboundQualityFilters): Promi
     call_date:   String(r.call_date),
     avg_score:   Number(r.avg_score ?? 0),
     audit_count: Number(r.audit_count),
+  }));
+}
+
+// ─── Date Wise: Calls Answered vs Calls Audited ──────────────────────────────
+// "Answered" comes from the live Inbound dashboard's CDR data (dialer_db.cdr_in_*, the real
+// call-connect volume) when the process is one of the mapped Inbound projects. "Audited" always
+// comes from AI Quality's call_quality_assessment (quality_percentage IS NOT NULL = already scored).
+// For processes without a CDR mapping, "Answered" falls back to the QA table's row count
+// (every received call gets a row as soon as it's picked up, before it's audited).
+export interface DateWiseAnsweredAudited { call_date: string; answered: number; audited: number; }
+
+export async function getDateWiseAnsweredAudited(filters: InboundQualityFilters): Promise<DateWiseAnsweredAudited[]> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  const auditedRows = await querySource<{ call_date: string; audited: number }>(`
+    SELECT
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d')                                     AS call_date,
+      SUM(CASE WHEN q.quality_percentage IS NOT NULL THEN 1 ELSE 0 END)       AS audited
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ? ${clientFilter}
+    GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
+  `, params);
+
+  const auditedMap = new Map<string, number>();
+  for (const r of auditedRows) auditedMap.set(String(r.call_date), Number(r.audited));
+
+  const answeredMap = new Map<string, number>();
+  const projectKey = clientId ? getProjectKeyByQaClientId(clientId) : undefined;
+
+  if (projectKey) {
+    const trend = await getProjectTrend({ startDate, endDate }, projectKey);
+    for (const project of trend) {
+      for (const row of project.rows) {
+        answeredMap.set(row.date, (answeredMap.get(row.date) ?? 0) + row.answered);
+      }
+    }
+  } else {
+    const receivedRows = await querySource<{ call_date: string; answered: number }>(`
+      SELECT DATE_FORMAT(q.CallDate, '%Y-%m-%d') AS call_date, COUNT(*) AS answered
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ? ${clientFilter}
+      GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
+    `, params);
+    for (const r of receivedRows) answeredMap.set(String(r.call_date), Number(r.answered));
+  }
+
+  const allDates = new Set<string>([...answeredMap.keys(), ...auditedMap.keys()]);
+  return Array.from(allDates).sort().map(call_date => ({
+    call_date,
+    answered: answeredMap.get(call_date) ?? 0,
+    audited:  auditedMap.get(call_date) ?? 0,
   }));
 }
 

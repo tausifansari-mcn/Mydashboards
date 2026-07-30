@@ -59,6 +59,15 @@ export async function getDailyScoresRange(req: Request, res: Response) {
   }
 }
 
+export async function getDateWiseAnsweredAudited(req: Request, res: Response) {
+  try {
+    const data = await svc.getDateWiseAnsweredAudited(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function getScenarios(req: Request, res: Response) {
   try {
     const data = await svc.getScenarios(parseFilters(req));

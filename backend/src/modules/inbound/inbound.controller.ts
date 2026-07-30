@@ -115,6 +115,20 @@ export async function getProjectTrend(req: Request, res: Response): Promise<void
   }
 }
 
+export async function exportProjectRawCsv(req: Request, res: Response): Promise<void> {
+  try {
+    const { key } = req.params;
+    const { startDate, endDate } = parseDateRange(req);
+    const found = await svc.streamProjectRawCsv(res, key, startDate, endDate);
+    if (!found) {
+      res.status(404).json({ success: false, message: `Project '${key}' not found` });
+    }
+  } catch (err) {
+    console.error('inbound exportProjectRawCsv error:', err);
+    if (!res.headersSent) res.status(500).json({ success: false, message: 'Failed to export raw call data' });
+  }
+}
+
 export async function getAgentSummary(req: Request, res: Response): Promise<void> {
   try {
     const projectKey = req.query.projectKey as string;
