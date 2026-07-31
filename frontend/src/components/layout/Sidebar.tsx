@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Users, Building2, LogOut,
   ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck,
-  PhoneCall, Phone, ChevronDown, BarChart3, Package, X,
+  PhoneCall, Phone, ChevronDown, BarChart3, Package, X, CalendarClock,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -20,6 +20,8 @@ const BASE_LINKS = [
   { to: '/sales',     icon: Package,         labelAdmin: 'Sales',    labelClient: 'Sales',    requireSlug: 'sales' },
   { to: '/quality',   icon: BarChart3,       labelAdmin: 'AI Quality', labelClient: 'AI Quality' },
 ];
+
+const TASK_SCHEDULER_LINK = { to: '/admin/task-scheduler', icon: CalendarClock, label: 'Task Scheduler' };
 
 const ALL_INBOUND_PROJECTS = [
   { to: '/inbound/gnc',          slug: 'gnc',          icon: '🛒', label: 'GNC' },
@@ -64,6 +66,7 @@ export default function Sidebar() {
   const isSuperAdmin = user?.role === 'super_admin';
 
   const inboundProjects = ALL_INBOUND_PROJECTS.filter((p) => canAccessInboundSlug(p.slug));
+  const hasTaskScheduler = isSuperAdmin || dashboardSlugs.includes('task-scheduler');
 
   const mainLinks = BASE_LINKS
     .filter((l) => {
@@ -154,9 +157,10 @@ export default function Sidebar() {
           />
         </SidebarSection>
 
-        {isSuperAdmin && (
+        {(isSuperAdmin || hasTaskScheduler) && (
           <SidebarSection label="ADMIN" expanded={desktopExpanded || isMobile}>
-            {adminLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={desktopExpanded || isMobile} />)}
+            {isSuperAdmin && adminLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={desktopExpanded || isMobile} />)}
+            {hasTaskScheduler && <SidebarLink {...TASK_SCHEDULER_LINK} expanded={desktopExpanded || isMobile} />}
           </SidebarSection>
         )}
 

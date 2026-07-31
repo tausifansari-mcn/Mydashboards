@@ -22,6 +22,8 @@ import {
   initOutboundDashboardCacheTables, startOutboundDashboardCacheJob,
 } from './modules/quality/quality.service';
 import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.routes';
+import taskSchedulerRoutes from './modules/task-scheduler/task-scheduler.routes';
+import { startTaskSchedulerJob } from './modules/task-scheduler/task-scheduler.service';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -45,6 +47,7 @@ app.use('/api/sales', salesRoutes);
 app.use('/api/inbound', inboundRoutes);
 app.use('/api/quality', qualityRoutes);
 app.use('/api/inbound-quality', inboundQualityRoutes);
+app.use('/api/task-scheduler', taskSchedulerRoutes);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date() }));
 
@@ -65,6 +68,7 @@ app.listen(PORT, () => {
   initOutboundDashboardCacheTables()
     .then(() => startOutboundDashboardCacheJob())
     .catch(err => logger.error('[startup] initOutboundDashboardCacheTables failed:', err.message));
+  startTaskSchedulerJob();
 });
 
 export default app;

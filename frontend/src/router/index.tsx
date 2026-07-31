@@ -12,6 +12,7 @@ const ClientsPage             = lazy(() => import('@/features/admin/ClientsPage'
 const UsersPage               = lazy(() => import('@/features/admin/UsersPage'));
 const ProcessesPage           = lazy(() => import('@/features/admin/ProcessesPage'));
 const AccessPage              = lazy(() => import('@/features/admin/AccessPage'));
+const TaskSchedulerPage       = lazy(() => import('@/features/admin/TaskSchedulerPage'));
 const ProfilePage             = lazy(() => import('@/features/profile/ProfilePage'));
 const AuditPage               = lazy(() => import('@/features/audit/AuditPage'));
 const SalesDashboard          = lazy(() => import('@/features/sales/SalesDashboard'));
@@ -45,6 +46,7 @@ const router = createBrowserRouter(
             { path: '/quality/:clientId',              element: wrap(ProcessQualityDashboard) },
             { path: '/inbound',             element: wrap(InboundDashboard) },
             { path: '/inbound/:projectKey', element: wrap(InboundProjectDashboard) },
+            { path: '/admin/task-scheduler', element: wrap(TaskSchedulerPage) },
             { path: '/profile',             element: wrap(ProfilePage) },
             {
               element: <PrivateRoute roles={['super_admin']} />,

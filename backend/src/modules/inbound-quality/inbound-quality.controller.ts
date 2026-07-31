@@ -480,6 +480,16 @@ export async function getScoreComponentDetail(req: Request, res: Response) {
   }
 }
 
+export async function getScoreComponentTrend(req: Request, res: Response) {
+  try {
+    const component = String(req.query.component ?? '');
+    const data = await svc.getScoreComponentTrend(parseFilters(req), component);
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function getDateWiseParameterScores(req: Request, res: Response) {
   try {
     const data = await svc.getDateWiseParameterScores(parseFilters(req));
@@ -613,9 +623,17 @@ export async function getClapProductVocQuotes(req: Request, res: Response) {
 
 export async function exportAllCsv(req: Request, res: Response) {
   try {
-    const { startDate, endDate } = parseFilters(req);
+    const { startDate, endDate, clientId } = parseFilters(req);
     const scope = await resolveUserScope(req.user!.id, req.tenantId ?? null);
-    await svc.streamInboundExportCsv(res, startDate, endDate, scope.clientIds);
+    // No clientId → export every client the user can see (scope.clientIds, or null = unrestricted).
+    // A specific clientId (per-process export button) narrows to just that one — but still fails
+    // closed to an empty export if it's outside the requester's own scope, same as enforceClientScope.
+    let clientIds = scope.clientIds;
+    if (clientId) {
+      const requested = Number(clientId);
+      clientIds = (scope.clientIds === null || scope.clientIds.includes(requested)) ? [requested] : [];
+    }
+    await svc.streamInboundExportCsv(res, startDate, endDate, clientIds);
   } catch (err: unknown) {
     if (!res.headersSent) {
       const msg = err instanceof Error ? err.message : 'Export failed';

@@ -1305,6 +1305,96 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
   };
 }
 
+// ─── Date-wise trend for a single score component (Score Components drill-down) ──
+// Same weighted per-call formula as each component's aggregate value in getInboundProcessKPIs
+// (including the "Call Drop in between / Short Call/Blank Call" = auto-100% exemption), just
+// grouped by calendar day instead of collapsed into one number — so the trend chart's numbers
+// always agree with the KPI card that opened it.
+const COMPONENT_SCORE_EXPR: Record<string, string> = {
+  opening_skill: `
+    CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
+    ELSE IF(q.call_answered_within_5_seconds = 1, 1, 0) END`,
+  soft_skill: `
+    CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
+    ELSE (
+      IF(q.professionalism_maintained         = 1, 0.125, 0) +
+      IF(q.assurance_or_appreciation_provided = 1, 0.125, 0) +
+      IF(q.pronunciation_and_clarity          = 1, 0.125, 0) +
+      IF(q.enthusiasm_and_no_fumbling         = 1, 0.125, 0) +
+      IF(q.active_listening                   = 1, 0.125, 0) +
+      IF(q.politeness_and_no_sarcasm          = 1, 0.125, 0) +
+      IF(q.proper_grammar                     = 1, 0.125, 0) +
+      IF(q.accurate_issue_probing             = 1, 0.125, 0)
+    ) END`,
+  hold_procedure: `
+    CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
+    ELSE (
+      IF(q.proper_hold_procedure        = 1, 0.333, 0) +
+      IF(q.proper_transfer_and_language = 1, 0.333, 0) +
+      IF(q.dead_air_under_10_seconds    = 1, 0.334, 0)
+    ) END`,
+  resolution: `
+    CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
+    ELSE (
+      IF(q.case_escalated_correctly         = 1, 0.25, 0) +
+      IF(q.address_recorded_completely      = 1, 0.25, 0) +
+      IF(q.correct_and_complete_information = 1, 0.25, 0) +
+      IF(q.upselling_or_offers_suggested    = 1, 0.25, 0)
+    ) END`,
+  closing: `
+    CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
+    ELSE (
+      IF(q.further_assistance_offered = 1, 0.5, 0) +
+      IF(q.proper_call_closure        = 1, 0.5, 0)
+    ) END`,
+};
+
+export interface ScoreComponentTrendRow { call_date: string; score: number; audit_count: number; }
+
+export async function getScoreComponentTrend(
+  filters: InboundQualityFilters, component: string,
+): Promise<ScoreComponentTrendRow[]> {
+  const expr = COMPONENT_SCORE_EXPR[component];
+  if (!expr) return [];
+
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? 'AND q.ClientId = ?' : '';
+  const params: (string | number)[] = clientId ? [startDate, endDate, clientId] : [startDate, endDate];
+
+  const rows = await querySource<{ call_date: string; score: number; audit_count: number }>(`
+    SELECT
+      DATE_FORMAT(q.CallDate, '%Y-%m-%d') AS call_date,
+      ROUND(AVG(${expr}) * 100, 1)        AS score,
+      COUNT(*)                            AS audit_count
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      ${clientFilter}
+    GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
+    ORDER BY call_date ASC
+  `, params);
+
+  // Fill in every calendar day of the range — including today, even if nothing has been audited
+  // yet — so the bar chart never silently drops a date just because its audit count is still zero.
+  const byDate = new Map<string, { score: number; audit_count: number }>();
+  for (const r of rows) {
+    byDate.set(String(r.call_date), { score: Number(r.score ?? 0), audit_count: Number(r.audit_count ?? 0) });
+  }
+
+  // Parse/increment/format entirely in UTC — mixing local-time parsing with toISOString() (UTC)
+  // silently shifts dates by a day on servers running ahead of UTC (e.g. IST, UTC+5:30).
+  const result: ScoreComponentTrendRow[] = [];
+  const cursor = new Date(`${startDate.slice(0, 10)}T00:00:00Z`);
+  const last = new Date(`${endDate.slice(0, 10)}T00:00:00Z`);
+  while (cursor <= last) {
+    const key = cursor.toISOString().slice(0, 10);
+    const found = byDate.get(key);
+    result.push({ call_date: key, score: found?.score ?? 0, audit_count: found?.audit_count ?? 0 });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return result;
+}
+
 // ─── Date-wise all-parameters score table (Detail Analysis) ──────────────────
 // Same 19 columns as getScoreComponentDetail above, but broken out per calendar day instead of
 // aggregated over the whole range, plus a totals row for the full range.

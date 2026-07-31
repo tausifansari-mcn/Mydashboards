@@ -256,20 +256,54 @@ function DrillModal({ title, accent, onClose, children }: DrillModalProps) {
 }
 
 // ─── Score Component Detail Modal ────────────────────────────────────────────
+function todayStrLocal(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function daysAgoStrLocal(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  const pad = (nn: number) => String(nn).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+interface ScoreComponentTrendRow { call_date: string; score: number; audit_count: number; }
+
 function ScoreComponentModal({
-  label, accent, params, loading, onClose,
+  label, accent, componentKey, clientId, params, loading, onClose,
 }: {
-  label:   string;
-  accent:  string;
-  params:  ScoreParamDetail[];
-  loading: boolean;
-  onClose: () => void;
+  label:        string;
+  accent:       string;
+  componentKey: string;
+  clientId:     string | undefined;
+  params:       ScoreParamDetail[];
+  loading:      boolean;
+  onClose:      () => void;
 }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
+
+  const [slide, setSlide] = useState<'params' | 'trend'>('params');
+  const [trendRange, setTrendRange] = useState<'7d' | 'month'>('7d');
+  const [trendRows, setTrendRows] = useState<ScoreComponentTrendRow[]>([]);
+  const [trendLoading, setTrendLoading] = useState(false);
+
+  useEffect(() => {
+    if (slide !== 'trend') return;
+    setTrendLoading(true);
+    const startDate = trendRange === '7d' ? daysAgoStrLocal(6) : `${todayStrLocal().slice(0, 7)}-01`;
+    const endDate = todayStrLocal();
+    const clientParam = clientId ? `&clientId=${clientId}` : '';
+    api.get<{ data: ScoreComponentTrendRow[] }>(
+      `/inbound-quality/score-component-trend?component=${componentKey}&startDate=${startDate}&endDate=${endDate}${clientParam}`
+    ).then(r => setTrendRows(r.data?.data ?? []))
+      .catch(() => setTrendRows([]))
+      .finally(() => setTrendLoading(false));
+  }, [slide, trendRange, componentKey, clientId]);
 
   const color = (pct: number) => pct >= 90 ? '#22C55E' : pct >= 75 ? '#F59E0B' : '#EF4444';
 
@@ -286,45 +320,103 @@ function ScoreComponentModal({
           </div>
           <div className="flex-1">
             <p className="text-sm font-bold text-slate-900">{label}</p>
-            <p className="text-[11px] text-slate-500 mt-0.5">Parameter-wise compliance score</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {slide === 'params' ? 'Parameter-wise compliance score' : 'Score trend'}
+            </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors p-1">
             <X size={18} />
           </button>
         </div>
 
+        {/* Slide tabs */}
+        <div className="flex items-center gap-1 px-6 pt-3 border-b border-slate-200 bg-white">
+          {([['params', 'Parameters'], ['trend', 'Trend']] as const).map(([key, tab]) => (
+            <button key={key} onClick={() => setSlide(key)}
+              className="px-3 py-2 text-xs font-semibold border-b-2 -mb-px transition-colors"
+              style={slide === key
+                ? { borderColor: accent, color: accent }
+                : { borderColor: 'transparent', color: '#94A3B8' }}>
+              {tab}
+            </button>
+          ))}
+        </div>
+
         {/* Body */}
         <div className="overflow-auto flex-1 p-5">
-          {loading ? (
-            <div className="flex items-center justify-center py-12 gap-3 text-slate-400">
-              <Loader2 size={18} className="animate-spin" />
-              <span className="text-sm">Loading parameters…</span>
-            </div>
-          ) : params.length === 0 ? (
-            <p className="text-center text-slate-400 text-sm py-10">No data available for this period.</p>
+          {slide === 'params' ? (
+            loading ? (
+              <div className="flex items-center justify-center py-12 gap-3 text-slate-400">
+                <Loader2 size={18} className="animate-spin" />
+                <span className="text-sm">Loading parameters…</span>
+              </div>
+            ) : params.length === 0 ? (
+              <p className="text-center text-slate-400 text-sm py-10">No data available for this period.</p>
+            ) : (
+              <div className="space-y-3">
+                {params.map(p => {
+                  const c = color(p.pct);
+                  return (
+                    <div key={p.column} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-slate-700">{p.label}</span>
+                        <span className="text-sm font-bold tabular-nums" style={{ color: c }}>{p.pct}%</span>
+                      </div>
+                      <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all duration-500"
+                          style={{ width: `${Math.min(p.pct, 100)}%`, backgroundColor: c }} />
+                      </div>
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span className="text-[10px] text-slate-400">
+                          {p.pct >= 90 ? '✅ On Target' : p.pct >= 75 ? '⚠️ Needs Attention' : '❌ Below Target'}
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400">{p.column}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
           ) : (
-            <div className="space-y-3">
-              {params.map(p => {
-                const c = color(p.pct);
-                return (
-                  <div key={p.column} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-semibold text-slate-700">{p.label}</span>
-                      <span className="text-sm font-bold tabular-nums" style={{ color: c }}>{p.pct}%</span>
-                    </div>
-                    <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-500"
-                        style={{ width: `${Math.min(p.pct, 100)}%`, backgroundColor: c }} />
-                    </div>
-                    <div className="flex items-center justify-between mt-1.5">
-                      <span className="text-[10px] text-slate-400">
-                        {p.pct >= 90 ? '✅ On Target' : p.pct >= 75 ? '⚠️ Needs Attention' : '❌ Below Target'}
-                      </span>
-                      <span className="text-[10px] font-mono text-slate-400">{p.column}</span>
-                    </div>
-                  </div>
-                );
-              })}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-semibold text-slate-600">
+                  {trendRange === '7d' ? 'Last 7 Days' : 'This Month'}
+                </span>
+                <button
+                  onClick={() => setTrendRange(r => r === '7d' ? 'month' : '7d')}
+                  title={trendRange === '7d' ? 'Show full month' : 'Show last 7 days'}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+                  {trendRange === '7d' ? <Maximize2 size={12} /> : <Minimize2 size={12} />}
+                  {trendRange === '7d' ? 'Full Month' : 'Last 7 Days'}
+                </button>
+              </div>
+              {trendLoading ? (
+                <div className="flex items-center justify-center py-12 gap-3 text-slate-400">
+                  <Loader2 size={18} className="animate-spin" />
+                  <span className="text-sm">Loading trend…</span>
+                </div>
+              ) : trendRows.length === 0 ? (
+                <p className="text-center text-slate-400 text-sm py-10">No data available for this period.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <ComposedChart data={trendRows.map(r => ({ ...r, day: r.call_date.slice(5) }))}
+                    margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                    <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
+                    <Tooltip
+                      formatter={(v: unknown, n: unknown, entry: { payload?: ScoreComponentTrendRow }) => {
+                        if (entry?.payload?.audit_count === 0) return ['No audits yet', 'Score'];
+                        return (String(n) === 'score' ? [`${v}%`, 'Score'] : [v, 'Audits']) as [React.ReactNode, string];
+                      }}
+                      contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                    <Bar dataKey="score" radius={[4, 4, 0, 0]}>
+                      {trendRows.map((r, i) => <Cell key={i} fill={r.audit_count === 0 ? '#E2E8F0' : color(r.score)} />)}
+                    </Bar>
+                  </ComposedChart>
+                </ResponsiveContainer>
+              )}
             </div>
           )}
         </div>
@@ -2497,21 +2589,11 @@ export default function InboundQualityDashboard() {
             onClick={async () => {
               setDrillLoading(true);
               try {
-                const { data } = await api.get<{ data: Record<string, string | number>[] }>(
-                  `/inbound-quality/raw-data?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+                const res = await api.get(
+                  `/inbound-quality/export-all-csv?clientId=${clientId}&startDate=${encodeURIComponent(sd)}&endDate=${encodeURIComponent(ed)}`,
+                  { responseType: 'blob' },
                 );
-                const rows = data.data;
-                if (!rows.length) { alert('No data found for selected period.'); return; }
-                const cols = Object.keys(rows[0]);
-                const header = cols.join(',');
-                const body = rows.map(r =>
-                  cols.map(k => {
-                    const v = String(r[k] ?? '');
-                    return v.includes(',') || v.includes('"') || v.includes('\n') ? `"${v.replace(/"/g, '""')}"` : v;
-                  }).join(',')
-                ).join('\n');
-                const csv = `${header}\n${body}`;
-                const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+                const blob = new Blob([res.data as BlobPart], { type: 'text/csv' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 const clientLabel = clientId || 'ALL';
@@ -2519,11 +2601,14 @@ export default function InboundQualityDashboard() {
                 const dateTo = ed.slice(0, 10);
                 a.href = url;
                 a.download = `raw-data-${clientLabel}-${dateFrom}-to-${dateTo}.csv`;
+                document.body.appendChild(a);
                 a.click();
+                a.remove();
                 URL.revokeObjectURL(url);
               } catch { alert('Failed to export raw data. Please try again.'); }
               finally { setDrillLoading(false); }
             }}
+            title="Export every database column for this process and date range"
             className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-700 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition-colors">
             {drillLoading ? <span className="animate-spin w-3 h-3 border border-emerald-400 border-t-transparent rounded-full inline-block" /> : <Download size={12} />}
             Export Raw Data
@@ -7020,6 +7105,8 @@ export default function InboundQualityDashboard() {
         <ScoreComponentModal
           label={scoreCompModal.label}
           accent={scoreCompModal.accent}
+          componentKey={scoreCompModal.key}
+          clientId={clientId}
           params={(Array.isArray(scoreCompData?.[scoreCompModal.key]) ? scoreCompData![scoreCompModal.key] : []) as ScoreParamDetail[]}
           loading={scoreCompLoading}
           onClose={() => setScoreCompModal(null)}

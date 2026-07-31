@@ -54,6 +54,7 @@ router.post('/agent-master',            ctrl.insertAgentMaster);
 router.get('/repeat-call-detail',       ctrl.getRepeatCallDetail);
 router.get('/raw-data',                 ctrl.getRawData);
 router.get('/score-component-detail',  ctrl.getScoreComponentDetail);
+router.get('/score-component-trend',   ctrl.getScoreComponentTrend);
 router.get('/date-wise-params',        ctrl.getDateWiseParameterScores);
 router.get('/agent-calls',            ctrl.getAgentCalls);
 router.get('/fatal-calls-list',        ctrl.getFatalCallsList);

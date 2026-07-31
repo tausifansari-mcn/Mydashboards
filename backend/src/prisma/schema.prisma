@@ -46,6 +46,7 @@ model md_users {
   process_mappings md_user_process_mapping[]
   login_logs    md_login_logs[]
   audit_logs    md_audit_logs[]
+  scheduled_tasks md_scheduled_tasks[]
 
   @@map("md_users")
 }
@@ -126,4 +127,25 @@ model md_audit_logs {
   user        md_users @relation(fields: [user_id], references: [id])
 
   @@map("md_audit_logs")
+}
+
+model md_scheduled_tasks {
+  id               Int       @id @default(autoincrement())
+  name             String    @db.VarChar(150)
+  pages            Json                        // [{ module, target_key, target_label }] — one or more report pages to attach
+  frequency        String    @db.VarChar(10)   // 'daily' | 'weekly' | 'monthly'
+  time_of_day      String    @db.VarChar(5)    // "HH:mm"
+  day_of_week      Int?                        // 0-6, used when frequency = weekly
+  day_of_month     Int?                        // 1-31, used when frequency = monthly (clamped to month length)
+  recipients       String    @db.Text          // comma-separated emails
+  is_active        Boolean   @default(true)
+  created_by       Int
+  created_at       DateTime  @default(now())
+  next_run_at      DateTime
+  last_run_at      DateTime?
+  last_run_status  String?   @db.VarChar(10)   // 'success' | 'failed'
+  last_run_message String?   @db.Text
+  creator          md_users  @relation(fields: [created_by], references: [id])
+
+  @@map("md_scheduled_tasks")
 }

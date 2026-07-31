@@ -19,7 +19,13 @@ api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const original = error.config;
-    if (error.response?.status === 401 && !original._retry) {
+    // A 401 from the login or refresh endpoints themselves means "wrong credentials" or "no valid
+    // session" — not "token expired mid-session". Retrying a refresh in that case just masks the
+    // real error behind a silent full-page reload (window.location.href below), so the login form
+    // never gets to show "Invalid credentials" — it just resets with no feedback.
+    const isAuthEndpoint = typeof original?.url === 'string'
+      && (original.url.includes('/auth/login') || original.url.includes('/auth/refresh'));
+    if (error.response?.status === 401 && !original._retry && !isAuthEndpoint) {
       original._retry = true;
       if (isRefreshing) {
         return new Promise((resolve) => {

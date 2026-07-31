@@ -54,6 +54,24 @@ async function send(to: string, subject: string, html: string, text: string): Pr
   }
 }
 
+async function sendWithAttachments(
+  to: string, subject: string, html: string, text: string,
+  attachments: { filename: string; content: Buffer }[],
+): Promise<void> {
+  if (!process.env.SMTP_USER) {
+    const list = attachments.map(a => `${a.filename} (${a.content.length} bytes)`).join(', ');
+    console.log(`[DEV EMAIL → ${to}]\nSubject: ${subject}\n${text}\n(attachments: ${list})\n`);
+    return;
+  }
+  try {
+    const info = await transporter.sendMail({ from: FROM, to, subject, html, text, attachments });
+    console.log(`[mailer] Sent "${subject}" → ${to} (messageId: ${info.messageId}, attachments: ${attachments.map(a => a.filename).join(', ')})`);
+  } catch (err: any) {
+    console.error(`[mailer] SMTP error sending to ${to}: ${err.message}`);
+    throw err;
+  }
+}
+
 function branded(title: string, body: string): string {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
@@ -113,4 +131,23 @@ export async function sendWelcomeEmail(to: string, name: string, tempPassword: s
     branded('Welcome!', body),
     `Welcome ${name}!\n\nEmail: ${to}\nTemp Password: ${tempPassword}\n\nLogin: ${APP_URL}/login\n\n— My Dashboard`,
   );
+}
+
+export async function sendReportEmail(
+  to: string[], taskName: string, rangeLabel: string,
+  kpiSectionsHtml: string, attachments: { filename: string; content: Buffer }[],
+): Promise<void> {
+  const body = `
+    <p style="margin:0 0 8px;color:#111827;font-size:16px;">Scheduled report: <strong>${escapeHtml(taskName)}</strong></p>
+    <p style="margin:0 0 20px;color:#6b7280;font-size:14px;line-height:1.6;">Period: <strong style="color:#1e1b4b;">${escapeHtml(rangeLabel)}</strong></p>
+    ${kpiSectionsHtml}
+    <p style="margin:20px 0 0;color:#9ca3af;font-size:12px;">Full CSV data export${attachments.length > 1 ? 's are' : ' is'} attached to this email.</p>`;
+
+  const subject = `[Scheduled Report] ${taskName} — ${rangeLabel}`;
+  const text = `Scheduled report: ${taskName}\n\nPeriod: ${rangeLabel}\n\nSee attached CSV${attachments.length > 1 ? 's' : ''}.\n\n— My Dashboard`;
+  const html = branded('Scheduled Report', body);
+
+  for (const recipient of to) {
+    await sendWithAttachments(recipient, subject, html, text, attachments);
+  }
 }
