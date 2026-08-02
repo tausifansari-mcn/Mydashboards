@@ -8,7 +8,12 @@ import * as ctrl from './inbound-quality.controller';
 
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin', 'qa'), enforceClientScope());
+router.use(
+  verifyToken, injectTenant,
+  requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin', 'qa'),
+  enforceClientScope(),
+  requireDashboardAccess('quality'),
+);
 
 router.get('/export-all-csv', ctrl.exportAllCsv);
 router.get('/clients',        ctrl.getInboundClients);

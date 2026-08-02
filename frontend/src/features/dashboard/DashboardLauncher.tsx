@@ -85,16 +85,12 @@ export default function DashboardLauncher() {
 
   useEffect(() => {
     if (!isSuperAdmin) return;
-    (async () => {
-      try {
-        const [myRes, allRes] = await Promise.all([
-          api.get<Dashboard[]>('/dashboards/my'),
-          api.get<Dashboard[]>('/dashboards'),
-        ]);
-        setDashboards(myRes.data);
-        setAllDashboards(allRes.data);
-      } catch { /* ignore */ }
-    })();
+    // Independent per-request error handling — previously a single failed request here (e.g. a
+    // transient DB hiccup) reset BOTH dashboards and allDashboards to empty via one shared catch,
+    // which made the grid fall back to showing only the hardcoded "AI Quality" card and hide
+    // everything else (Inbound, Sales) even though the user genuinely has access to them.
+    api.get<Dashboard[]>('/dashboards/my').then((r) => setDashboards(r.data)).catch(() => {});
+    api.get<Dashboard[]>('/dashboards').then((r) => setAllDashboards(r.data)).catch(() => {});
   }, [isSuperAdmin]);
 
   const isAccessible = (slug: string) => dashboards.some((d) => d.slug === slug);

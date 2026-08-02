@@ -3826,7 +3826,7 @@ async function ensureTNICommentsTable(): Promise<void> {
       id         INT AUTO_INCREMENT PRIMARY KEY,
       agent_id   VARCHAR(50)  NOT NULL,
       client_id  VARCHAR(50)  NOT NULL DEFAULT '',
-      comment    TEXT         DEFAULT '',
+      comment    TEXT,
       updated_by VARCHAR(100) DEFAULT '',
       updated_at TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_agent_client (agent_id, client_id)

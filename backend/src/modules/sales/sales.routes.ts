@@ -3,6 +3,7 @@ import multer from 'multer';
 import { verifyToken } from '../../middleware/verifyToken';
 import { injectTenant } from '../../middleware/injectTenant';
 import { requireRole } from '../../middleware/requireRole';
+import { requireDashboardAccess } from '../../middleware/requireDashboardAccess';
 import * as ctrl from './sales.controller';
 
 const ALLOWED_UPLOAD_MIMES = new Set([
@@ -25,7 +26,11 @@ const upload = multer({
 });
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin'));
+router.use(
+  verifyToken, injectTenant,
+  requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin'),
+  requireDashboardAccess('sales'),
+);
 
 router.get('/kpis',          ctrl.getKPIs);
 router.get('/trend',         ctrl.getTrend);

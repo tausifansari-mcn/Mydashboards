@@ -2,11 +2,16 @@ import { Router } from 'express';
 import { verifyToken } from '../../middleware/verifyToken';
 import { injectTenant } from '../../middleware/injectTenant';
 import { requireRole } from '../../middleware/requireRole';
+import { requireDashboardAccess } from '../../middleware/requireDashboardAccess';
 import * as ctrl from './inbound.controller';
 
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin', 'qa'));
+router.use(
+  verifyToken, injectTenant,
+  requireRole('super_admin', 'admin', 'manager', 'agent', 'client_admin', 'qa'),
+  requireDashboardAccess('inbound'),
+);
 
 // Overall (all projects)
 router.get('/summary',             ctrl.getSummary);

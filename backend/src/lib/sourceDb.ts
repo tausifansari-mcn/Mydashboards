@@ -23,6 +23,23 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 const RETRYABLE = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'PROTOCOL_CONNECTION_LOST', 'ER_CON_COUNT_ERROR'];
 
+// The pool only has 3 connections (shared with VICIdial), and mysql2's queue has no built-in
+// wait timeout — a query that can't get a connection (pool saturated by the periodic background
+// batch jobs, or a slow query holding a connection) queues silently and hangs forever, taking the
+// whole HTTP request down with it and giving the caller no error to react to. This wraps every
+// query in a hard deadline so callers fail fast with a clear error instead of hanging indefinitely.
+const QUERY_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Query timed out after ${ms}ms: ${label}`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 export async function querySource<T = Record<string, unknown>>(
   sql: string,
   params: (string | number | null)[] = [],
@@ -30,7 +47,7 @@ export async function querySource<T = Record<string, unknown>>(
 ): Promise<T[]> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const [rows] = await getSourcePool().execute(sql, params);
+      const [rows] = await withTimeout(getSourcePool().execute(sql, params), QUERY_TIMEOUT_MS, sql.trim().slice(0, 100));
       return rows as T[];
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? '';

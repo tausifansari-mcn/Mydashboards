@@ -15,17 +15,18 @@ export default function AppShell() {
   const { mobileOpen, toggleMobile, closeMobile } = useUIStore();
 
   useEffect(() => {
+    // Independent try/catch per request — a transient failure on one (e.g. a momentary DB
+    // hiccup on the shared source DB) must not wipe out data the other request already got.
+    // Previously both were bundled in one Promise.all with a single catch, so either request
+    // failing reset BOTH processes and dashboardSlugs to empty, intermittently blanking the
+    // whole sidebar for a user who actually does have access.
     if (user && !loaded) {
-      Promise.all([
-        api.get('/processes/my'),
-        api.get<{ id: number; slug: string }[]>('/dashboards/my'),
-      ]).then(([procRes, dashRes]) => {
-        setProcesses(procRes.data, user.role === 'super_admin');
-        setDashboardSlugs(dashRes.data.map((d) => d.slug));
-      }).catch(() => {
-        setProcesses([], user?.role === 'super_admin');
-        setDashboardSlugs([]);
-      });
+      api.get('/processes/my')
+        .then((res) => setProcesses(res.data, user.role === 'super_admin'))
+        .catch(() => setProcesses([], user.role === 'super_admin'));
+      api.get<{ id: number; slug: string }[]>('/dashboards/my')
+        .then((res) => setDashboardSlugs(res.data.map((d) => d.slug)))
+        .catch(() => setDashboardSlugs([]));
     }
   }, [user, loaded, setProcesses, setDashboardSlugs]);
 
@@ -82,7 +83,7 @@ export default function AppShell() {
           )}
         </div>
 
-        <main className="flex-1 overflow-y-auto" style={{ background: '#C8CDD6' }}>
+        <main className="flex-1 overflow-y-auto overflow-x-hidden" style={{ background: '#C8CDD6' }}>
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}

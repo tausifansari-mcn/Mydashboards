@@ -18,7 +18,7 @@ const BLUE_DARK = '#0D47A1';
 const BASE_LINKS = [
   { to: '/dashboard', icon: LayoutDashboard, labelAdmin: 'Launcher', labelClient: 'Home', hideForClient: true },
   { to: '/sales',     icon: Package,         labelAdmin: 'Sales',    labelClient: 'Sales',    requireSlug: 'sales' },
-  { to: '/quality',   icon: BarChart3,       labelAdmin: 'AI Quality', labelClient: 'AI Quality' },
+  { to: '/quality',   icon: BarChart3,       labelAdmin: 'AI Quality', labelClient: 'AI Quality', requireSlug: 'quality' },
 ];
 
 const TASK_SCHEDULER_LINK = { to: '/admin/task-scheduler', icon: CalendarClock, label: 'Task Scheduler' };
@@ -67,6 +67,7 @@ export default function Sidebar() {
 
   const inboundProjects = ALL_INBOUND_PROJECTS.filter((p) => canAccessInboundSlug(p.slug));
   const hasTaskScheduler = isSuperAdmin || dashboardSlugs.includes('task-scheduler');
+  const hasInbound = isSuperAdmin || (dashboardSlugs.includes('inbound') && inboundProjects.length > 0);
 
   const mainLinks = BASE_LINKS
     .filter((l) => {
@@ -147,14 +148,16 @@ export default function Sidebar() {
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1 scrollbar-thin" onClick={onNavClick}>
         <SidebarSection label="MAIN" expanded={desktopExpanded || isMobile}>
           {mainLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={desktopExpanded || isMobile} />)}
-          <SidebarExpandableItem
-            icon={Phone}
-            label="Inbound"
-            parentTo={!isSuperAdmin && inboundProjects.length === 1 ? inboundProjects[0].to : '/inbound'}
-            subItems={inboundProjects}
-            sidebarExpanded={desktopExpanded || isMobile}
-            singleProject={!isSuperAdmin && inboundProjects.length === 1}
-          />
+          {hasInbound && (
+            <SidebarExpandableItem
+              icon={Phone}
+              label="Inbound"
+              parentTo={!isSuperAdmin && inboundProjects.length === 1 ? inboundProjects[0].to : '/inbound'}
+              subItems={inboundProjects}
+              sidebarExpanded={desktopExpanded || isMobile}
+              singleProject={!isSuperAdmin && inboundProjects.length === 1}
+            />
+          )}
         </SidebarSection>
 
         {(isSuperAdmin || hasTaskScheduler) && (
