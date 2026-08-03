@@ -219,10 +219,17 @@ export async function initOutboundDashboardCacheTables(): Promise<void> {
       )
     `);
     const [cursorRows] = await pool.execute(`SELECT next_id FROM db_masmis.outbound_dashboard_cursor WHERE id = 1`);
+    // Re-seed a fully-consumed cursor (next_id = 0) to a 30-day lookback so it starts picking up
+    // new rows again instead of staying dead forever — see processOutboundDashboardBatch. A fresh
+    // table seeds from 0 so the whole history gets classified, matching the original intent.
     if ((cursorRows as unknown[]).length === 0) {
-      const seedRows = await querySource<{ maxId: number }>(`SELECT COALESCE(MAX(id), 0) AS maxId FROM db_external.CallDetails`);
-      const seedId = Number(seedRows[0]?.maxId ?? 0) + 1;
-      await pool.execute(`INSERT INTO db_masmis.outbound_dashboard_cursor (id, next_id) VALUES (1, ?)`, [seedId]);
+      await pool.execute(`INSERT INTO db_masmis.outbound_dashboard_cursor (id, next_id) VALUES (1, 0)`);
+    } else if (Number((cursorRows as { next_id: number }[])[0].next_id) === 0) {
+      const seedRows = await querySource<{ minId: number }>(
+        `SELECT COALESCE(MIN(id), 0) AS minId FROM db_external.CallDetails WHERE CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
+      );
+      const seedId = Math.max(0, Number(seedRows[0]?.minId ?? 0) - 1);
+      await pool.execute(`UPDATE db_masmis.outbound_dashboard_cursor SET next_id = ? WHERE id = 1`, [seedId]);
     }
   } catch (err) {
     console.error('[quality] initOutboundDashboardCacheTables warning:', (err as Error).message);
@@ -266,15 +273,12 @@ async function processOutboundDashboardBatch(batchSize = 1000): Promise<number> 
       LEFT(cd.CustomerObjectionSubCategory, 120) AS objection_subcategory,
       LEFT(cd.Feedback, 20) AS feedback
     FROM db_external.CallDetails cd
-    WHERE cd.id < ? AND cd.client_id IS NOT NULL
-    ORDER BY cd.id DESC
+    WHERE cd.id > ? AND cd.client_id IS NOT NULL
+    ORDER BY cd.id ASC
     LIMIT ${Number(batchSize)}
   `, [nextId]);
 
-  if (rows.length === 0) {
-    await queryMasmis(`UPDATE db_masmis.outbound_dashboard_cursor SET next_id = 0 WHERE id = 1`);
-    return 0;
-  }
+  if (rows.length === 0) return 0;
 
   const cols = [
     'call_id', 'client_id', 'call_date', 'mobile_valid', 'has_objection_category',
@@ -1881,13 +1885,16 @@ export async function initMagicalScriptCacheTables(): Promise<void> {
       )
     `);
     const [cursorRows] = await pool.execute(`SELECT next_id FROM db_masmis.magical_script_cursor WHERE id = 1`);
+    // Re-seed a fully-consumed cursor (next_id = 0) to a 30-day lookback so it starts picking up
+    // new rows again instead of staying dead forever — see processMagicalScriptBatch. A fresh table
+    // seeds from 0 so the whole history gets classified, matching the original intent.
     if ((cursorRows as any[]).length === 0) {
-      const seedRows = await querySource<{ maxId: number }>(`SELECT COALESCE(MAX(id), 0) AS maxId FROM db_external.CallDetails`);
-      const seedId = Number(seedRows[0]?.maxId ?? 0) + 1;
-      await pool.execute(`INSERT INTO db_masmis.magical_script_cursor (id, next_id) VALUES (1, ?)`, [seedId]);
-    } else if (migrated) {
-      const seedRows = await querySource<{ maxId: number }>(`SELECT COALESCE(MAX(id), 0) AS maxId FROM db_external.CallDetails`);
-      const seedId = Number(seedRows[0]?.maxId ?? 0) + 1;
+      await pool.execute(`INSERT INTO db_masmis.magical_script_cursor (id, next_id) VALUES (1, 0)`);
+    } else if (migrated || Number((cursorRows as { next_id: number }[])[0].next_id) === 0) {
+      const seedRows = await querySource<{ minId: number }>(
+        `SELECT COALESCE(MIN(id), 0) AS minId FROM db_external.CallDetails WHERE CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
+      );
+      const seedId = Math.max(0, Number(seedRows[0]?.minId ?? 0) - 1);
       await pool.execute(`UPDATE db_masmis.magical_script_cursor SET next_id = ? WHERE id = 1`, [seedId]);
     }
   } catch (err) {
@@ -1900,7 +1907,6 @@ async function processMagicalScriptBatch(batchSize = 1000): Promise<number> {
     `SELECT next_id FROM db_masmis.magical_script_cursor WHERE id = 1`
   );
   const nextId = cursorRow?.next_id ?? 0;
-  if (nextId <= 0) return 0; // fully backfilled — nothing older left to classify
 
   type Row = {
     id: number; client_id: number; CallDate: string;
@@ -1942,16 +1948,13 @@ async function processMagicalScriptBatch(batchSize = 1000): Promise<number> {
            THEN LEFT(cd.OfferedPitchContext, 500) ELSE NULL END AS offered_pitch_context,
       cd.campaign_id
     FROM db_external.CallDetails cd
-    WHERE cd.id < ? AND cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
+    WHERE cd.id > ? AND cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
       AND cd.client_id IS NOT NULL
-    ORDER BY cd.id DESC
+    ORDER BY cd.id ASC
     LIMIT ${Number(batchSize)}
   `, [nextId]);
 
-  if (rows.length === 0) {
-    await queryMasmis(`UPDATE db_masmis.magical_script_cursor SET next_id = 0 WHERE id = 1`);
-    return 0;
-  }
+  if (rows.length === 0) return 0;
 
   const cols = [
     'call_id', 'client_id', 'call_date',
@@ -1974,7 +1977,7 @@ async function processMagicalScriptBatch(batchSize = 1000): Promise<number> {
     ON DUPLICATE KEY UPDATE ${updateCols}, computed_at = NOW()
   `, flat);
 
-  const newNextId = rows[rows.length - 1].id; // smallest id in this DESC-ordered batch
+  const newNextId = rows[rows.length - 1].id; // highest id in this ASC-ordered batch
   await queryMasmis(`UPDATE db_masmis.magical_script_cursor SET next_id = ? WHERE id = 1`, [newNextId]);
 
   return rows.length;
