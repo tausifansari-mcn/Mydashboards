@@ -4243,12 +4243,10 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
   const overallStartDate = startDate < CUSTOMER_VOC_START ? CUSTOMER_VOC_START : startDate;
   const overallBase: (string | number)[] = [overallStartDate, endDate, ...(clientId ? [clientId] : [])];
 
-  const [overallRows, branchTotalRows, vocCountRows, branchScenRows, productSummary] = await Promise.all([
-    // 1. Overall totals (Customer root node) — clamped to CUSTOMER_VOC_START, see above.
-    querySource<{ total: number; pos: number; neg: number }>(`
-      SELECT COUNT(*) AS total,
-        SUM(CASE WHEN q.top_positive_words IS NOT NULL AND q.top_positive_words != '' THEN 1 ELSE 0 END) AS pos,
-        SUM(CASE WHEN q.top_negative_words IS NOT NULL AND q.top_negative_words != '' THEN 1 ELSE 0 END) AS neg
+  const [overallRows, branchTotalRows, vocCountRows, branchScenRows] = await Promise.all([
+    // 1. Overall audit total (Customer root node) — clamped to CUSTOMER_VOC_START, see above.
+    querySource<{ total: number }>(`
+      SELECT COUNT(*) AS total
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
     `, overallBase),
@@ -4291,23 +4289,23 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
       GROUP BY t.clap, t.scenario, t.sub_scenario
       ORDER BY t.clap, cnt DESC
     `, base),
-
-    // 5. Product branch counts as distinct product names (not raw quote count) — matches how
-    //    the Product detail panel itself counts "Positive Products" / "Negative Products".
-    getClapProductVocSummary(filters),
   ]);
 
-  const overall = overallRows[0] ?? { total: 0, pos: 0, neg: 0 };
+  // Only surface the note when the selected range actually got clamped — i.e. it starts before
+  // data collection began. Once the range starts on/after CUSTOMER_VOC_START (e.g. next month),
+  // this is null and the card shows a plain, unqualified total.
+  const dataStartNote = startDate < CUSTOMER_VOC_START
+    ? `Customer VOC tracked from 17 Jul 2026 — audits before that aren't counted here`
+    : null;
+
   const vc = vocCountRows[0] ?? { logPos: 0, logNeg: 0, agePos: 0, ageNeg: 0, prodPos: 0, prodNeg: 0 };
-  // Logistic/Agent counts are capped at 50 to match the LIMIT 50 the quote drill-down actually
-  // returns — otherwise the card can show a bigger number than the list a user can scroll through.
-  const QUOTE_LIST_CAP = 50;
-  const productPos = productSummary.products.filter(p => p.pos > 0).length;
-  const productNeg = productSummary.products.filter(p => p.neg > 0).length;
+  // All three branches count the same way — number of calls whose positive/negative VOC column is
+  // populated — with no cap, so the Customer card (which is the sum of these branch counts) always
+  // matches exactly what each branch card shows. The quote drill-down returns the full list too.
   const VOC_COUNTS: Record<'Logistic' | 'Agent' | 'Product', { pos: number; neg: number }> = {
-    Logistic: { pos: Math.min(Number(vc.logPos), QUOTE_LIST_CAP), neg: Math.min(Number(vc.logNeg), QUOTE_LIST_CAP) },
-    Agent:    { pos: Math.min(Number(vc.agePos), QUOTE_LIST_CAP), neg: Math.min(Number(vc.ageNeg), QUOTE_LIST_CAP) },
-    Product:  { pos: productPos, neg: productNeg },
+    Logistic: { pos: Number(vc.logPos), neg: Number(vc.logNeg) },
+    Agent:    { pos: Number(vc.agePos), neg: Number(vc.ageNeg) },
+    Product:  { pos: Number(vc.prodPos), neg: Number(vc.prodNeg) },
   };
 
   const branches: ClapCustomerBranch[] = (['Logistic', 'Agent', 'Product'] as const).map(clap => ({
@@ -4320,15 +4318,15 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
     ),
   }));
 
-  // Only surface the note when the selected range actually got clamped — i.e. it starts before
-  // data collection began. Once the range starts on/after CUSTOMER_VOC_START (e.g. next month),
-  // this is null and the card shows a plain, unqualified total.
-  const dataStartNote = startDate < CUSTOMER_VOC_START
-    ? `Customer VOC tracked from 17 Jul 2026 — audits before that aren't counted here`
-    : null;
+  const overall = {
+    total: Number(overallRows[0]?.total ?? 0),
+    pos:   branches.reduce((s, b) => s + b.pos, 0),
+    neg:   branches.reduce((s, b) => s + b.neg, 0),
+    dataStartNote,
+  };
 
   return {
-    overall: { total: Number(overall.total), pos: Number(overall.pos), neg: Number(overall.neg), dataStartNote },
+    overall,
     branches,
   };
 }
@@ -4366,7 +4364,6 @@ export async function getClapVocQuotes(
     WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
       AND q.${column} IS NOT NULL AND TRIM(q.${column}) != ''
     ORDER BY q.CallDate DESC
-    LIMIT 50
   `, base);
 
   const [positiveRows, negativeRows] = await Promise.all([

@@ -5190,7 +5190,7 @@ export default function InboundQualityDashboard() {
                       const ovTotal = ov?.total ?? 0;
                       const ovPos   = ov?.pos ?? 0;
                       const ovNeg   = ov?.neg ?? 0;
-                      const ovPosPct = ovTotal > 0 ? Math.round(ovPos / ovTotal * 100) : 0;
+                      const ovPosPct = ovTotal > 0 ? Math.min(100, Math.round(ovPos / ovTotal * 100)) : 0;
 
                       return (
                         <div>
@@ -5225,9 +5225,16 @@ export default function InboundQualityDashboard() {
                                       ⚠ Counted from 17 Jul
                                     </div>
                                   )}
-                                  <div className="flex gap-3 justify-center">
-                                    <span className="text-[11px] font-bold" style={{ color: clapCustomerExpanded ? '#86EFAC' : '#16A34A' }}>✅ {ovPos.toLocaleString()}</span>
-                                    <span className="text-[11px] font-bold" style={{ color: clapCustomerExpanded ? '#FCA5A5' : '#DC2626' }}>❌ {ovNeg.toLocaleString()}</span>
+                                  <div className="mt-1.5 flex items-center justify-center gap-4">
+                                    <div className="text-left">
+                                      <div className="text-lg font-black tabular-nums" style={{ color: clapCustomerExpanded ? '#86EFAC' : '#16A34A' }}>✅ {ovPos.toLocaleString()}</div>
+                                      <div className="text-[8px] font-semibold uppercase tracking-widest" style={{ color: clapCustomerExpanded ? 'rgba(255,255,255,0.55)' : '#64748B' }}>Total Positive</div>
+                                    </div>
+                                    <div className="w-px h-8" style={{ background: clapCustomerExpanded ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.12)' }} />
+                                    <div className="text-left">
+                                      <div className="text-lg font-black tabular-nums" style={{ color: clapCustomerExpanded ? '#FCA5A5' : '#DC2626' }}>❌ {ovNeg.toLocaleString()}</div>
+                                      <div className="text-[8px] font-semibold uppercase tracking-widest" style={{ color: clapCustomerExpanded ? 'rgba(255,255,255,0.55)' : '#64748B' }}>Total Negative</div>
+                                    </div>
                                   </div>
                                   <div className="mt-2 h-1.5 w-32 mx-auto rounded-full overflow-hidden" style={{ background: 'rgba(0,0,0,0.1)' }}>
                                     <div className="h-full rounded-full transition-all duration-500" style={{ width: `${ovPosPct}%`, background: clapCustomerExpanded ? '#86EFAC' : '#22C55E' }} />
