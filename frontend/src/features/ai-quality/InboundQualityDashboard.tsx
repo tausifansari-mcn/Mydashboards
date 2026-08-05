@@ -2640,7 +2640,7 @@ export default function InboundQualityDashboard() {
                 onClick={() => kpis && setDrillModal({ title: 'Quality Score Distribution — Detail', accent: cqColor(kpis.cq_score), columns: [{ key: 'Category', label: 'Category' }, { key: 'Count', label: 'Count' }, { key: 'Pct', label: '%' }, { key: 'Score Range', label: 'Score Range' }], rows: [{ Category: 'Excellent', Count: kpis.excellent, Pct: `${pct(kpis.excellent)}`, 'Score Range': '98–100%' }, { Category: 'Good', Count: kpis.good, Pct: `${pct(kpis.good)}`, 'Score Range': '90–97%' }, { Category: 'Average', Count: kpis.average_count, Pct: `${pct(kpis.average_count)}`, 'Score Range': '85–89%' }, { Category: 'Below Average', Count: kpis.below_average, Pct: `${pct(kpis.below_average)}`, 'Score Range': '<85%' }, { Category: 'Fatal (Score=0)', Count: kpis.fatal_count, Pct: `${pct(kpis.fatal_count)}`, 'Score Range': '0%' }] })}>
               <MetricCard
                 label="CQ Score%"
-                value={loading ? '—' : `${kpis?.cq_score ?? 0}%`}
+                value={loading ? '—' : `${(kpis?.cq_score ?? 0).toFixed(1)}%`}
                 subValue="Click for breakdown"
                 icon={Star}
                 accentColor={cqColor(kpis?.cq_score ?? 0)}
@@ -2651,7 +2651,7 @@ export default function InboundQualityDashboard() {
                 onClick={() => openBandDetail('no_fatal', 'W/O Fatal — Agent & Scenario Breakdown', '#38BDF8')}>
               <MetricCard
                 label="W/O Fatal CQ Score%"
-                value={loading ? '—' : kpis?.cq_score_no_fatal ? `${kpis.cq_score_no_fatal}%` : 'No data'}
+                value={loading ? '—' : kpis?.cq_score_no_fatal ? `${kpis.cq_score_no_fatal.toFixed(1)}%` : 'No data'}
                 subValue="Click for breakdown"
                 icon={TrendingUp}
                 accentColor="#38BDF8"
@@ -3983,7 +3983,7 @@ export default function InboundQualityDashboard() {
             return (
               <g>
                 <text x={nx + nw / 2} y={ny - 6}  textAnchor="middle" fill="#22D3EE" fontSize={9} fontWeight="bold">{value}</text>
-                <text x={nx + nw / 2} y={ny - 16} textAnchor="middle" fill="#EF4444" fontSize={8}>{row?.pct ?? 0}%</text>
+                <text x={nx + nw / 2} y={ny - 16} textAnchor="middle" fill="#EF4444" fontSize={8}>{(row?.pct ?? 0).toFixed(1)}%</text>
               </g>
             );
           };
@@ -3993,7 +3993,7 @@ export default function InboundQualityDashboard() {
             const bg    = val > 0 ? 'rgba(239,68,68,0.15)' : 'transparent';
             return (
               <span className="px-2 py-0.5 rounded text-[10px] font-bold" style={{ color, background: bg }}>
-                {val > 0 ? `${val}%` : '0%'}
+                {val > 0 ? `${val.toFixed(1)}%` : '0.0%'}
               </span>
             );
           };
@@ -4004,7 +4004,7 @@ export default function InboundQualityDashboard() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
                 {[
                   {
-                    label: 'CQ Score%', value: `${fd.cq_score}%`,
+                    label: 'CQ Score%', value: `${fd.cq_score.toFixed(1)}%`,
                     sub: <span className={`text-[10px] font-bold flex items-center gap-0.5 ${Number(deltaVsTarget) < 0 ? 'text-red-400' : 'text-green-400'}`}>
                       {Number(deltaVsTarget) < 0 ? '▼' : '▲'} {deltaVsTarget}%
                     </span>,
@@ -4017,11 +4017,11 @@ export default function InboundQualityDashboard() {
                   },
                   {
                     label: 'Fatal Count', value: fd.fatal_count.toLocaleString(), sub: null, color: '#EF4444',
-                    onClick: () => setDrillModal({ title: 'Top Fatal Contributors', accent: '#EF4444', columns: [{ key: 'Agent', label: 'Agent' }, { key: 'Audits', label: 'Audits' }, { key: 'Fatals', label: 'Fatals' }, { key: 'Fatal%', label: 'Fatal%' }], rows: fd.top_contributors.map(r => ({ Agent: resolveAgent(r.agent_name), 'MAS ID': r.agent_name, Audits: r.audit_count, Fatals: r.fatal_count, 'Fatal%': `${r.fatal_pct}%` })) }),
+                    onClick: () => setDrillModal({ title: 'Top Fatal Contributors', accent: '#EF4444', columns: [{ key: 'Agent', label: 'Agent' }, { key: 'Audits', label: 'Audits' }, { key: 'Fatals', label: 'Fatals' }, { key: 'Fatal%', label: 'Fatal%' }], rows: fd.top_contributors.map(r => ({ Agent: resolveAgent(r.agent_name), 'MAS ID': r.agent_name, Audits: r.audit_count, Fatals: r.fatal_count, 'Fatal%': `${r.fatal_pct.toFixed(1)}%` })) }),
                   },
                   {
-                    label: 'Fatal%', value: `${fd.fatal_pct}%`, sub: null, color: fd.fatal_pct >= 20 ? '#EF4444' : '#F59E0B',
-                    onClick: () => setDrillModal({ title: 'Fatal% — Week & Scenario Breakdown', accent: '#F59E0B', columns: [{ key: 'Week', label: 'Week' }, { key: 'Query Fatal%', label: 'Query%' }, { key: 'Complaint Fatal%', label: 'Complaint%' }, { key: 'Request Fatal%', label: 'Request%' }, { key: 'Sale Done Fatal%', label: 'Sale Done%' }, { key: 'Total Fatal', label: 'Total' }], rows: fd.week_scenario.map(r => ({ Week: r.week_label, 'Query Fatal%': `${r.query_fatal_pct}%`, 'Complaint Fatal%': `${r.complaint_fatal_pct}%`, 'Request Fatal%': `${r.request_fatal_pct}%`, 'Sale Done Fatal%': `${r.sale_done_fatal_pct}%`, 'Total Fatal': r.total_fatal })) }),
+                    label: 'Fatal%', value: `${fd.fatal_pct.toFixed(1)}%`, sub: null, color: fd.fatal_pct >= 20 ? '#EF4444' : '#F59E0B',
+                    onClick: () => setDrillModal({ title: 'Fatal% — Week & Scenario Breakdown', accent: '#F59E0B', columns: [{ key: 'Week', label: 'Week' }, { key: 'Query Fatal%', label: 'Query%' }, { key: 'Complaint Fatal%', label: 'Complaint%' }, { key: 'Request Fatal%', label: 'Request%' }, { key: 'Sale Done Fatal%', label: 'Sale Done%' }, { key: 'Total Fatal', label: 'Total' }], rows: fd.week_scenario.map(r => ({ Week: r.week_label, 'Query Fatal%': `${r.query_fatal_pct.toFixed(1)}%`, 'Complaint Fatal%': `${r.complaint_fatal_pct.toFixed(1)}%`, 'Request Fatal%': `${r.request_fatal_pct.toFixed(1)}%`, 'Sale Done Fatal%': `${r.sale_done_fatal_pct.toFixed(1)}%`, 'Total Fatal': r.total_fatal })) }),
                   },
                 ].map(c => (
                   <div key={c.label}
@@ -4072,7 +4072,7 @@ export default function InboundQualityDashboard() {
                                 <div className="flex-1 h-4 rounded bg-slate-100 overflow-hidden max-w-[80px]">
                                   <div className="h-full rounded bg-red-500 flex items-center justify-center"
                                     style={{ width: `${Math.min(r.fatal_pct, 100)}%` }}>
-                                    <span className="text-[9px] font-bold text-slate-900 px-1 whitespace-nowrap">{r.fatal_pct}%</span>
+                                    <span className="text-[9px] font-bold text-slate-900 px-1 whitespace-nowrap">{r.fatal_pct.toFixed(1)}%</span>
                                   </div>
                                 </div>
                               </div>
@@ -4263,7 +4263,7 @@ export default function InboundQualityDashboard() {
                                       width: `${Math.min(r.cq_score, 100)}%`,
                                       background: r.cq_score >= 90 ? '#22C55E' : r.cq_score >= 85 ? '#F59E0B' : '#EF4444',
                                     }}>
-                                    {r.cq_score}%
+                                    {r.cq_score.toFixed(1)}%
                                   </div>
                                 </div>
                               </div>
@@ -4272,7 +4272,7 @@ export default function InboundQualityDashboard() {
                             <td className="py-2.5 px-4">
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold"
                                 style={{ background: r.fatal_pct > 0 ? 'rgba(239,68,68,0.15)' : 'transparent', color: r.fatal_pct > 0 ? '#DC2626' : '#0F172A' }}>
-                                {r.fatal_pct}%
+                                {r.fatal_pct.toFixed(1)}%
                               </span>
                             </td>
                             {[r.below_avg_pct, r.avg_pct, r.good_pct, r.excellent_pct].map((v, ci) => (
@@ -4344,7 +4344,7 @@ export default function InboundQualityDashboard() {
             const fg = val > 0 ? color : '#64748B';
             return (
               <span className="px-2 py-0.5 rounded text-[10px] font-bold" style={{ color: fg, background: bg }}>
-                {val > 0 ? `${val}%` : '0%'}
+                {val > 0 ? `${val.toFixed(1)}%` : '0.0%'}
               </span>
             );
           };
@@ -4355,7 +4355,7 @@ export default function InboundQualityDashboard() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
                 {[
                   {
-                    label: 'CQ Score%', value: `${dd.cq_score}%`,
+                    label: 'CQ Score%', value: `${dd.cq_score.toFixed(1)}%`,
                     sub: <span className={`text-[10px] font-bold flex items-center gap-0.5 ${Number(deltaVsTarget) < 0 ? 'text-red-400' : 'text-green-400'}`}>
                       {Number(deltaVsTarget) < 0 ? '▼' : '▲'} {deltaVsTarget}%
                     </span>,
@@ -4371,7 +4371,7 @@ export default function InboundQualityDashboard() {
                     onClick: () => setDrillModal({ title: 'Detail Analysis — Scenario Count Breakdown', accent: '#EF4444', columns: [{ key: 'Scenario', label: 'Scenario' }, { key: 'Count', label: 'Count' }], rows: [{ Scenario: 'Query', Count: dd.query_count }, { Scenario: 'Complaint', Count: dd.complaint_count }, { Scenario: 'Request', Count: dd.request_count }, { Scenario: 'Sale Done', Count: dd.sale_done_count }] }),
                   },
                   {
-                    label: 'Fatal%',      value: `${dd.fatal_pct}%`, sub: null, color: dd.fatal_pct >= 20 ? '#EF4444' : '#F59E0B',
+                    label: 'Fatal%',      value: `${dd.fatal_pct.toFixed(1)}%`, sub: null, color: dd.fatal_pct >= 20 ? '#EF4444' : '#F59E0B',
                     onClick: () => setDrillModal({ title: 'Detail Analysis — Week & Scenario Audit%', accent: '#F59E0B', columns: [{ key: 'Week', label: 'Week' }, { key: 'Query%', label: 'Query%' }, { key: 'Complaint%', label: 'Complaint%' }, { key: 'Request%', label: 'Request%' }, { key: 'Sale Done%', label: 'Sale Done%' }, { key: 'Total', label: 'Total' }], rows: dd.week_scenario_audit.map(r => ({ Week: r.week_label, 'Query%': `${r.query_pct}%`, 'Complaint%': `${r.complaint_pct}%`, 'Request%': `${r.request_pct}%`, 'Sale Done%': `${r.sale_done_pct}%`, Total: r.total })) }),
                   },
                 ].map(c => (
@@ -4693,7 +4693,7 @@ export default function InboundQualityDashboard() {
                               <td className="py-2.5 px-3">{scoreCell(r.cq_score)}</td>
                               <td className="py-2.5 px-3 text-slate-700 tabular-nums">{r.fatal_count}</td>
                               <td className="py-2.5 px-3">
-                                <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct}%</span>
+                                <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct.toFixed(1)}%</span>
                               </td>
                               <td className="py-2.5 px-3">{scoreCell(r.opening_skill)}</td>
                               <td className="py-2.5 px-3">{scoreCell(r.soft_skill)}</td>
@@ -4799,7 +4799,7 @@ export default function InboundQualityDashboard() {
                               <td className="py-2.5 px-3">{scoreCell(r.cq_score)}</td>
                               <td className="py-2.5 px-3 text-slate-700 tabular-nums">{r.fatal_count}</td>
                               <td className="py-2.5 px-3">
-                                <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct}%</span>
+                                <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct.toFixed(1)}%</span>
                               </td>
                               <td className="py-2.5 px-3">{scoreCell(r.opening_skill)}</td>
                               <td className="py-2.5 px-3">{scoreCell(r.soft_skill)}</td>
@@ -4904,7 +4904,7 @@ export default function InboundQualityDashboard() {
                               <td className="py-2.5 px-3">{scoreCell(r.cq_score)}</td>
                               <td className="py-2.5 px-3 text-slate-700 tabular-nums">{r.fatal_count}</td>
                               <td className="py-2.5 px-3">
-                                <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct}%</span>
+                                <span className="font-semibold" style={{ color: r.fatal_pct > 0 ? '#EF4444' : '#64748B' }}>{r.fatal_pct.toFixed(1)}%</span>
                               </td>
                               <td className="py-2.5 px-3">{scoreCell(r.opening_skill)}</td>
                               <td className="py-2.5 px-3">{scoreCell(r.soft_skill)}</td>

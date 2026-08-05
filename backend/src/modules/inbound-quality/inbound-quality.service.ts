@@ -3,6 +3,34 @@ import { querySource } from '../../lib/sourceDb';
 import { csvEscape } from '../../lib/csv';
 import { getProjectTrend, getProjectKeyByQaClientId } from '../inbound/inbound.service';
 
+// ─── CQ Score definition ─────────────────────────────────────────────────────
+// The stored quality_percentage (total_score/max_score) is unreliable, so every CQ-style score in
+// this module is recomputed as the average of the 19 call-quality parameters: per call,
+// score = (# satisfied params) / 19, blank params are simply not counted as satisfied; then the
+// per-call scores are averaged. express_empathy is a newer parameter and is excluded from the 19.
+const CQ_PARAM_COLS = [
+  'call_answered_within_5_seconds',
+  'customer_concern_acknowledged',
+  'professionalism_maintained',
+  'assurance_or_appreciation_provided',
+  'pronunciation_and_clarity',
+  'enthusiasm_and_no_fumbling',
+  'active_listening',
+  'politeness_and_no_sarcasm',
+  'proper_grammar',
+  'accurate_issue_probing',
+  'proper_hold_procedure',
+  'proper_transfer_and_language',
+  'dead_air_under_10_seconds',
+  'case_escalated_correctly',
+  'address_recorded_completely',
+  'correct_and_complete_information',
+  'upselling_or_offers_suggested',
+  'further_assistance_offered',
+  'proper_call_closure',
+];
+const CQ_SCORE_SQL = `(${CQ_PARAM_COLS.map(c => `IF(q.${c} = 1, 1, 0)`).join(' + ')}) / ${CQ_PARAM_COLS.length}`;
+
 // ─── Negative signal categorisation CASE expression ──────────────────────────
 // First: exact matches (highest priority, first match wins in SQL CASE)
 // Then:  LIKE-based keyword fallbacks for unrecognised values
@@ -332,8 +360,8 @@ export async function getInboundClients(filters: InboundQualityFilters): Promise
       q.ClientId                                                                   AS client_id,
       COALESCE(c.name, CONCAT('Client ', q.ClientId))                             AS client_name,
       COUNT(*)                                                                     AS audit_count,
-      ROUND(AVG(q.quality_percentage), 1)                                         AS cq_score,
-      ROUND(AVG(CASE WHEN q.quality_percentage > 0 THEN q.quality_percentage END), 1) AS cq_score_no_fatal,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                         AS cq_score,
+      ROUND(AVG(CASE WHEN q.quality_percentage > 0 THEN ${CQ_SCORE_SQL} END) * 100, 1) AS cq_score_no_fatal,
       SUM(CASE WHEN q.quality_percentage >= 98                                  THEN 1 ELSE 0 END) AS excellent,
       SUM(CASE WHEN q.quality_percentage >= 90 AND q.quality_percentage < 98    THEN 1 ELSE 0 END) AS good,
       SUM(CASE WHEN q.quality_percentage >= 85 AND q.quality_percentage < 90    THEN 1 ELSE 0 END) AS average_count,
@@ -407,6 +435,12 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
   const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
   const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
+  // Without a clientId the aggregates must span every client (GROUP BY + `const [row]`
+  // would otherwise only surface the first client's row).
+  const clientIdExpr   = clientId ? 'q.ClientId' : `''`;
+  const clientNameExpr = clientId ? `COALESCE(c.name, CONCAT('Client ', q.ClientId))` : `'All Clients'`;
+  const groupByClient  = clientId ? 'GROUP BY q.ClientId, c.name' : '';
+
   const [row] = await querySource<{
     client_id:                  string;
     client_name:                string;
@@ -428,11 +462,11 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
     cuss_abuse_count:           number;
   }>(`
     SELECT
-      q.ClientId                                                                   AS client_id,
-      COALESCE(c.name, CONCAT('Client ', q.ClientId))                             AS client_name,
+      ${clientIdExpr}                                                               AS client_id,
+      ${clientNameExpr}                                                             AS client_name,
       COUNT(*)                                                                     AS audit_count,
-      ROUND(AVG(q.quality_percentage), 1)                                         AS cq_score,
-      ROUND(AVG(CASE WHEN q.quality_percentage > 0 THEN q.quality_percentage END), 1) AS cq_score_no_fatal,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                         AS cq_score,
+      ROUND(AVG(CASE WHEN q.quality_percentage > 0 THEN ${CQ_SCORE_SQL} END) * 100, 1) AS cq_score_no_fatal,
       SUM(CASE WHEN q.quality_percentage >= 98                                  THEN 1 ELSE 0 END) AS excellent,
       SUM(CASE WHEN q.quality_percentage >= 90 AND q.quality_percentage < 98    THEN 1 ELSE 0 END) AS good,
       SUM(CASE WHEN q.quality_percentage >= 85 AND q.quality_percentage < 90    THEN 1 ELSE 0 END) AS average_count,
@@ -445,14 +479,16 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
         ELSE (
-          IF(q.professionalism_maintained         = 1, 0.125, 0) +
-          IF(q.assurance_or_appreciation_provided = 1, 0.125, 0) +
-          IF(q.pronunciation_and_clarity          = 1, 0.125, 0) +
-          IF(q.enthusiasm_and_no_fumbling         = 1, 0.125, 0) +
-          IF(q.active_listening                   = 1, 0.125, 0) +
-          IF(q.politeness_and_no_sarcasm          = 1, 0.125, 0) +
-          IF(q.proper_grammar                     = 1, 0.125, 0) +
-          IF(q.accurate_issue_probing             = 1, 0.125, 0)
+          IF(q.professionalism_maintained         = 1, 0.10, 0) +
+          IF(q.assurance_or_appreciation_provided = 1, 0.10, 0) +
+          IF(q.pronunciation_and_clarity          = 1, 0.10, 0) +
+          IF(q.enthusiasm_and_no_fumbling         = 1, 0.10, 0) +
+          IF(q.active_listening                   = 1, 0.10, 0) +
+          IF(q.politeness_and_no_sarcasm          = 1, 0.10, 0) +
+          IF(q.proper_grammar                     = 1, 0.10, 0) +
+          IF(q.accurate_issue_probing             = 1, 0.10, 0) +
+          IF(q.customer_concern_acknowledged      = 1, 0.10, 0) +
+          IF(q.express_empathy                    = 1, 0.10, 0)
         ) END
       ) * 100, 1) AS soft_skill,
       ROUND(AVG(
@@ -515,7 +551,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
       ${clientFilter}
-    GROUP BY q.ClientId, c.name
+    ${groupByClient}
   `, params);
 
   const r = row ?? {
@@ -547,7 +583,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
         ELSE 'Extremely Long(>10min)'
       END                                                                         AS category,
       COUNT(*)                                                                    AS audit_count,
-      ROUND(AVG(quality_percentage), 1)                                          AS score_pct,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                          AS score_pct,
       SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END)                   AS fatal_count,
       ROUND(
         SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0
@@ -655,7 +691,7 @@ export async function getTopPerformers(filters: InboundQualityFilters): Promise<
     SELECT
       COALESCE(am.AgentName, q.User) AS user,
       COUNT(*)                                AS audit_count,
-      ROUND(AVG(q.quality_percentage), 1)     AS avg_score
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)     AS avg_score
     FROM db_audit.call_quality_assessment q
     LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ?
@@ -691,7 +727,7 @@ export async function getDailyScores(filters: InboundQualityFilters): Promise<Da
   const rows = await querySource<{ call_date: string; avg_score: number | null; audit_count: number }>(`
     SELECT
       DATE_FORMAT(q.CallDate, '%Y-%m-%d')        AS call_date,
-      ROUND(AVG(q.quality_percentage), 1)        AS avg_score,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)        AS avg_score,
       COUNT(*)                                   AS audit_count
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate >= DATE_SUB(DATE(?), INTERVAL 6 DAY)
@@ -719,7 +755,7 @@ export async function getDailyScoresRange(filters: InboundQualityFilters): Promi
   const rows = await querySource<{ call_date: string; avg_score: number | null; audit_count: number }>(`
     SELECT
       DATE_FORMAT(q.CallDate, '%Y-%m-%d')        AS call_date,
-      ROUND(AVG(q.quality_percentage), 1)        AS avg_score,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)        AS avg_score,
       COUNT(*)                                   AS audit_count
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
@@ -1220,6 +1256,7 @@ const SCORE_LABEL: Record<string, string> = {
   politeness_and_no_sarcasm:          'Politeness & No Sarcasm',
   proper_grammar:                     'Proper Grammar',
   accurate_issue_probing:             'Accurate Issue Probing',
+  express_empathy:                    'Express Empathy',
   proper_hold_procedure:              'Proper Hold Procedure',
   proper_transfer_and_language:       'Proper Transfer & Language',
   dead_air_under_10_seconds:          'Dead Air Under 10s',
@@ -1251,6 +1288,7 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.politeness_and_no_sarcasm,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS politeness_and_no_sarcasm,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_grammar,0)                     = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_grammar,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.accurate_issue_probing,0)             = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS accurate_issue_probing,
+      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.express_empathy,0)                    = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS express_empathy,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_hold_procedure,0)              = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_hold_procedure,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_transfer_and_language,0)       = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_transfer_and_language,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.dead_air_under_10_seconds,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS dead_air_under_10_seconds,
@@ -1286,6 +1324,8 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
       p('politeness_and_no_sarcasm'),
       p('proper_grammar'),
       p('accurate_issue_probing'),
+      p('customer_concern_acknowledged'),
+      p('express_empathy'),
     ],
     hold_procedure: [
       p('proper_hold_procedure'),
@@ -1317,14 +1357,16 @@ const COMPONENT_SCORE_EXPR: Record<string, string> = {
   soft_skill: `
     CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
     ELSE (
-      IF(q.professionalism_maintained         = 1, 0.125, 0) +
-      IF(q.assurance_or_appreciation_provided = 1, 0.125, 0) +
-      IF(q.pronunciation_and_clarity          = 1, 0.125, 0) +
-      IF(q.enthusiasm_and_no_fumbling         = 1, 0.125, 0) +
-      IF(q.active_listening                   = 1, 0.125, 0) +
-      IF(q.politeness_and_no_sarcasm          = 1, 0.125, 0) +
-      IF(q.proper_grammar                     = 1, 0.125, 0) +
-      IF(q.accurate_issue_probing             = 1, 0.125, 0)
+      IF(q.professionalism_maintained         = 1, 0.10, 0) +
+      IF(q.assurance_or_appreciation_provided = 1, 0.10, 0) +
+      IF(q.pronunciation_and_clarity          = 1, 0.10, 0) +
+      IF(q.enthusiasm_and_no_fumbling         = 1, 0.10, 0) +
+      IF(q.active_listening                   = 1, 0.10, 0) +
+      IF(q.politeness_and_no_sarcasm          = 1, 0.10, 0) +
+      IF(q.proper_grammar                     = 1, 0.10, 0) +
+      IF(q.accurate_issue_probing             = 1, 0.10, 0) +
+      IF(q.customer_concern_acknowledged      = 1, 0.10, 0) +
+      IF(q.express_empathy                    = 1, 0.10, 0)
     ) END`,
   hold_procedure: `
     CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
@@ -1425,7 +1467,7 @@ export async function getDateWiseParameterScores(filters: InboundQualityFilters)
     SELECT
       DATE_FORMAT(q.CallDate, '%Y-%m-%d') AS call_date,
       COUNT(*) AS audit_count,
-      ROUND(AVG(q.quality_percentage), 1) AS overall_score,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS overall_score,
       ${paramSelects}
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
@@ -1438,7 +1480,7 @@ export async function getDateWiseParameterScores(filters: InboundQualityFilters)
   const totalsRows = await querySource<Record<string, unknown>>(`
     SELECT
       COUNT(*) AS audit_count,
-      ROUND(AVG(q.quality_percentage), 1) AS overall_score,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS overall_score,
       ${paramSelects}
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
@@ -2388,7 +2430,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
     }>(`
       SELECT
         COUNT(*) AS audit_count,
-        ROUND(AVG(q.quality_percentage), 1) AS cq_score,
+        ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS cq_score,
         SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS fatal_pct,
         SUM(CASE WHEN TRIM(q.scenario)='Query'     AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS query_fatal,
@@ -2464,7 +2506,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
     }>(`
       SELECT
         COALESCE(am.AgentName, q.User) AS agent_name, COUNT(*) AS audit_count,
-        ROUND(AVG(q.quality_percentage),1) AS cq_score,
+        ROUND(AVG(${CQ_SCORE_SQL}) * 100,1) AS cq_score,
         SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
         ROUND(SUM(CASE WHEN q.quality_percentage>0 AND q.quality_percentage<85  THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS below_avg_pct,
@@ -2578,7 +2620,7 @@ export async function getDetailAnalysis(filters: InboundQualityFilters): Promise
       query_count: number; complaint_count: number; request_count: number; sale_done_count: number;
     }>(`
       SELECT COUNT(*) AS audit_count,
-        ROUND(AVG(q.quality_percentage),1) AS cq_score,
+        ROUND(AVG(${CQ_SCORE_SQL}) * 100,1) AS cq_score,
         SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
         SUM(CASE WHEN TRIM(q.scenario)='Query'     THEN 1 ELSE 0 END) AS query_count,
@@ -2764,7 +2806,7 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
       COALESCE(am.AgentName, q.User) AS agent_name,
       IFNULL(NULLIF(TRIM(q.Campaign),''),'-')      AS tq_mq_bq,
       COUNT(*)                                     AS audit_count,
-      ROUND(AVG(q.quality_percentage),1)           AS cq_score,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100,1)           AS cq_score,
       SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
       ${_OPENING}    AS opening_skill,
@@ -2857,7 +2899,7 @@ export async function getAgentGuidance(filters: InboundQualityFilters): Promise<
         q.User AS agent_id,
         COALESCE(am.AgentName, q.User) AS agent_name,
         COUNT(*) AS audit_count,
-        ROUND(AVG(q.quality_percentage), 1) AS cq_score,
+        ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS cq_score,
         ${paramSelect}
       FROM db_audit.call_quality_assessment q
       LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
@@ -3222,7 +3264,7 @@ export async function getWeekWiseQuality(filters: InboundQualityFilters & { scen
         ELSE 'Week 4'
       END                                              AS week_label,
       COUNT(*)                                         AS audit_count,
-      ROUND(AVG(q.quality_percentage),1)               AS cq_score,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100,1)               AS cq_score,
       SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
       ${_OPENING}    AS opening_skill,
@@ -3269,7 +3311,7 @@ export async function getDayWiseQuality(filters: InboundQualityFilters & { scena
     SELECT
       DATE_FORMAT(q.CallDate,'%Y-%m-%d')           AS call_date,
       COUNT(*)                                     AS audit_count,
-      ROUND(AVG(q.quality_percentage),1)           AS cq_score,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100,1)           AS cq_score,
       SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
       ${_OPENING}    AS opening_skill,
@@ -3347,7 +3389,7 @@ export async function getBandDetail(
       COALESCE(NULLIF(TRIM(q.User),     ''), 'Unknown') AS agent,
       COALESCE(NULLIF(TRIM(q.scenario), ''), 'Unknown') AS scenario,
       COUNT(*)                                           AS count,
-      ROUND(AVG(q.quality_percentage),  1)              AS avg_score
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100,  1)              AS avg_score
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -3380,7 +3422,7 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters): 
     SELECT
       COALESCE(am.AgentName, q.User)                                        AS agent,
       COUNT(*)                                                                                     AS audit_count,
-      ROUND(AVG(q.quality_percentage), 1)                                                          AS cq_score,
+      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                                                 AS cq_score,
       SUM(CASE WHEN q.quality_percentage = 0  THEN 1 ELSE 0 END)                                 AS fatal_count,
       ROUND(SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0), 1) AS fatal_pct,
       SUM(CASE WHEN q.quality_percentage >= 80 THEN 1 ELSE 0 END)                                AS tq_count,
@@ -4605,7 +4647,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
     // 1. Overall KPI
     querySource<{ total: number; avgQA: number; posCount: number; negCount: number }>(`
       SELECT COUNT(*) AS total,
-        ROUND(AVG(q.quality_percentage), 1) AS avgQA,
+        ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS avgQA,
         SUM(CASE WHEN q.top_positive_words IS NOT NULL AND TRIM(q.top_positive_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS posCount,
         SUM(CASE WHEN q.top_negative_words IS NOT NULL AND TRIM(q.top_negative_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS negCount
       FROM db_audit.call_quality_assessment q
@@ -4675,7 +4717,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
       SELECT
         COALESCE(am.AgentName, q.User) AS agent,
         COUNT(*) AS calls,
-        ROUND(AVG(q.quality_percentage), 1) AS avgScore
+        ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS avgScore
       FROM db_audit.call_quality_assessment q
       LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
@@ -4691,7 +4733,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
       SELECT
         COALESCE(am.AgentName, q.User) AS agent,
         COUNT(*) AS calls,
-        ROUND(AVG(q.quality_percentage), 1) AS avgScore
+        ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS avgScore
       FROM db_audit.call_quality_assessment q
       LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
@@ -4750,7 +4792,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         COUNT(*) AS calls,
         SUM(CASE WHEN q.top_positive_words IS NOT NULL AND TRIM(q.top_positive_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS posCount,
         SUM(CASE WHEN q.top_negative_words IS NOT NULL AND TRIM(q.top_negative_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS negCount,
-        ROUND(AVG(q.quality_percentage), 1) AS avgQA
+        ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS avgQA
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
       GROUP BY date
