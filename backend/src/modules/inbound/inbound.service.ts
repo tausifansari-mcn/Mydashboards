@@ -60,6 +60,10 @@ interface ProjectConfig {
   required: number;
   hasFCR: boolean;
   fcrClientId?: number;
+  fcrField?: string; // column in dialer_db.data_master_in holding the FCR tag (default 'Field2')
+  fcrInboundField?: string; // column marking inbound calls (default 'Field1')
+  fcrCountStar?: boolean; // use COUNT(*) instead of COUNT(fcrField) as FCR denominator
+  fcrAgentJoin?: boolean; // false when data_master_in AgentId can't be joined to the CDR agent table
   hourlyTimeField?: string; // column with actual call time when CallDate has no time component
   qaClientId?: number; // ClientId used in db_audit.call_quality_assessment (AI Quality) for this project
 }
@@ -89,7 +93,12 @@ const PROJECTS: ProjectConfig[] = [
     campaigns: ['H_Bellavita_Luxury', 'E_Bellavita_Organic', 'E_Bellavita_Luxury', 'H_Bellavita_Organic', 'H_Bevzilla_Complaint', 'H_Bevzilla_CC_Agent', 'E_Bevzilla_CC_Agent', 'H_Bevzilla_Order', 'E_Bevzilla_Order', 'E_Bevzilla_Complaint', 'E_Emb_Existing_Order', 'H_Bevzilla_Product', 'H_Emb_New_Order', 'H_Emb_Existing_Order', 'E_Bevzilla_Product', 'E_Emb_New_Order'],
     mandate: 14,
     required: 12,
-    hasFCR: false,
+    hasFCR: true,
+    fcrClientId: 375,
+    fcrField: 'Field28',
+    fcrInboundField: 'Field13',
+    fcrCountStar: true,
+    fcrAgentJoin: false,
     hourlyTimeField: 'Time',
     qaClientId: 375,
   },
@@ -216,15 +225,18 @@ function buildPatternBQuery(p: ProjectConfig): string {
   `;
 }
 
-function buildFCRQuery(): string {
+function buildFCRQuery(p: ProjectConfig): string {
+  const fcrField = p.fcrField ?? 'Field2';
+  const inField = p.fcrInboundField ?? 'Field1';
+  const denom = p.fcrCountStar ? 'COUNT(*)' : `COUNT(${fcrField})`;
   return `
     SELECT
       DATE(CallDate) AS date,
-      ROUND(100 * SUM(CASE WHEN Field2='FCR' THEN 1 ELSE 0 END) / NULLIF(COUNT(Field2), 0), 2) AS fcr_pct
+      ROUND(100 * SUM(CASE WHEN ${fcrField}='FCR' THEN 1 ELSE 0 END) / NULLIF(${denom}, 0), 2) AS fcr_pct
     FROM dialer_db.data_master_in
     WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
       AND ClientId = ?
-      AND Field1 = 'Inbound'
+      AND ${inField} = 'Inbound'
     GROUP BY DATE(CallDate)
   `;
 }
@@ -450,7 +462,7 @@ export async function getProjectSummary(filters: InboundFilters, projectKey?: st
       let fcrPct: number | null = null;
       if (p.hasFCR && p.fcrClientId) {
         const fcrRows = await querySource<{ date: string; fcr_pct: number }>(
-          buildFCRQuery(),
+          buildFCRQuery(p),
           [startDate, endDate, p.fcrClientId]
         );
         if (fcrRows.length > 0) {
@@ -522,7 +534,7 @@ export async function getProjectTrend(filters: InboundFilters, projectKey?: stri
       const fcrMap = new Map<string, number>();
       if (p.hasFCR && p.fcrClientId) {
         const fcrRows = await querySource<{ date: string; fcr_pct: number }>(
-          buildFCRQuery(),
+          buildFCRQuery(p),
           [startDate, endDate, p.fcrClientId]
         );
         for (const r of fcrRows) {
@@ -665,13 +677,16 @@ export async function getAgentSummary(projectKey: string, filters: InboundFilter
   const rows = await querySource<RawAgentRow>(sql, [startDate, endDate, ...p.campaigns]);
 
   const fcrMap = new Map<string, number>();
-  if (p.hasFCR && p.fcrClientId) {
+  if (p.hasFCR && p.fcrClientId && p.fcrAgentJoin !== false) {
+    const fcrField = p.fcrField ?? 'Field2';
+    const inField = p.fcrInboundField ?? 'Field1';
+    const denom = p.fcrCountStar ? 'COUNT(*)' : `COUNT(${fcrField})`;
     const fcrRows = await querySource<{ agent_id: string; fcr_pct: number }>(
       `SELECT CAST(AgentId AS CHAR) AS agent_id,
-              ROUND(100 * SUM(CASE WHEN Field2='FCR' THEN 1 ELSE 0 END) / NULLIF(COUNT(Field2), 0), 2) AS fcr_pct
+              ROUND(100 * SUM(CASE WHEN ${fcrField}='FCR' THEN 1 ELSE 0 END) / NULLIF(${denom}, 0), 2) AS fcr_pct
        FROM dialer_db.data_master_in
        WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
-         AND ClientId = ? AND Field1 = 'Inbound'
+         AND ClientId = ? AND ${inField} = 'Inbound'
        GROUP BY AgentId`,
       [startDate, endDate, p.fcrClientId]
     );

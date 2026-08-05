@@ -165,7 +165,7 @@ interface ProjectMeta {
 
 const PROJECT_META: ProjectMeta[] = [
   { key: 'gnc',         name: 'GNC',          icon: '🛒', color: '#2E86C1', mandate: 8,  required: 6,  hasFCR: false },
-  { key: 'bellavita',   name: 'Bellavita',     icon: '🌸', color: '#E67E22', mandate: 14, required: 12, hasFCR: false },
+  { key: 'bellavita',   name: 'Bellavita',     icon: '🌸', color: '#E67E22', mandate: 14, required: 12, hasFCR: true  },
   { key: 'clovia',      name: 'Clovia',        icon: '👗', color: '#27AE60', mandate: 7,  required: 6,  hasFCR: false },
   { key: 'neemans',     name: "Neemans",       icon: '👟', color: '#8E44AD', mandate: 10, required: 10, hasFCR: true  },
   { key: 'viega',       name: 'Viega',         icon: '🚰', color: '#E74C3C', mandate: 2,  required: 2,  hasFCR: false },

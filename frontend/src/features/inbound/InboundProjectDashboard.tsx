@@ -214,7 +214,7 @@ const PROJECT_META: Record<string, {
   mandate: number; required: number; hasFCR: boolean;
 }> = {
   gnc:          { name: 'GNC',          icon: '🛒', color: '#ED1C24', textOnColor: '#FFFFFF', secondary: '#1A1A1A', mandate: 8,  required: 6,  hasFCR: false },
-  bellavita:    { name: 'Bellavita',    icon: '🌸', color: '#1A1A1A', textOnColor: '#FFFFFF', secondary: '#333333', mandate: 14, required: 12, hasFCR: false },
+  bellavita:    { name: 'Bellavita',    icon: '🌸', color: '#1A1A1A', textOnColor: '#FFFFFF', secondary: '#333333', mandate: 14, required: 12, hasFCR: true  },
   clovia:       { name: 'Clovia',       icon: '👗', color: '#E91E63', textOnColor: '#FFFFFF', secondary: '#C2185B', mandate: 7,  required: 6,  hasFCR: false },
   neemans:      { name: 'Neemans',      icon: '👟', color: '#0D1445', textOnColor: '#FFFFFF', secondary: '#1a2070', mandate: 10, required: 10, hasFCR: true  },
   viega:        { name: 'Viega',        icon: '🚰', color: '#E74C3C', textOnColor: '#FFFFFF', secondary: '#B03A2E', mandate: 2,  required: 2,  hasFCR: false },
