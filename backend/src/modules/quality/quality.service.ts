@@ -1689,6 +1689,11 @@ const COLUMN_BASED_CLIENTS: Record<string, string> = {
   // real, distinct taxonomy (General Disinterest, Eligibility Barrier, Requirement of Loan, ...) —
   // same column shape as Bellavita/GNC/Neeman's, just loan-domain content instead of retail.
   '497': 'Finnable',
+  // Verified before adding: Reginald Men's CallDetails populate Opening/Offered/ContactSettingContext
+  // (835 of 1,008 calls over Jul 1-Aug 6), and its magical_script_cache rows carry op_success/csp_success/
+  // offer_success/sale_done/product_offering/resolved_category — same column shape as the other retail
+  // clients (GNC/Neeman's), populated Aug 1-6 (140 calls, 10 sales).
+  '481': 'Reginald Men',
 };
 
 // Reserved for excluding a specific stale/misconfigured campaign_id from a client's data, if one is
