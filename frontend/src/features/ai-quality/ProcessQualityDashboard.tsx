@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import api from '@/lib/axios';
 import RawDataTab from './RawDataTab';
+import FraudCallTab from './FraudCallTab';
 
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 function downloadCSV(rows: Record<string, unknown>[], filename: string) {
@@ -1682,7 +1683,7 @@ export default function ProcessQualityDashboard() {
 
         {/* ─── Pill tab navigation ── */}
         {(() => {
-          const SLIDES = ['✨ Magical Script', 'Dashboard', 'Missed Opportunity', 'NPS & CSAT', 'Detail Analysis', ...(canViewRawData ? ['Raw Data'] : [])];
+          const SLIDES = ['✨ Magical Script', 'Dashboard', 'Missed Opportunity', 'NPS & CSAT', 'Detail Analysis', 'Fraud Call', ...(canViewRawData ? ['Raw Data'] : [])];
           return (
             <div className="pill-tabs w-fit">
               {SLIDES.map((label, i) => (
@@ -3764,8 +3765,13 @@ export default function ProcessQualityDashboard() {
           </div>
         )}
 
-        {/* ─── Slide 5: Raw Data ─────────────────────────────────────────── */}
-        {activeSlide === 5 && clientId && canViewRawData && (
+        {/* ─── Slide 5: Fraud Call ───────────────────────────────────────── */}
+        {activeSlide === 5 && clientId && (
+          <FraudCallTab clientId={clientId} sd={sd} ed={ed} apiPath="/quality/fraud-calls" />
+        )}
+
+        {/* ─── Slide 6: Raw Data ─────────────────────────────────────────── */}
+        {activeSlide === 6 && clientId && canViewRawData && (
           <RawDataTab clientId={clientId} apiPath="/quality/raw-data" hasRecording hasTranscript wideColumns
             transcriptApiPath="/quality/customer-interaction-insights/transcript" transcriptParam="callId" />
         )}

@@ -2281,6 +2281,118 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
   };
 }
 
+// ─── Fraud Call Detection ─────────────────────────────────────────────────────
+
+export interface FraudCallRow {
+  lead_id:       string;
+  agent_id:      string;
+  mobile_no:     string;
+  call_date:     string;
+  scenario:      string;
+  compliance:    number; // 0 = compliant, 1 = fraud detected
+  sentence:      string;
+  transcript:    string;
+  call_recording: string;
+}
+
+export interface FraudAgentRow {
+  agent_id:    string;
+  client_id:   string;
+  flagged:     number; // calls with compliance = 1
+  total:       number; // all assessed calls for this agent
+  risk:        number; // 0-100 risk score = flagged/total
+  last_date:   string;
+}
+
+export interface FraudCallSummary {
+  total:      number;
+  flagged:    number; // compliance = 1
+  clean:      number; // compliance = 0
+  agents:     FraudAgentRow[];
+  rows:       FraudCallRow[];
+}
+
+export async function getFraudCalls(filters: InboundQualityFilters): Promise<FraudCallSummary> {
+  const { startDate, endDate, clientId } = filters;
+  const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
+  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+
+  const [rows, agentRows] = await Promise.all([
+    querySource<{
+      lead_id: string; agent_id: string; mobile_no: string; call_date: string;
+      scenario: string; compliance: number; sentence: string; transcript: string; call_recording: string;
+    }>(`
+      SELECT
+        COALESCE(q.lead_id, '')                                       AS lead_id,
+        COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown')                 AS agent_id,
+        COALESCE(q.MobileNo, '')                                       AS mobile_no,
+        DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                     AS call_date,
+        COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')            AS scenario,
+        COALESCE(q.fraud_and_data_security_compliance, 0)             AS compliance,
+        COALESCE(q.fraud_detected_sentence, '')                       AS sentence,
+        COALESCE(q.Transcribe_Text, '')                               AS transcript,
+        COALESCE(q.call_recording, '')                                AS call_recording
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.fraud_and_data_security_compliance IS NOT NULL
+        ${clientFilter}
+      ORDER BY q.CallDate DESC
+      LIMIT 300
+    `, params),
+
+    querySource<{
+      agent_id: string; client_id: string; flagged: number; total: number; last_date: string;
+    }>(`
+      SELECT
+        COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown')                 AS agent_id,
+        q.ClientId                                                     AS client_id,
+        SUM(q.fraud_and_data_security_compliance = 1)                 AS flagged,
+        COUNT(*)                                                       AS total,
+        DATE_FORMAT(MAX(q.CallDate), '%Y-%m-%d %H:%i')                AS last_date
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.fraud_and_data_security_compliance IS NOT NULL
+        ${clientFilter}
+      GROUP BY q.User, q.ClientId
+      ORDER BY flagged DESC, total DESC
+      LIMIT 100
+    `, params),
+  ]);
+
+  const cleanRows: FraudCallRow[] = rows.map(r => ({
+    lead_id:        String(r.lead_id),
+    agent_id:       String(r.agent_id),
+    mobile_no:      String(r.mobile_no ?? ''),
+    call_date:      String(r.call_date),
+    scenario:       String(r.scenario),
+    compliance:     Number(r.compliance) === 1 ? 1 : 0,
+    sentence:       String(r.sentence ?? ''),
+    transcript:     String(r.transcript ?? ''),
+    call_recording: String(r.call_recording ?? ''),
+  }));
+
+  const cleanAgents: FraudAgentRow[] = agentRows.map(r => {
+    const total = Number(r.total) || 0;
+    const flagged = Number(r.flagged) || 0;
+    return {
+      agent_id:  String(r.agent_id),
+      client_id: String(r.client_id ?? ''),
+      flagged,
+      total,
+      risk:      total > 0 ? Math.round((flagged / total) * 100) : 0,
+      last_date: String(r.last_date ?? ''),
+    };
+  });
+
+  return {
+    total:   cleanRows.length,
+    flagged: cleanRows.filter(r => r.compliance === 1).length,
+    clean:   cleanRows.filter(r => r.compliance === 0).length,
+    agents:  cleanAgents,
+    rows:    cleanRows,
+  };
+}
+
 // ─── Sensitive Word Analysis ───────────────────────────────────────────────────
 
 export interface SensitiveWordUseRow { label: string; count: number; pct: number; }

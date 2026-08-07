@@ -40,6 +40,7 @@ router.post('/neg-keywords',            ctrl.addNegKeyword);
 router.patch('/neg-keywords/:id',       ctrl.updateNegKeyword);
 router.post('/reload-neg-rules',        ctrl.reloadNegRules);
 router.get('/potential-scams',          ctrl.getPotentialScams);
+router.get('/fraud-calls',              ctrl.getFraudCalls);
 router.get('/potential-scams-detail',   ctrl.getPotentialScamsDetail);
 router.get('/sensitive-word-analysis',  ctrl.getSensitiveWordAnalysis);
 router.get('/fatal-analysis',           ctrl.getFatalAnalysis);

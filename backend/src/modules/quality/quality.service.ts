@@ -959,6 +959,128 @@ export async function getRawCallData(
   };
 }
 
+// ─── Fraud Call Detection (Outbound) ──────────────────────────────────────────
+// Outbound fraud is driven ONLY by db_external.CallDetails.fraud_detected_sentence:
+// a call counts as a fraud call when that column holds a real sentence value
+// (non-empty, non-placeholder like 'None'/'NA'). The fraud_and_data_security_compliance
+// column is intentionally ignored. Agent = AgentName (MAS ID), recording =
+// FileName, transcript = TranscribeText. Shape mirrors the inbound fraud endpoint
+// so the frontend FraudCallTab component is shared between both dashboards.
+
+const OUTBOUND_FRAUD_SENTENCE_CHECK = `cd.fraud_detected_sentence IS NOT NULL
+  AND TRIM(cd.fraud_detected_sentence) != ''
+  AND LOWER(TRIM(cd.fraud_detected_sentence)) NOT IN ('none', 'na', 'n/a', 'null')`;
+
+export interface FraudCallRow {
+  lead_id:        string;
+  agent_id:       string;
+  mobile_no:      string;
+  call_date:      string;
+  scenario:       string;
+  compliance:     number; // 0 = compliant, 1 = fraud detected
+  sentence:       string;
+  transcript:     string;
+  call_recording: string;
+}
+
+export interface FraudAgentRow {
+  agent_id:  string;
+  client_id: string;
+  flagged:   number;
+  total:     number;
+  risk:      number;
+  last_date: string;
+}
+
+export interface FraudCallSummary {
+  total:   number;
+  flagged: number;
+  clean:   number;
+  agents:  FraudAgentRow[];
+  rows:    FraudCallRow[];
+}
+
+export async function getOutboundFraudCalls(filters: QualityFilters): Promise<FraudCallSummary> {
+  const { startDate, endDate } = filters;
+  const { sql: cf, params: cfParams } = clientClause(filters);
+  const params: (string | number)[] = [startDate, endDate, ...cfParams];
+
+  const [rows, agentRows] = await Promise.all([
+    querySource<{
+      lead_id: string; agent_id: string; mobile_no: string; call_date: string;
+      scenario: string; compliance: number; sentence: string; transcript: string; call_recording: string;
+    }>(`
+      SELECT
+        COALESCE(CAST(cd.LeadID AS CHAR), '')                                 AS lead_id,
+        COALESCE(NULLIF(TRIM(cd.AgentName), ''), 'Unknown')                   AS agent_id,
+        COALESCE(cd.MobileNo, '')                                             AS mobile_no,
+        DATE_FORMAT(cd.CallDate, '%Y-%m-%d %H:%i')                           AS call_date,
+        COALESCE(NULLIF(TRIM(cd.CallDisposition), ''), 'Unknown')            AS scenario,
+        CASE WHEN ${OUTBOUND_FRAUD_SENTENCE_CHECK} THEN 1 ELSE 0 END          AS compliance,
+        COALESCE(cd.fraud_detected_sentence, '')                              AS sentence,
+        COALESCE(cd.TranscribeText, '')                                       AS transcript,
+        COALESCE(cd.FileName, '')                                             AS call_recording
+      FROM db_external.CallDetails cd
+      WHERE cd.CallDate BETWEEN ? AND ?
+        AND ${OUTBOUND_FRAUD_SENTENCE_CHECK}
+        ${cf}
+      ORDER BY cd.CallDate DESC
+      LIMIT 300
+    `, params),
+
+    querySource<{
+      agent_id: string; client_id: string; flagged: number; total: number; last_date: string;
+    }>(`
+      SELECT
+        COALESCE(NULLIF(TRIM(cd.AgentName), ''), 'Unknown')                   AS agent_id,
+        cd.client_id                                                          AS client_id,
+        SUM(CASE WHEN ${OUTBOUND_FRAUD_SENTENCE_CHECK} THEN 1 ELSE 0 END)     AS flagged,
+        COUNT(*)                                                              AS total,
+        DATE_FORMAT(MAX(cd.CallDate), '%Y-%m-%d %H:%i')                       AS last_date
+      FROM db_external.CallDetails cd
+      WHERE cd.CallDate BETWEEN ? AND ?
+        AND ${OUTBOUND_FRAUD_SENTENCE_CHECK}
+        ${cf}
+      GROUP BY cd.AgentName, cd.client_id
+      ORDER BY flagged DESC, total DESC
+      LIMIT 100
+    `, params),
+  ]);
+
+  const cleanRows: FraudCallRow[] = rows.map(r => ({
+    lead_id:        String(r.lead_id),
+    agent_id:       String(r.agent_id),
+    mobile_no:      String(r.mobile_no ?? ''),
+    call_date:      String(r.call_date),
+    scenario:       String(r.scenario),
+    compliance:     Number(r.compliance) === 1 ? 1 : 0,
+    sentence:       String(r.sentence ?? ''),
+    transcript:     String(r.transcript ?? ''),
+    call_recording: String(r.call_recording ?? ''),
+  }));
+
+  const cleanAgents: FraudAgentRow[] = agentRows.map(r => {
+    const total = Number(r.total) || 0;
+    const flagged = Number(r.flagged) || 0;
+    return {
+      agent_id:  String(r.agent_id),
+      client_id: String(r.client_id ?? ''),
+      flagged,
+      total,
+      risk:      total > 0 ? Math.round((flagged / total) * 100) : 0,
+      last_date: String(r.last_date ?? ''),
+    };
+  });
+
+  return {
+    total:   cleanRows.length,
+    flagged: cleanRows.filter(r => r.compliance === 1).length,
+    clean:   cleanRows.filter(r => r.compliance === 0).length,
+    agents:  cleanAgents,
+    rows:    cleanRows,
+  };
+}
+
 export async function getDetailAnalysis(filters: QualityFilters): Promise<DetailAnalysisResponse> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);

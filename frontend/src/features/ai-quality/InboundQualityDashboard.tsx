@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import api from '@/lib/axios';
 import RawDataTab from './RawDataTab';
+import FraudCallTab from './FraudCallTab';
 
 function toLocalDT(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -1958,6 +1959,7 @@ const SLIDES = [
   { label: 'Repeat Analysis',     color: 'teal'    },
   { label: 'CLAP Analysis',       color: 'amber'   },
   { label: 'TNI Detection',       color: 'emerald' },
+  { label: 'Fraud Call',          color: 'rose'    },
   { label: 'Raw Data',            color: 'slate'   },
 ] as const;
 
@@ -6900,8 +6902,13 @@ export default function InboundQualityDashboard() {
           );
         })()}
 
+        {/* Fraud Call slide */}
+        {activeSlide === 6 && clientId && (
+          <FraudCallTab clientId={clientId} sd={sd} ed={ed} />
+        )}
+
         {/* Raw Data slide */}
-        {activeSlide === 6 && clientId && canViewRawData && (
+        {activeSlide === 7 && clientId && canViewRawData && (
           <RawDataTab clientId={clientId} apiPath="/inbound-quality/raw-data-tab" hasRecording hasTranscript wideColumns
             recordingColumn="call_recording" freezeTranscript
             transcriptApiPath="/inbound-quality/transcript" transcriptParam="leadId" />

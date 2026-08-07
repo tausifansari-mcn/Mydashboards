@@ -212,6 +212,15 @@ export async function getPotentialScamsDetail(req: Request, res: Response) {
   }
 }
 
+export async function getFraudCalls(req: Request, res: Response) {
+  try {
+    const data = await svc.getFraudCalls(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function getNegKeywords(_req: Request, res: Response) {
   try {
     const data = await svc.getNegKeywords();

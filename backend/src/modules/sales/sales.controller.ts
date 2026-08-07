@@ -700,6 +700,22 @@ export async function uploadBellavitaOrderExport(req: Request, res: Response) {
     // Excel force-texts postal codes with a leading apostrophe (e.g. '411028) to preserve leading
     // zeros — strip it so the stored zip is the plain digits, matching what's actually printed.
     const stripLeadingQuote = (v: unknown) => String(v ?? '').replace(/^'/, '');
+    // The address block (Shipping Zip / Tags / Shipping City / Shipping Province Name) appears in
+    // different column orders in different exports — e.g. Dec'24-15.xlsx has "Shipping City" before
+    // "Shipping Zip", while Nov'24/Oct'24 files have the reverse (confirmed against the source
+    // files). The leading columns (0–10 and the Date column) are stable, so those stay positional;
+    // the four address columns are resolved by their header name instead. Falls back to the old
+    // positional indices (11/12/13/14) if a header can't be found.
+    const header = rawRows[headerIdx].map(c => String(c ?? '').trim());
+    const findCol = (...names: string[]): number => {
+      const lower = names.map(n => n.toLowerCase());
+      return header.findIndex(h => lower.includes(h.toLowerCase()));
+    };
+    const colZip  = findCol('Shipping Zip', 'Shipping Postal Code');
+    const colCity = findCol('Shipping City');
+    const colTags = findCol('Tags', 'Order Tags');
+    const colProv = findCol('Shipping Province Name', 'Shipping State');
+    const addr = (r: (string | number | null)[], col: number, fallback: number) => col >= 0 ? r[col] : r[fallback];
     const mapped: svc.BellavitaOrderExportRow[] = dataRows.map(r => ({
       shippingPhone:        String(r[0] ?? ''),
       name:                 String(r[1] ?? ''),
@@ -712,10 +728,10 @@ export async function uploadBellavitaOrderExport(req: Request, res: Response) {
       createdAtRaw:         String(r[8] ?? ''),
       lineitemName:         String(r[9] ?? ''),
       shippingName:         String(r[10] ?? ''),
-      shippingZip:          stripLeadingQuote(r[11]),
-      tags:                 String(r[12] ?? ''),
-      shippingCity:         String(r[13] ?? ''),
-      shippingProvinceName: String(r[14] ?? ''),
+      shippingZip:          stripLeadingQuote(addr(r, colZip, 11)),
+      tags:                 String(addr(r, colTags, 12) ?? ''),
+      shippingCity:         String(addr(r, colCity, 13) ?? ''),
+      shippingProvinceName: String(addr(r, colProv, 14) ?? ''),
       orderDate:            String(r[15] ?? ''),
     }));
     const batchId = svc.generateBatchId();

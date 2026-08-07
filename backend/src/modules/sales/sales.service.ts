@@ -961,10 +961,15 @@ export async function uploadBellavitaOrderExport(rows: BellavitaOrderExportRow[]
     discount_code, created_at_raw, lineitem_name, shipping_name, shipping_zip, tags,
     shipping_city, shipping_province_name, order_date, uploaded_by, upload_batch_id
   ) VALUES ?`;
+  // Truncate each string to its column's declared width so a single oversized cell (e.g. a
+  // shipping_zip longer than VARCHAR(20)) can't abort the whole multi-row insert.
   const values = rows.map(r => [
-    r.shippingPhone, r.name, r.shippingPhone2, r.email, r.financialStatus, r.total || null, r.name2,
-    r.discountCode, parseOrderExportDate(r.createdAtRaw), r.lineitemName, r.shippingName, r.shippingZip, r.tags,
-    r.shippingCity, r.shippingProvinceName, parseOrderExportDate(r.orderDate), uploadedBy, batchId,
+    r.shippingPhone.slice(0, 50), r.name.slice(0, 100), r.shippingPhone2.slice(0, 50),
+    r.email.slice(0, 255), r.financialStatus.slice(0, 50), r.total || null, r.name2.slice(0, 100),
+    r.discountCode.slice(0, 100), parseOrderExportDate(r.createdAtRaw), r.lineitemName,
+    r.shippingName.slice(0, 255), r.shippingZip.slice(0, 20), r.tags,
+    r.shippingCity.slice(0, 255), r.shippingProvinceName.slice(0, 255),
+    parseOrderExportDate(r.orderDate), uploadedBy, batchId,
   ]);
   const [result] = await getMasmisPool().query(sql, [values]);
   return (result as mysql.ResultSetHeader).affectedRows;
@@ -1007,7 +1012,7 @@ export async function createBellavitaRepeatAllocation(
   orderDateDMY: string, rawDateISO: string, createdBy: number,
 ): Promise<CreateAllocationResult> {
   const [matchedRow] = await queryMasmis<{ c: number }>(`
-    SELECT COUNT(*) AS c FROM (
+    SELECT COUNT(DISTINCT oe.shipping_phone_2) AS c FROM (
       SELECT oe.shipping_phone_2
       FROM db_masmis.bvo_order_export oe
       JOIN (${ORDER_EXPORT_LATEST_FOR_DATE}) latest
@@ -1018,7 +1023,7 @@ export async function createBellavitaRepeatAllocation(
   const matched = Number(matchedRow?.c ?? 0);
 
   const [alreadyRow] = await queryMasmis<{ c: number }>(`
-    SELECT COUNT(*) AS c FROM (
+    SELECT COUNT(DISTINCT oe.shipping_phone_2) AS c FROM (
       SELECT oe.shipping_phone_2
       FROM db_masmis.bvo_order_export oe
       JOIN (${ORDER_EXPORT_LATEST_FOR_DATE}) latest
