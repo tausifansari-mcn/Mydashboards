@@ -1816,6 +1816,11 @@ const COLUMN_BASED_CLIENTS: Record<string, string> = {
   // offer_success/sale_done/product_offering/resolved_category — same column shape as the other retail
   // clients (GNC/Neeman's), populated Aug 1-6 (140 calls, 10 sales).
   '481': 'Reginald Men',
+  // Verified before adding: Bla Bli Blu's CallDetails populate Opening/Offered/ContactSettingContext
+  // (985 of 1,288 calls over Aug 1-6) with a real perfume-domain taxonomy, and its magical_script_cache
+  // rows carry op_success/csp_success/offer_success/sale_done/product_offering/resolved_category
+  // (1,288 calls, 540 sales, 385 category rows) — same column shape as the other retail clients.
+  '487': 'Bla Bli Blu',
 };
 
 // Reserved for excluding a specific stale/misconfigured campaign_id from a client's data, if one is
