@@ -2282,6 +2282,15 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
 }
 
 // ─── Fraud Call Detection ─────────────────────────────────────────────────────
+// Inbound fraud is driven ONLY by db_audit.call_quality_assessment.fraud_detected_sentence:
+// a call counts as a fraud call when that column holds a real sentence value
+// (non-empty, non-placeholder like 'None'/'NA'). The fraud_and_data_security_compliance
+// column is intentionally ignored — same rule the outbound fraud endpoint uses, so the
+// shared FraudCallTab component behaves identically for both dashboards.
+
+const INBOUND_FRAUD_SENTENCE_CHECK = `q.fraud_detected_sentence IS NOT NULL
+  AND TRIM(q.fraud_detected_sentence) != ''
+  AND LOWER(TRIM(q.fraud_detected_sentence)) NOT IN ('none', 'na', 'n/a', 'null')`;
 
 export interface FraudCallRow {
   lead_id:       string;
@@ -2328,13 +2337,13 @@ export async function getFraudCalls(filters: InboundQualityFilters): Promise<Fra
         COALESCE(q.MobileNo, '')                                       AS mobile_no,
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                     AS call_date,
         COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')            AS scenario,
-        COALESCE(q.fraud_and_data_security_compliance, 0)             AS compliance,
+        CASE WHEN ${INBOUND_FRAUD_SENTENCE_CHECK} THEN 1 ELSE 0 END   AS compliance,
         COALESCE(q.fraud_detected_sentence, '')                       AS sentence,
         COALESCE(q.Transcribe_Text, '')                               AS transcript,
         COALESCE(q.call_recording, '')                                AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.fraud_and_data_security_compliance IS NOT NULL
+        AND ${INBOUND_FRAUD_SENTENCE_CHECK}
         ${clientFilter}
       ORDER BY q.CallDate DESC
       LIMIT 300
@@ -2346,12 +2355,12 @@ export async function getFraudCalls(filters: InboundQualityFilters): Promise<Fra
       SELECT
         COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown')                 AS agent_id,
         q.ClientId                                                     AS client_id,
-        SUM(q.fraud_and_data_security_compliance = 1)                 AS flagged,
+        SUM(CASE WHEN ${INBOUND_FRAUD_SENTENCE_CHECK} THEN 1 ELSE 0 END) AS flagged,
         COUNT(*)                                                       AS total,
         DATE_FORMAT(MAX(q.CallDate), '%Y-%m-%d %H:%i')                AS last_date
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.fraud_and_data_security_compliance IS NOT NULL
+        AND ${INBOUND_FRAUD_SENTENCE_CHECK}
         ${clientFilter}
       GROUP BY q.User, q.ClientId
       ORDER BY flagged DESC, total DESC
@@ -5148,6 +5157,7 @@ const CQA_EXPORT_COLUMNS = [
   'outstanding_amount', 'customer_voc_logistic_positive', 'customer_voc_logistic_negative', 'customer_voc_agent_positive',
   'customer_voc_agent_negative', 'customer_voc_product_positive', 'customer_voc_product_negative',
   'Social_Media_Phone_Number_Order_ID_Email_ID',
+  'fraud_and_data_security_compliance', 'fraud_detected_sentence',
 ];
 
 // CallDate needs an explicit SQL-side format (dd-mm-yyyy hh:mm:ss) rather than the raw DATETIME —

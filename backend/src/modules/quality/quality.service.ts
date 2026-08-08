@@ -3070,7 +3070,7 @@ export async function getOutboundCallTranscript(callId: number): Promise<Outboun
 }
 
 // ─── Full raw export — every column, every client the requester can see ──────────
-// "All columns" genuinely means all 78 (verified via information_schema, not guessed).
+// "All columns" genuinely means all 80 (verified via information_schema, not guessed).
 // Streamed in keyset-paginated batches (not one big query) so memory stays bounded and the
 // browser starts receiving bytes immediately, regardless of how many rows match the date range.
 const CALL_DETAILS_EXPORT_COLUMNS = [
@@ -3088,6 +3088,7 @@ const CALL_DETAILS_EXPORT_COLUMNS = [
   'Product_Appreciation', 'Customer_Details_Confirmation', 'Delivery_TAT', 'Order_Consent', 'Reconfirmation',
   'Order_Summary', 'Further_Assistance', 'Call_Closing', 'Product_Description_Guideline', 'Alternative_Suggestion',
   'Reason_for_Not_Placing_Order', 'Pricing_and_Discount_Structure',
+  'fraud_and_data_security_compliance', 'fraud_detected_sentence',
 ];
 
 // CallDate needs an explicit SQL-side format (dd-mm-yyyy hh:mm:ss) rather than the raw DATETIME —
