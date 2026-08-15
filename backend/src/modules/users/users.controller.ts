@@ -31,7 +31,10 @@ export async function create(req: Request, res: Response): Promise<void> {
     const data = createSchema.parse(req.body);
     const user = await svc.createUser(data);
     await writeAuditLog({ userId: req.user!.id, action: 'CREATE_USER', entityType: 'user', entityId: user.id, newValues: { name: data.name, email: data.email } });
-    res.status(201).json(user);
+    const payload = user.email_sent
+      ? user
+      : { ...user, emailWarning: `User created, but the welcome email could not be sent (${user.email_error || 'SMTP error'}).` };
+    res.status(201).json(payload);
   } catch (err: unknown) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       res.status(409).json({ message: 'A user with this email already exists.' });
@@ -69,8 +72,16 @@ export async function permanentDelete(req: Request, res: Response): Promise<void
 }
 
 export async function resetPassword(req: Request, res: Response): Promise<void> {
-  await svc.adminResetPassword(Number(req.params.id));
-  res.json({ message: 'Temporary password sent to user email' });
+  try {
+    const result = await svc.adminResetPassword(Number(req.params.id));
+    if (result.email_sent) {
+      res.json({ message: 'Temporary password sent to user email' });
+    } else {
+      res.status(502).json({ message: `Password reset, but the email failed to send: ${result.email_error || 'unknown SMTP error'}` });
+    }
+  } catch (err: unknown) {
+    res.status(400).json({ message: err instanceof Error ? err.message : 'Reset failed' });
+  }
 }
 
 export async function getSaleBrands(req: Request, res: Response): Promise<void> {

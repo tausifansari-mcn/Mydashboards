@@ -110,12 +110,16 @@ export async function createUser(data: { name: string; email: string; role_id: n
     data: { ...data, password_hash: hash },
     include: { role: true },
   });
+  let email_sent = false;
+  let email_error: string | null = null;
   try {
     await sendWelcomeEmail(user.email, user.name, tempPassword);
+    email_sent = true;
   } catch (err: unknown) {
-    console.error('[users] Welcome email failed for', user.email, (err instanceof Error ? err.message : err));
+    email_error = err instanceof Error ? err.message : String(err);
+    console.error('[users] Welcome email failed for', user.email, email_error);
   }
-  return user;
+  return { ...user, email_sent, email_error };
 }
 
 export async function updateUser(id: number, data: Partial<{ name: string; role_id: number; client_id: number; is_active: boolean }>) {
@@ -142,7 +146,10 @@ export async function adminResetPassword(id: number) {
   const user = await prisma.md_users.update({ where: { id }, data: { password_hash: hash } });
   try {
     await sendWelcomeEmail(user.email, user.name, tempPassword);
+    return { ...user, email_sent: true, email_error: null };
   } catch (err: unknown) {
-    console.error('[users] Reset password email failed for', user.email, (err instanceof Error ? err.message : err));
+    const email_error = err instanceof Error ? err.message : String(err);
+    console.error('[users] Reset password email failed for', user.email, email_error);
+    return { ...user, email_sent: false, email_error };
   }
 }

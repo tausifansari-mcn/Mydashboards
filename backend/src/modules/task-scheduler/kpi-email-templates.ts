@@ -6,7 +6,12 @@ import { getInboundProcessKPIs, type InboundProcessKPIs } from '../inbound-quali
 import { getKPIs } from '../quality/quality.service';
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 interface Card { label: string; value: string; color: string; }
@@ -48,7 +53,7 @@ function kpiSection(title: string, accent: string, cards: Card[]): string {
     </table>`;
 }
 
-// ─── Per-module color/threshold helpers — mirror the live dashboard exactly ────
+// ─── Per-module color/threshold helpers — mirror the live dashboard exactly ──────
 
 const alColor     = (v: number) => v >= 95 ? '#22C55E' : v >= 85 ? '#F59E0B' : '#EF4444';
 const slColor     = (v: number) => v >= 80 ? '#22C55E' : v >= 65 ? '#F59E0B' : '#EF4444';
@@ -113,6 +118,60 @@ function outboundCrtCards(crt: { orCount: number; crCount: number; oprCount: num
   ];
 }
 
+// ─── Outbound NPS Cards ──────────────────────────────────────────────────────
+function outboundNpsCards(nps: { total: number; promoter: number; detractor: number; passive: number; npsScore: number; csatPct: number }): Card[] {
+  return [
+    { label: 'NPS Score', value: `${nps.npsScore}`, color: nps.npsScore >= 0 ? '#22C55E' : '#EF4444' },
+    { label: 'Total Feedback', value: nps.total.toLocaleString(), color: '#3B82F6' },
+    { label: 'Promoter', value: nps.promoter.toLocaleString(), color: '#22C55E' },
+    { label: 'Passive', value: nps.passive.toLocaleString(), color: '#F59E0B' },
+    { label: 'Detractor', value: nps.detractor.toLocaleString(), color: '#EF4444' },
+    { label: 'CSAT%', value: `${nps.csatPct}%`, color: '#14B8A6' },
+  ];
+}
+
+// ─── Outbound Opportunity Cards ──────────────────────────────────────────────
+function outboundOpportunityCards(opp: { totalOpportunities: number; moCount: number; opportunityLossPie?: {name: string; value: number}[] }): Card[] {
+  const totalLoss = opp.opportunityLossPie?.reduce((a, b) => a + b.value, 0) ?? 0;
+  return [
+    { label: 'Total Opportunities', value: opp.totalOpportunities.toLocaleString(), color: '#3B82F6' },
+    { label: 'MO Count', value: opp.moCount.toLocaleString(), color: '#22C55E' },
+    { label: 'Opportunity Lost', value: totalLoss.toLocaleString(), color: '#EF4444' },
+  ];
+}
+
+// ─── Mini Data Table ─────────────────────────────────────────────────────────
+function miniTable(title: string, accent: string, headers: string[], rows: string[][], maxRows = 6): string {
+  const head = headers.map(h => `<td style="padding:6px 10px;font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;background:#f1f5f9;">${escapeHtml(h)}</td>`).join('');
+  const body = rows.slice(0, maxRows).map((r, i) => {
+    const cells = r.map(c => `<td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#475569;${i % 2 ? 'background:#f8fafc;' : ''}">${escapeHtml(c)}</td>`).join('');
+    return `<tr>${cells}</tr>`;
+  }).join('');
+  const more = rows.length > maxRows ? `<tr><td colspan="${headers.length}" style="padding:6px 10px;font-size:11px;color:#94a3b8;text-align:center;">+ ${rows.length - maxRows} more</td></tr>` : '';
+  return `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
+      <tr><td style="background:${accent};padding:9px 14px;"><p style="margin:0;font-size:11px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:0.5px;">${escapeHtml(title)}</p></td></tr>
+      <tr><td style="padding:0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>${head}</tr>${body}${more}
+      </table></td></tr>
+    </table>`;
+}
+
+// ─── Inbound Quality Risk Cards ──────────────────────────────────────────────
+function aiQualityInboundRiskCards(k: InboundProcessKPIs): Card[] {
+  return [
+    { label: 'Fatal', value: k.fatal_count.toLocaleString(), color: '#EF4444' },
+    { label: 'Social Media / Court Threat', value: k.social_media_court_threat.toLocaleString(), color: '#B91C1C' },
+    { label: 'Potential Scam', value: k.potential_scam.toLocaleString(), color: '#DC2626' },
+    { label: 'Frustration', value: k.frustration_count.toLocaleString(), color: '#F59E0B' },
+    { label: 'Threats', value: k.threat_count.toLocaleString(), color: '#EF4444' },
+    { label: 'Abuse', value: k.abuse_count.toLocaleString(), color: '#DC2626' },
+    { label: 'Cuss / Abuse', value: k.cuss_abuse_count.toLocaleString(), color: '#B91C1C' },
+    { label: 'Slang', value: k.slang_count.toLocaleString(), color: '#F59E0B' },
+    { label: 'Sarcasm', value: k.sarcasm_count.toLocaleString(), color: '#F59E0B' },
+  ];
+}
+
 // ─── Public entry point — one HTML block per selected page ────────────────────
 export async function buildPageKpiHtml(
   page: { module: string; target_key: string; target_label: string },
@@ -130,13 +189,16 @@ export async function buildPageKpiHtml(
   if (page.module === 'ai_quality_inbound') {
     const k = await getInboundProcessKPIs({ startDate, endDate, clientId: page.target_key });
     return kpiSection(`${page.target_label} — AI Quality Inbound Overview`, '#1565C0', aiQualityInboundCards(k))
-         + kpiSection(`${page.target_label} — Score Components`, '#7C3AED', aiQualityInboundScoreComponents(k));
+         + kpiSection(`${page.target_label} — Score Components`, '#7C3AED', aiQualityInboundScoreComponents(k))
+         + kpiSection(`${page.target_label} — Risk & Customer Stress`, '#DC2626', aiQualityInboundRiskCards(k));
   }
 
   if (page.module === 'ai_quality_outbound') {
     const k = await getKPIs({ startDate, endDate, clientId: page.target_key });
     return kpiSection(`${page.target_label} — Customer Success Track`, '#1565C0', outboundCstCards(k.cst))
-         + kpiSection(`${page.target_label} — Customer Rejection Track`, '#B91C1C', outboundCrtCards(k.crt));
+         + kpiSection(`${page.target_label} — Customer Rejection Track`, '#B91C1C', outboundCrtCards(k.crt))
+         + kpiSection(`${page.target_label} — NPS Summary`, '#7C3AED', outboundNpsCards(k.nps))
+         + kpiSection(`${page.target_label} — Opportunity`, '#16a34a', outboundOpportunityCards(k.opportunity));
   }
 
   // sales — CSV attachment only, no KPI summary block

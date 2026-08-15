@@ -15,6 +15,7 @@ const taskSchema = z.object({
   time_of_day:   z.string().regex(/^\d{2}:\d{2}$/),
   day_of_week:   z.number().int().min(0).max(6).nullable().optional(),
   day_of_month:  z.number().int().min(1).max(31).nullable().optional(),
+  period:        z.enum(['today', 'yesterday', 'current_month']).nullable().optional(),
   recipients:    z.string().min(3),
   is_active:     z.boolean().optional(),
 });

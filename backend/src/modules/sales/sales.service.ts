@@ -142,6 +142,34 @@ export async function initNeemansTables(): Promise<void> {
   }
 }
 
+export async function initBellavitaRepeatAllocationTable(): Promise<void> {
+  const pool = getMasmisPool();
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS db_masmis.bvo_repeat_allocation (
+        id                           INT AUTO_INCREMENT PRIMARY KEY,
+        unique_id                    VARCHAR(50)   DEFAULT NULL,
+        mobile_no                    VARCHAR(20)   DEFAULT NULL,
+        payment_mode                 VARCHAR(50)   DEFAULT NULL,
+        email                        VARCHAR(255)  DEFAULT NULL,
+        order_invoice_amount         DECIMAL(12,2) DEFAULT NULL,
+        order_id                     VARCHAR(100)  DEFAULT NULL,
+        product_name                 TEXT          DEFAULT NULL,
+        shipping_customer_name       VARCHAR(255)  DEFAULT NULL,
+        previous_order_creation_date VARCHAR(50)   DEFAULT NULL,
+        uploaded_at                  DATETIME      DEFAULT CURRENT_TIMESTAMP,
+        uploaded_by                  INT           DEFAULT NULL,
+        upload_batch_id              VARCHAR(36)   DEFAULT NULL,
+        KEY idx_upload_batch_id (upload_batch_id),
+        KEY idx_mobile_no (mobile_no),
+        KEY idx_uploaded_at (uploaded_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+  } catch (err) {
+    console.error('[sales] initBellavitaRepeatAllocationTable warning:', (err as Error).message);
+  }
+}
+
 // ─── NMS Agent Details CRUD ────────────────────────────────────────────────────
 
 function tenureBucket(days: number): string {
@@ -990,6 +1018,28 @@ export async function uploadBellavitaRepeatCdr(rows: BellavitaRepeatCdrRow[], up
   return (result as mysql.ResultSetHeader).affectedRows;
 }
 
+// ─── Repeat Allocation Upload ────────────────────────────────────────────────
+export interface BellavitaRepeatAllocationRow {
+  uniqueId: string; mobileNo: string; paymentMode: string; email: string;
+  orderInvoiceAmount: number; orderId: string; productName: string;
+  shippingCustomerName: string; previousOrderCreationDate: string;
+}
+
+export async function uploadBellavitaRepeatAllocation(rows: BellavitaRepeatAllocationRow[], uploadedBy: number, batchId: string): Promise<number> {
+  const sql = `INSERT INTO db_masmis.bvo_repeat_allocation (
+    unique_id, mobile_no, payment_mode, email, order_invoice_amount, order_id,
+    product_name, shipping_customer_name, previous_order_creation_date,
+    uploaded_by, upload_batch_id
+  ) VALUES ?`;
+  const values = rows.map(r => [
+    r.uniqueId.slice(0, 50), r.mobileNo.slice(0, 20), r.paymentMode.slice(0, 50), r.email.slice(0, 255),
+    r.orderInvoiceAmount || null, r.orderId.slice(0, 100), r.productName, r.shippingCustomerName.slice(0, 255),
+    r.previousOrderCreationDate.slice(0, 50), uploadedBy, batchId,
+  ]);
+  const [result] = await getMasmisPool().query(sql, [values]);
+  return (result as mysql.ResultSetHeader).affectedRows;
+}
+
 // ─── Repeat Allocation ──────────────────────────────────────────────────────
 // Bellavita "Repeat Allocation" = bvo_order_export rows for a picked date, kept only where the
 // customer's phone (shipping_phone_2) was actually called (matched in bvo_Repeat_cdr on
@@ -1827,7 +1877,7 @@ export async function getNeemansCdrExport(startDate: string, endDate: string) {
 const UPLOAD_BATCH_TABLES = new Set([
   'bb_sale', 'gnc_sale', 'gnc_apr', 'gnc_allocation', 'bb_apr', 'bb_chat',
   'neemans_sale_raw', 'neemans_allocation', 'neemans_cart', 'bb_cart', 'neemans_apr',
-  'bvo_order_export', 'bvo_Repeat_cdr',
+  'bvo_order_export', 'bvo_Repeat_cdr', 'bvo_repeat_allocation',
 ]);
 
 export async function deleteUploadBatch(batchId: string, tableName: string): Promise<{ deleted: number }> {

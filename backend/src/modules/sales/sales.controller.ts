@@ -787,6 +787,57 @@ export async function uploadBellavitaRepeatCdr(req: Request, res: Response) {
   }
 }
 
+// ─── Bellavita "Repeat Allocation" Upload ──────────────────────────────────────
+// Excel rows are mapped by their column header (Unique / MobileNo / Payment Mode / Email /
+// Order Invoice Amount / Order Id / Product Name / Shipping Customer Name / Previous Order
+// Creation Date), mirroring how Repeat CDR resolves header-name columns.
+
+export async function uploadBellavitaRepeatAllocation(req: Request, res: Response) {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, message: 'User not authenticated' });
+
+    const rawRows = XLSX.utils.sheet_to_json<(string | null)[]>(sheet, { header: 1, defval: null, blankrows: false });
+    const headerIdx = rawRows.findIndex(r => r.some(c => c != null && /mobile.?no|unique|payment.?mode/i.test(String(c))));
+    const headers: string[] = headerIdx >= 0
+      ? rawRows[headerIdx].map(c => String(c ?? '').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''))
+      : [];
+    const dataRows = headerIdx >= 0 ? rawRows.slice(headerIdx + 1) : rawRows.slice(1);
+    if (!dataRows.length) return res.status(400).json({ success: false, message: 'No data rows found' });
+
+    const col = (r: (string | null)[], names: string[]): string => {
+      for (const name of names) {
+        const idx = headers.indexOf(name);
+        if (idx >= 0 && r[idx] != null) return String(r[idx]).trim();
+      }
+      return '';
+    };
+
+    const mapped: svc.BellavitaRepeatAllocationRow[] = dataRows.map(r => ({
+      uniqueId:                col(r, ['unique', 'unique_id', 'sno']),
+      mobileNo:                col(r, ['mobileno', 'mobile_no', 'mobile', 'phone', 'phone_number']),
+      paymentMode:             col(r, ['payment_mode', 'paymentmode', 'payment_method']),
+      email:                   col(r, ['email', 'email_id']),
+      orderInvoiceAmount:      parseFloat(col(r, ['order_invoice_amount', 'orderinvoiceamount', 'invoice_amount', 'amount', 'order_amount'])) || 0,
+      orderId:                 col(r, ['order_id', 'orderid', 'order']),
+      productName:             col(r, ['product_name', 'productname', 'product', 'lineitem_name']),
+      shippingCustomerName:    col(r, ['shipping_customer_name', 'shippingcustomername', 'customer_name', 'shipping_name', 'name']),
+      previousOrderCreationDate: col(r, ['previous_order_creation_date', 'previousordercreationdate', 'previous_order_date', 'order_creation_date', 'created_at_raw']),
+    }));
+    const batchId = svc.generateBatchId();
+    const inserted = await svc.uploadBellavitaRepeatAllocation(mapped, userId, batchId);
+    await svc.logUpload(batchId, 'bvo_repeat_allocation', req.file.originalname, inserted, userId);
+    res.json({ success: true, data: { rowsInserted: inserted, totalRows: mapped.length, batchId } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('sales uploadBellavitaRepeatAllocation error:', msg);
+    res.status(500).json({ success: false, message: `Upload failed: ${msg}` });
+  }
+}
+
 // ─── Bellavita "Repeat Allocation" ────────────────────────────────────────────
 // dd-mm-yyyy <-> yyyy-mm-dd conversion — bvo_order_export.order_date is stored dd-mm-yyyy (see
 // uploadBellavitaOrderExport/parseOrderExportDate), the frontend <input type="date"> gives yyyy-mm-dd.

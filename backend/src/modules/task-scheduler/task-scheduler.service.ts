@@ -86,11 +86,38 @@ function rowsToCsvBuffer(rows: Record<string, unknown>[]): Buffer {
   return Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(lines.join('\n'), 'utf-8')]);
 }
 
-// ─── Date-range convention (fixed per frequency, documented in the UI) ─────────
-// Daily -> previous calendar day. Weekly -> trailing 7 days ending yesterday.
-// Monthly -> previous full calendar month. Keeps every report window unambiguous and predictable.
-function computeDateRange(frequency: string): { startDate: string; endDate: string; rangeLabel: string } {
+// ─── Date-range convention ─────────────────────────────────────────────────────
+// The report window is chosen explicitly at schedule time (Today / Yesterday /
+// Current Month) and stored on the task. Tasks created before this option existed
+// have period = NULL and fall back to the legacy frequency-derived window
+// (daily → previous day, weekly → trailing 7 days ending yesterday, monthly →
+// previous full calendar month). Keeps every report window unambiguous.
+function fmtDisplay(d: Date): string {
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function computeDateRange(period: string | null, frequency: string): { startDate: string; endDate: string; rangeLabel: string } {
   const now = new Date();
+  const from = (d: Date) => `${fmtDate(d)} 00:00:00`;
+  const thru = (d: Date) => `${fmtDate(d)} 23:59:59`;
+
+  if (period === 'today') {
+    return { startDate: from(now), endDate: thru(now), rangeLabel: `Today · ${fmtDisplay(now)}` };
+  }
+  if (period === 'yesterday') {
+    const y = new Date(now);
+    y.setDate(y.getDate() - 1);
+    return { startDate: from(y), endDate: thru(y), rangeLabel: `Yesterday · ${fmtDisplay(y)}` };
+  }
+  if (period === 'current_month') {
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    return {
+      startDate: from(first), endDate: thru(now),
+      rangeLabel: `Current Month · ${fmtDisplay(first)} – ${fmtDisplay(now)}`,
+    };
+  }
+
+  // legacy frequency-based window
   if (frequency === 'daily') {
     const y = new Date(now);
     y.setDate(y.getDate() - 1);
@@ -195,7 +222,7 @@ export async function runTask(task: md_scheduled_tasks): Promise<void> {
   const pages = parsePages(task.pages);
   if (pages.length === 0) throw new Error('Task has no pages configured');
 
-  const { startDate, endDate, rangeLabel } = computeDateRange(task.frequency);
+  const { startDate, endDate, rangeLabel } = computeDateRange(task.period ?? null, task.frequency);
   const safeRange = rangeLabel.replace(/\s+/g, '_');
 
   const attachments: { filename: string; content: Buffer }[] = [];
@@ -222,6 +249,7 @@ export interface TaskInput {
   time_of_day:  string;
   day_of_week?:  number | null;
   day_of_month?: number | null;
+  period?:       string | null; // 'today' | 'yesterday' | 'current_month'; null/undefined = legacy frequency window
   recipients:   string;
   is_active?:   boolean;
 }
@@ -238,6 +266,7 @@ export async function createTask(input: TaskInput, createdBy: number) {
     data: {
       name: input.name, pages: input.pages as unknown as Prisma.InputJsonValue,
       frequency: input.frequency, time_of_day: input.time_of_day, day_of_week: dayOfWeek, day_of_month: dayOfMonth,
+      period: input.period ?? null,
       recipients: input.recipients, is_active: input.is_active ?? true, created_by: createdBy, next_run_at,
     },
   });
@@ -255,6 +284,7 @@ export async function updateTask(id: number, input: Partial<TaskInput>) {
     data: {
       ...input,
       pages: input.pages ? (input.pages as unknown as Prisma.InputJsonValue) : undefined,
+      period: input.period !== undefined ? input.period : undefined,
       next_run_at,
     },
   });

@@ -51,6 +51,7 @@ router.post('/upload-bellavita-chat', upload.single('file'), ctrl.uploadBellavit
 router.post('/upload-bellavita-cart', upload.single('file'), ctrl.uploadBellavitaCart);
 router.post('/upload-bellavita-order-export', upload.single('file'), ctrl.uploadBellavitaOrderExport);
 router.post('/upload-bellavita-repeat-cdr', upload.single('file'), ctrl.uploadBellavitaRepeatCdr);
+router.post('/upload-bellavita-repeat-allocation', upload.single('file'), ctrl.uploadBellavitaRepeatAllocation);
 router.post('/bellavita-repeat-allocation',          ctrl.createBellavitaRepeatAllocation);
 router.get('/bellavita-order-export/download',       ctrl.downloadBellavitaOrderExport);
 router.get('/bellavita-repeat-allocation/download',  ctrl.downloadBellavitaRepeatAllocation);

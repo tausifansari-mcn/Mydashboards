@@ -12,6 +12,7 @@ import BellavitaChatUpload from './BellavitaChatUpload';
 import BellavitaCartUpload from './BellavitaCartUpload';
 import BellavitaOrderExportUpload from './BellavitaOrderExportUpload';
 import BellavitaRepeatCdrUpload from './BellavitaRepeatCdrUpload';
+import BellavitaRepeatAllocationUpload from './BellavitaRepeatAllocationUpload';
 import BellavitaRepeatAllocation from './BellavitaRepeatAllocation';
 import BellavitaDashboard from './BellavitaDashboard';
 import GncUpload from './GncUpload';
@@ -25,7 +26,7 @@ import NeemansDashboard from './NeemansDashboard';
 
 type Brand = 'bellavita' | 'gnc' | 'neemans';
 type Section = 'dashboards' | 'uploader' | 'repeatAllocation';
-type BellavitaUploadType = 'sale' | 'apr' | 'chat' | 'cart' | 'orderExport' | 'repeatCdr';
+type BellavitaUploadType = 'sale' | 'apr' | 'chat' | 'cart' | 'orderExport' | 'repeatCdr' | 'repeatAllocation';
 type GncUploadType = 'sale' | 'apr' | 'allocation';
 type NeemansUploadType = 'cart' | 'sale' | 'allocation' | 'apr';
 type IconType = typeof BarChart3;
@@ -55,6 +56,7 @@ const BELLAVITA_UPLOAD_TYPES: { key: BellavitaUploadType; icon: IconType; label:
   { key: 'cart',        icon: ShoppingCart,  label: 'Cart Data',              desc: 'Upload Bellavita cart data' },
   { key: 'orderExport', icon: RefreshCw,     label: 'OrderExport For Repeat', desc: 'Shopify order export for repeat customer analysis' },
   { key: 'repeatCdr',   icon: PhoneCall,     label: 'Repeat CDR',             desc: 'Repeat call-detail records (Phone, Status, Agent)' },
+  { key: 'repeatAllocation', icon: Package,  label: 'Repeat Allocation',      desc: 'Upload repeat allocation rows (Unique, Mobile, Email, Order)' },
 ];
 
 const GNC_UPLOAD_TYPES: { key: GncUploadType; icon: IconType; label: string; desc: string }[] = [
@@ -292,6 +294,7 @@ export default function SalesDashboard() {
         {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'cart' && <div className="mt-6"><BellavitaCartUpload /></div>}
         {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'orderExport' && <div className="mt-6"><BellavitaOrderExportUpload /></div>}
         {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'repeatCdr' && <div className="mt-6"><BellavitaRepeatCdrUpload /></div>}
+        {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'repeatAllocation' && <div className="mt-6"><BellavitaRepeatAllocationUpload /></div>}
         {brand === 'gnc'       && section === 'uploader' && gncUploadType === 'sale'       && <div className="mt-6"><GncUpload /></div>}
         {brand === 'gnc'       && section === 'uploader' && gncUploadType === 'apr'        && <div className="mt-6"><GncAprUpload /></div>}
         {brand === 'gnc'       && section === 'uploader' && gncUploadType === 'allocation' && <div className="mt-6"><GncAllocationUpload /></div>}

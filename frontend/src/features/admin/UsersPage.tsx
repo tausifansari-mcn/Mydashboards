@@ -71,8 +71,12 @@ export default function UsersPage() {
 
   const handleResetPassword = async (id: number) => {
     if (!confirm('Send a temporary password to this user?')) return;
-    await api.post(`/users/${id}/reset-password`);
-    alert('Temporary password sent.');
+    try {
+      await api.post(`/users/${id}/reset-password`);
+      alert('Temporary password sent.');
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to send the email.');
+    }
   };
 
   const roleColor: Record<string, string> = {

@@ -13,7 +13,7 @@ import dashboardRoutes from './modules/dashboards/dashboards.routes';
 import auditRoutes from './modules/audit/audit.routes';
 import callMasterRoutes from './modules/call-master/call-master.routes';
 import salesRoutes from './modules/sales/sales.routes';
-import { initNeemansTables } from './modules/sales/sales.service';
+import { initNeemansTables, initBellavitaRepeatAllocationTable } from './modules/sales/sales.service';
 import inboundRoutes from './modules/inbound/inbound.routes';
 import qualityRoutes from './modules/quality/quality.routes';
 import {
@@ -59,6 +59,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 app.listen(PORT, () => {
   logger.info(`Backend running on port ${PORT}`);
   initNeemansTables().catch(err => logger.error('[startup] initNeemansTables failed:', err.message));
+  initBellavitaRepeatAllocationTable().catch(err => logger.error('[startup] initBellavitaRepeatAllocationTable failed:', err.message));
   initOutboundInsightsTables()
     .then(() => startOutboundInsightsJob())
     .catch(err => logger.error('[startup] initOutboundInsightsTables failed:', err.message));

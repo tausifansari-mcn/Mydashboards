@@ -137,6 +137,7 @@ model md_scheduled_tasks {
   time_of_day      String    @db.VarChar(5)    // "HH:mm"
   day_of_week      Int?                        // 0-6, used when frequency = weekly
   day_of_month     Int?                        // 1-31, used when frequency = monthly (clamped to month length)
+  period           String?   @db.VarChar(15)   // 'today' | 'yesterday' | 'current_month' — report data window; NULL = legacy frequency-based window
   recipients       String    @db.Text          // comma-separated emails
   is_active        Boolean   @default(true)
   created_by       Int
