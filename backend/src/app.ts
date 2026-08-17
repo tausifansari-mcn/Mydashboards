@@ -22,6 +22,7 @@ import {
   initOutboundDashboardCacheTables, startOutboundDashboardCacheJob,
 } from './modules/quality/quality.service';
 import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.routes';
+import { initVideoPhraseCache, startVideoPhraseJob } from './modules/inbound-quality/inbound-quality.service';
 import taskSchedulerRoutes from './modules/task-scheduler/task-scheduler.routes';
 import { startTaskSchedulerJob } from './modules/task-scheduler/task-scheduler.service';
 
@@ -70,6 +71,9 @@ app.listen(PORT, () => {
     .then(() => startOutboundDashboardCacheJob())
     .catch(err => logger.error('[startup] initOutboundDashboardCacheTables failed:', err.message));
   startTaskSchedulerJob();
+  initVideoPhraseCache()
+    .then(() => startVideoPhraseJob())
+    .catch(err => logger.error('[startup] initVideoPhraseCache failed:', err.message));
 });
 
 export default app;

@@ -1958,6 +1958,7 @@ const SLIDES = [
   { label: 'Detail Analysis',     color: 'purple'  },
   { label: 'Repeat Analysis',     color: 'teal'    },
   { label: 'CLAP Analysis',       color: 'amber'   },
+  { label: 'Video Phrases',       color: 'orange'  },
   { label: 'TNI Detection',       color: 'emerald' },
   { label: 'Fraud Call',          color: 'rose'    },
   { label: 'Raw Data',            color: 'slate'   },
@@ -2037,6 +2038,25 @@ export default function InboundQualityDashboard() {
   const [tniComments,   setTniComments]   = useState<Map<string, string>>(new Map());
   const [tniSavingId,   setTniSavingId]   = useState<string | null>(null);
   const [tniFormulaOpen, setTniFormulaOpen] = useState(false);
+
+  // ── Video Phrase Analysis ─────────────────────────────────────────────
+  interface VideoPhraseHit { phrase_id: string; label: string; count: number; pct: number; }
+  interface VideoPhraseLead { lead_id: string; call_date: string; agent: string; scenario: string; phrase_id: string; label: string; context: string; mobile_no: string; transcript: string; call_recording: string; }
+  interface VideoPhraseSummary { total_audited: number; total_with_phrase: number; phrase_hits: VideoPhraseHit[]; agent_breakdown: { agent: string; total_calls: number; phrase_calls: number; pct: number }[]; daily_trend: { date: string; count: number }[]; }
+  const [videoPhraseData, setVideoPhraseData] = useState<VideoPhraseSummary | null>(null);
+  const [videoPhraseLoading, setVideoPhraseLoading] = useState(false);
+  const [videoPhraseDrill, setVideoPhraseDrill] = useState<{ phraseId: string; label: string; leads: VideoPhraseLead[] } | null>(null);
+  const [videoPhraseDrillLoading, setVideoPhraseDrillLoading] = useState(false);
+  const [vpTranscripts, setVpTranscripts] = useState<Record<string, { loading: boolean; text: string }>>({});
+  const [vpOpenTranscripts, setVpOpenTranscripts] = useState<Record<string, boolean>>({});
+
+  const fetchVpTranscript = useCallback((leadId: string) => {
+    if (vpTranscripts[leadId]) return;
+    setVpTranscripts(prev => ({ ...prev, [leadId]: { loading: true, text: '' } }));
+    api.get<{ data: { transcript: string } | null }>(`/inbound-quality/transcript?leadId=${encodeURIComponent(leadId)}`)
+      .then(r => setVpTranscripts(prev => ({ ...prev, [leadId]: { loading: false, text: r.data?.data?.transcript ?? '' } })))
+      .catch(() => setVpTranscripts(prev => ({ ...prev, [leadId]: { loading: false, text: '' } })));
+  }, [vpTranscripts]);
 
   // ── Agent Master ─────────────────────────────────────────────────────────
   const [agentMap, setAgentMap] = useState<Map<string, string>>(new Map());
@@ -2486,6 +2506,16 @@ export default function InboundQualityDashboard() {
       .catch(() => {});
   }, [clientId, sd, ed]);
 
+  const fetchVideoPhrases = useCallback(() => {
+    setVideoPhraseLoading(true);
+    api.get<{ data: VideoPhraseSummary }>(
+      `/inbound-quality/video-phrases?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+    )
+      .then(r => setVideoPhraseData(r.data?.data ?? null))
+      .catch(() => setVideoPhraseData(null))
+      .finally(() => setVideoPhraseLoading(false));
+  }, [clientId, sd, ed]);
+
   // Fetch agent master once (not dependent on date/client — whole table)
   useEffect(() => {
     api.get<{ data: AgentMasterRow[] }>('/inbound-quality/agent-master')
@@ -2546,7 +2576,9 @@ export default function InboundQualityDashboard() {
       .finally(() => setGuidanceLoading(false));
     // TNI Detection slide
     fetchTNI();
-  }, [fetchKPIs, fetchPerformers, fetchDailyScores, fetchScenarios, fetchAlertTables, fetchFatalAnalysis, fetchDetailAnalysis, fetchDateWiseParams, fetchRepeatAnalysis, fetchClapAnalysis, fetchTNI, clientId, sd, ed]);
+    // Video Phrase Analysis slide (Bellavita only)
+    if (clientId === '375') fetchVideoPhrases();
+  }, [fetchKPIs, fetchPerformers, fetchDailyScores, fetchScenarios, fetchAlertTables, fetchFatalAnalysis, fetchDetailAnalysis, fetchDateWiseParams, fetchRepeatAnalysis, fetchClapAnalysis, fetchTNI, fetchVideoPhrases, clientId, sd, ed]);
 
   useEffect(() => { fetchAgentParam(); }, [fetchAgentParam]);
   useEffect(() => { fetchDayWiseQuality(); }, [fetchDayWiseQuality]);
@@ -2621,16 +2653,18 @@ export default function InboundQualityDashboard() {
 
         {/* Slide tabs */}
         <div className="pill-tabs mb-6">
-          {SLIDES.map((s, i) => (
-            s.label === 'Raw Data' && !canViewRawData ? null : (
+          {SLIDES.map((s, i) => {
+            if (s.label === 'Raw Data' && !canViewRawData) return null;
+            if (s.label === 'Video Phrases' && clientId !== '375') return null;
+            return (
               <button key={s.label}
                 onClick={() => setActiveSlide(i)}
                 className={`pill-tab ${activeSlide === i ? 'pill-tab-active' : ''}`}
               >
                 {s.label}
               </button>
-            )
-          ))}
+            );
+          })}
         </div>
 
         {/* Quality Performance slide */}
@@ -6282,8 +6316,134 @@ export default function InboundQualityDashboard() {
           );
         })()}
 
-        {/* ── TNI Detection Analysis slide ──────────────────────────────────── */}
+        {/* ── Video Phrase Analysis slide ────────────────────────────────── */}
         {activeSlide === 5 && (() => {
+          const vp = videoPhraseData;
+
+          return (
+            <>
+              {videoPhraseLoading ? (
+                <div className="flex items-center justify-center h-64 text-slate-500 text-sm">Loading video phrase analysis…</div>
+              ) : !vp ? (
+                <div className="flex items-center justify-center h-64 text-slate-500 text-sm">No video phrase data for this period.</div>
+              ) : (
+                <>
+                  {/* KPI strip */}
+                  <div className="grid grid-cols-3 gap-4 mb-6">
+                    <div className="rounded-xl bg-white border border-slate-200 p-4 text-center">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Audited Calls</p>
+                      <p className="text-2xl font-extrabold text-slate-800 mt-1">{vp.total_audited.toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-xl bg-white border border-slate-200 p-4 text-center">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Calls with Video Phrases</p>
+                      <p className="text-2xl font-extrabold mt-1" style={{ color: '#F97316' }}>{vp.total_with_phrase.toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-xl bg-white border border-slate-200 p-4 text-center">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Hit Rate</p>
+                      <p className="text-2xl font-extrabold mt-1" style={{ color: '#F97316' }}>
+                        {vp.total_audited > 0 ? `${((vp.total_with_phrase / vp.total_audited) * 100).toFixed(1)}%` : '—'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Phrase breakdown + Agent breakdown side by side */}
+                  <div className="grid grid-cols-2 gap-6 mb-6">
+                    {/* Phrase breakdown */}
+                    <div className="rounded-xl bg-white border border-slate-200 p-4">
+                      <p className="text-sm font-bold text-slate-700 mb-3">Phrase Detection Breakdown</p>
+                      {vp.phrase_hits.length === 0 ? (
+                        <p className="text-xs text-slate-400">No video phrases detected in this period.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {vp.phrase_hits.map(ph => (
+                            <button key={ph.phrase_id}
+                              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-slate-100 hover:bg-orange-50 transition-colors text-left"
+                              onClick={() => {
+                                setVideoPhraseDrill({ phraseId: ph.phrase_id, label: ph.label, leads: [] });
+                                setVideoPhraseDrillLoading(true);
+                                api.get<{ data: VideoPhraseLead[] }>(`/inbound-quality/video-phrase-leads?clientId=${clientId}&startDate=${sd}&endDate=${ed}&phraseId=${ph.phrase_id}&limit=50`)
+                                  .then(r => setVideoPhraseDrill(prev => prev ? { ...prev, leads: r.data?.data ?? [] } : null))
+                                  .catch(() => setVideoPhraseDrill(prev => prev ? { ...prev, leads: [] } : null))
+                                  .finally(() => setVideoPhraseDrillLoading(false));
+                              }}>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-slate-700 truncate">{ph.label}</p>
+                                <p className="text-[10px] text-slate-400 font-mono">{ph.phrase_id}</p>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="text-sm font-bold text-orange-600">{ph.count}</p>
+                                <p className="text-[10px] text-slate-400">{ph.pct}%</p>
+                              </div>
+                              <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden flex-shrink-0">
+                                <div className="h-full bg-orange-400 rounded-full" style={{ width: `${Math.min(ph.pct * 2, 100)}%` }} />
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Agent breakdown */}
+                    <div className="rounded-xl bg-white border border-slate-200 p-4">
+                      <p className="text-sm font-bold text-slate-700 mb-3">Agent-wise Video Phrase Mentions</p>
+                      {vp.agent_breakdown.length === 0 ? (
+                        <p className="text-xs text-slate-400">No agent data.</p>
+                      ) : (
+                        <div className="overflow-auto max-h-72">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="border-b border-slate-200">
+                                <th className="px-2 py-1.5 text-left font-semibold text-slate-500">Agent</th>
+                                <th className="px-2 py-1.5 text-right font-semibold text-slate-500">Total</th>
+                                <th className="px-2 py-1.5 text-right font-semibold text-slate-500">Phrase Hits</th>
+                                <th className="px-2 py-1.5 text-right font-semibold text-slate-500">%</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {vp.agent_breakdown.map(a => (
+                                <tr key={a.agent} className="border-b border-slate-50 hover:bg-orange-50/50">
+                                  <td className="px-2 py-1.5 font-medium text-slate-700">{a.agent}</td>
+                                  <td className="px-2 py-1.5 text-right text-slate-500">{a.total_calls}</td>
+                                  <td className="px-2 py-1.5 text-right font-bold text-orange-600">{a.phrase_calls}</td>
+                                  <td className="px-2 py-1.5 text-right text-slate-500">{a.pct}%</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Daily trend */}
+                  {vp.daily_trend.length > 0 && (
+                    <div className="rounded-xl bg-white border border-slate-200 p-4 mb-6">
+                      <p className="text-sm font-bold text-slate-700 mb-3">Daily Video Phrase Trend</p>
+                      <div className="flex items-end gap-1 h-24">
+                        {vp.daily_trend.map(d => {
+                          const max = Math.max(...vp.daily_trend.map(x => x.count), 1);
+                          const h = Math.max((d.count / max) * 80, 4);
+                          return (
+                            <div key={d.date} className="flex-1 flex flex-col items-center gap-0.5 group relative">
+                              <div className="w-full rounded-t" style={{ height: h, backgroundColor: '#F97316', opacity: 0.75 }} />
+                              <span className="text-[8px] text-slate-400 truncate w-full text-center" title={d.date}>{d.date.slice(5)}</span>
+                              <span className="absolute -top-5 bg-slate-800 text-white text-[9px] px-1.5 py-0.5 rounded hidden group-hover:block whitespace-nowrap z-10">
+                                {d.date}: {d.count}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          );
+        })()}
+
+        {/* ── TNI Detection Analysis slide ──────────────────────────────────── */}
+        {activeSlide === 6 && (() => {
           const TNI_THRESHOLD = 85;
           const td = tniData;
 
@@ -6903,12 +7063,12 @@ export default function InboundQualityDashboard() {
         })()}
 
         {/* Fraud Call slide */}
-        {activeSlide === 6 && clientId && (
+        {activeSlide === 7 && clientId && (
           <FraudCallTab clientId={clientId} sd={sd} ed={ed} />
         )}
 
         {/* Raw Data slide */}
-        {activeSlide === 7 && clientId && canViewRawData && (
+        {activeSlide === 8 && clientId && canViewRawData && (
           <RawDataTab clientId={clientId} apiPath="/inbound-quality/raw-data-tab" hasRecording hasTranscript wideColumns
             recordingColumn="call_recording" freezeTranscript
             transcriptApiPath="/inbound-quality/transcript" transcriptParam="leadId" />
@@ -7217,6 +7377,114 @@ export default function InboundQualityDashboard() {
           onClose={() => { setFatalTranscriptItem(null); setFatalTranscriptData(null); }}
           fatalItem={fatalTranscriptItem}
         />
+      )}
+
+      {/* Video Phrase Drill-down Modal */}
+      {videoPhraseDrill && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.65)' }}
+          onClick={() => setVideoPhraseDrill(null)}>
+          <div className="rounded-2xl shadow-2xl w-full max-w-5xl max-h-[88vh] flex flex-col overflow-hidden bg-white"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-5 py-3 border-b"
+              style={{ background: 'linear-gradient(135deg,#F97316 0%,#FB923C 100%)' }}>
+              <div className="p-2 rounded-xl bg-white/20">
+                <span className="text-white text-lg">🎬</span>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-bold text-white">{videoPhraseDrill.label}</p>
+                <p className="text-[10px] text-white/70 mt-0.5">
+                  {videoPhraseDrillLoading ? 'Loading…' : `${videoPhraseDrill.leads.length} calls matched`}
+                </p>
+              </div>
+              <button onClick={() => { setVideoPhraseDrill(null); setVpTranscripts({}); setVpOpenTranscripts({}); }}
+                className="text-white/70 hover:text-white p-1">✕</button>
+            </div>
+            <div className="overflow-auto flex-1 p-4 space-y-3">
+              {videoPhraseDrillLoading ? (
+                <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+                  <span className="text-sm">Loading calls…</span>
+                </div>
+              ) : videoPhraseDrill.leads.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-400">
+                  <span className="text-4xl">📋</span>
+                  <p className="text-sm">No matching calls found.</p>
+                </div>
+              ) : (
+                videoPhraseDrill.leads.map((row, i) => (
+                  <div key={row.lead_id + i} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                    {/* Header: Lead ID + Agent + Date */}
+                    <div className="flex items-center gap-3 px-4 py-2.5 bg-slate-50 border-b border-slate-100 flex-wrap">
+                      <button className="font-mono text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                        onClick={() => { setVideoPhraseDrill(null); handleLeadClick(row.lead_id); }}
+                        title="Click to view full transcript">
+                        #{row.lead_id}
+                      </button>
+                      <span className="text-[11px] font-semibold text-slate-700">🧑‍💼 {row.agent}</span>
+                      <span className="text-[10px] text-slate-400">|</span>
+                      <span className="text-[11px] text-slate-600">📅 {row.call_date}</span>
+                      {row.mobile_no && <>
+                        <span className="text-[10px] text-slate-400">|</span>
+                        <span className="text-[11px] text-slate-500 font-mono">📱 {row.mobile_no}</span>
+                      </>}
+                      {row.scenario && <>
+                        <span className="text-[10px] text-slate-400">|</span>
+                        <span className="rounded px-1.5 py-0.5 text-[9px] font-semibold bg-slate-100 text-slate-600">{row.scenario}</span>
+                      </>}
+                    </div>
+
+                    <div className="p-3.5 space-y-3">
+                      {/* Matched Phrase + Context */}
+                      <div className="rounded-lg border border-orange-200 bg-orange-50 px-3.5 py-2.5">
+                        <p className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest mb-1 text-orange-600">
+                          🎯 Matched Phrase: {row.label}
+                        </p>
+                        {row.context
+                          ? <p className="text-[12px] text-orange-900 font-medium leading-relaxed whitespace-pre-wrap">{row.context}</p>
+                          : <p className="text-[11px] text-orange-400 italic">No context captured.</p>}
+                      </div>
+
+                      {/* Call Recording */}
+                      <div className="rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
+                        <p className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest mb-1.5 text-slate-500">
+                          🎧 Call Recording
+                        </p>
+                        {row.call_recording
+                          ? <audio controls preload="metadata" src={row.call_recording} style={{ width: '100%', height: 32 }} />
+                          : <p className="text-[11px] text-slate-400 italic">No recording available for this call.</p>}
+                      </div>
+
+                      {/* Transcript */}
+                      <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                        <button onClick={() => {
+                          const next = !vpOpenTranscripts[row.lead_id];
+                          setVpOpenTranscripts(prev => ({ ...prev, [row.lead_id]: next }));
+                          if (next) fetchVpTranscript(row.lead_id);
+                        }}
+                          className="w-full flex items-center gap-1.5 px-3.5 py-2 text-left hover:bg-slate-50 transition-colors">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">📝 Call Transcript</span>
+                          <span className="ml-auto text-slate-400">{vpOpenTranscripts[row.lead_id] ? '▲' : '▶'}</span>
+                        </button>
+                        {vpOpenTranscripts[row.lead_id] && (
+                          <div className="border-t border-slate-100 px-3.5 py-3">
+                            {vpTranscripts[row.lead_id]?.loading ? (
+                              <p className="text-[11px] text-slate-400 italic">Loading transcript…</p>
+                            ) : vpTranscripts[row.lead_id]?.text ? (
+                              <p className="text-[12px] text-slate-700 leading-relaxed whitespace-pre-wrap max-h-48 overflow-auto">{vpTranscripts[row.lead_id].text}</p>
+                            ) : (
+                              <p className="text-[11px] text-slate-400 italic">No transcript available for this call.</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

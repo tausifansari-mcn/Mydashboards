@@ -630,6 +630,36 @@ export async function getClapProductVocQuotes(req: Request, res: Response) {
   }
 }
 
+export async function getVideoPhrases(req: Request, res: Response) {
+  try {
+    const data = await svc.getVideoPhraseAnalysis(parseFilters(req));
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getVideoPhraseLeads(req: Request, res: Response) {
+  try {
+    const phraseId = (req.query.phraseId as string) || '';
+    if (!phraseId) { res.status(400).json({ message: 'phraseId is required' }); return; }
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const data = await svc.getVideoPhraseLeads(parseFilters(req), phraseId, limit);
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function getVideoPhraseCacheStats(_req: Request, res: Response) {
+  try {
+    const data = await svc.getVideoPhraseCacheStats();
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function exportAllCsv(req: Request, res: Response) {
   try {
     const { startDate, endDate, clientId } = parseFilters(req);

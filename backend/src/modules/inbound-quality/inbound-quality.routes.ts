@@ -73,5 +73,8 @@ router.get('/clap-voc-quotes',         ctrl.getClapVocQuotes);
 router.get('/clap-product-voc-summary', ctrl.getClapProductVocSummary);
 router.get('/clap-product-voc-quotes',  ctrl.getClapProductVocQuotes);
 router.get('/clap-intelligence',       ctrl.getClapIntelligence);
+router.get('/video-phrases',           ctrl.getVideoPhrases);
+router.get('/video-phrase-leads',      ctrl.getVideoPhraseLeads);
+router.get('/video-phrase-cache-stats', ctrl.getVideoPhraseCacheStats);
 
 export default router;

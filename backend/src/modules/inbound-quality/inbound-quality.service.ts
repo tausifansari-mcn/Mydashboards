@@ -1,5 +1,6 @@
 import type { Response } from 'express';
 import { querySource } from '../../lib/sourceDb';
+import { queryMasmis, getMasmisPool } from '../../lib/masmisDb';
 import { csvEscape } from '../../lib/csv';
 import { getProjectTrend, getProjectKeyByQaClientId } from '../inbound/inbound.service';
 
@@ -5204,4 +5205,521 @@ export async function streamInboundExportCsv(
     await new Promise(r => setTimeout(r, 150)); // stay gentle on the shared DB server between batches
   }
   res.end();
+}
+
+// ─── Video Phrase Analysis ──────────────────────────────────────────────────
+// Detects video/unboxing-related phrases in Bellavita call transcripts.
+// Because Transcribe_Text is mediumtext and LIKE scans on 3,700+ rows time out on the source DB,
+// results are cached in db_masmis and refreshed by a background job.
+
+export const VIDEO_PHRASES = [
+  {
+    id: 'unboxing_video_request',
+    label: 'Agent Asked for Unboxing Video',
+    patterns: [
+      // Direct requests
+      'unboxing video', 'unboxing video create', 'unboxing video bana', 'unboxing video banaiye',
+      'unboxing video bhejiye', 'unboxing video share', 'unboxing video karke',
+      'unboxing video banake bhejiye', 'unboxing video banake share',
+      // "Did you create?" / "Have you made?"
+      'kiya apne unboxing', 'kya aapne unboxing', 'kiya unboxing', 'unboxing ki hai',
+      'unboxing video ki hai', 'unboxing video create ki', 'unboxing video bana hai',
+      // Should have / supposed to
+      'unboxing video create krni', 'unboxing video create karni', 'unboxing video create hoti',
+      'unboxing video banani hoti', 'unboxing video banana hota', 'unboxing video banana tha',
+      'unboxing video bana leni', 'unboxing video bana lete',
+      // Short video / small video
+      'short video', 'choti video', 'chhota video', 'short video create', 'short video bana',
+      'short video bhejiye', 'short video share', 'short video banake',
+      'choti video bana', 'choti video bhejiye', 'choti video share kar',
+    ],
+  },
+  {
+    id: 'video_with_invoice',
+    label: 'Agent Asked Video + Invoice Together',
+    patterns: [
+      'invoice ke sath', 'invoice ke saath', 'invoice k sath', 'invoice k saath',
+      'invoice ke saath video', 'invoice ke sath video', 'invoice k saath video',
+      'video invoice', 'invoice video', 'video with invoice',
+      'invoice sath share', 'invoice sath video', 'invoice sath bhejiye',
+      'invoice or video', 'invoice aur video', 'invoice and video',
+      'video or invoice', 'video aur invoice',
+      'invoice ke sath share', 'invoice ke saath share',
+      'screenshot ke sath', 'screenshot ke saath',
+    ],
+  },
+  {
+    id: 'video_not_proper',
+    label: 'Video/Details Not Proper',
+    patterns: [
+      'proper nahi hai', 'proper ni hai', 'proper nahi hai video', 'proper ni h',
+      'video proper nahi', 'video proper ni', 'unboxing proper nahi', 'unboxing proper ni',
+      'details proper nahi', 'details proper ni',
+      'sahi se nahi hai', 'sahi se ni hai', 'sahi se share nahi',
+      'theek se nahi hai', 'theek se ni hai',
+      'proper share nahi kiya', 'proper share ni kiya', 'properly share nahi',
+      'dhang se nahi', 'sahi dhang se nahi',
+      'proper tarike se nahi', 'proper tareeke se nahi',
+    ],
+  },
+  {
+    id: 'invoice_not_visible',
+    label: 'Invoice Not Visible/Clear',
+    patterns: [
+      'invoice show nahi', 'invoice show ni', 'invoice dikh nahi', 'invoice dikh ni',
+      'invoice clearly nahi', 'invoice saaf nahi', 'invoice blur',
+      'invoice visible nahi', 'invoice nazar nahi', 'invoice nazar ni',
+      'invoice padh nahi', 'invoice read nahi', 'invoice samajh nahi',
+      'amount show nahi', 'amount dikh nahi', 'order id show nahi',
+      'invoice proper nahi dikh', 'invoice sahi se nahi dikh',
+    ],
+  },
+  {
+    id: 'video_not_clear_blur',
+    label: 'Video Not Clear / Blur',
+    patterns: [
+      'video clear nahi', 'video clear ni', 'video saaf nahi', 'video saaf ni',
+      'video blur', 'video blurry', 'video dhundhla',
+      'video dikh nahi', 'video dikh ni', 'video clearly nahi dikh',
+      'video properly nahi dikh', 'video sahi se nahi dikh',
+      'video visible nahi', 'video nazar nahi',
+      'video mein dikh nahi', 'video mein saaf nahi',
+      'record sahi se nahi', 'record proper nahi',
+    ],
+  },
+  {
+    id: 'complaint_cannot_raise',
+    label: 'Complaint Cannot Be Raised Without Proof',
+    patterns: [
+      'complaint raise nahi', 'complaint raise ni', 'complaint raise nahi kr',
+      'complaint raise nahi kar', 'complaint raise nahi ho', 'complaint raise ni pauga',
+      'complaint raise nahi pauga', 'complaint raise nahi kar pauga',
+      'complaint nahi le sakte', 'complaint nahi le paenge', 'complaint nahi utha sakte',
+      'complaint process nahi', 'complaint process nahi ho', 'complaint process ni hoga',
+      'complaint filed nahi', 'complaint filed nahi ho',
+      'complaint register nahi', 'complaint register nahi ho',
+      'complaint darj nahi', 'complaint darj nahi ho',
+      'bina details complaint', 'bina video complaint', 'bina proof complaint',
+      'complaint ke liye details chahiye', 'complaint ke liye video chahiye',
+      'complaint ke liye proof chahiye',
+      'maaf kijiye complaint', 'maafi complaint',
+    ],
+  },
+  {
+    id: 'video_not_received',
+    label: 'Agent Has Not Received Video',
+    patterns: [
+      'video receive nahi', 'video receive ni', 'video received nahi', 'video received ni',
+      'video nahi mili', 'video nahi mila', 'video nahi aayi', 'video nahi aaya',
+      'video abhi tak nahi', 'video abhi tak ni',
+      'video nahi aya hai', 'video nahi aayi hai',
+      'video share nahi', 'video share ni', 'video share nahi kiya',
+      'video nahi bheja', 'video nahi bheji', 'video nahi bheja hai',
+      'video nahi dikha', 'video nahi dikha hai',
+      'abhi tak video nahi', 'abhi tak video ni',
+      'mere pass video nahi', 'mere paas video nahi', 'mere paas video ni',
+    ],
+  },
+  {
+    id: 'video_required_for_refund',
+    label: 'Video Required for Refund/Return',
+    patterns: [
+      'video ke bina refund', 'video ke bina return', 'video ke bagair refund',
+      'video ke bina replacement',
+      'refund ke liye video', 'return ke liye video', 'replacement ke liye video',
+      'video nahi to refund', 'video nahi toh refund', 'video nahi to return',
+      'bina video refund', 'bina video return',
+      'video dijiye refund', 'video dijiye return',
+      'video bhejiye refund', 'video bhejiye return',
+      'video ke sath refund', 'video ke saath refund', 'video ke sath return',
+    ],
+  },
+  {
+    id: 'agent_sending_to_email',
+    label: 'Agent Directs to Share via Email/WhatsApp',
+    patterns: [
+      'mail pe bhejiye', 'mail pe share', 'mail pe send', 'mail id pe', 'email pe bhejiye',
+      'email pe share', 'email pe send',
+      'whatsapp pe bhejiye', 'whatsapp pe share', 'whatsapp pe send',
+      'whatsapp kar dijiye', 'whatsapp kar', 'whatsapp kar do',
+      'number pe bhejiye', 'number pe share', 'number pe send',
+    ],
+  },
+  {
+    id: 'update_timeline_24_48',
+    label: 'Agent Gives 24-48 Hrs Update Timeline',
+    patterns: [
+      '24 se 48', '24 to 48', '24-48', '24 hours', '48 hours',
+      'ek din se', 'do din se', 'ek do din',
+      'update share kr', 'update share kar', 'update share kar diya',
+      'update de denge', 'update de diya jayega', 'update kr diya jayega',
+      'jaldi update', 'jaldi se update',
+      'ek din m update', 'do din m update',
+    ],
+  },
+  {
+    id: 'customer_no_video',
+    label: 'Customer Says They Have No Video',
+    patterns: [
+      'mere paas video nahi', 'mere paas video ni', 'mere pass video nahi',
+      'video nahi bana', 'video nahi banaya', 'video nahi banai',
+      'video nahi hai mere', 'video nahi hai hamare', 'video nahi hai mera',
+      'maine video nahi', 'maine video ni', 'humne video nahi',
+      'video nahi kiya', 'video nahi ki',
+      'video nahi ban payi', 'video nahi ban paya', 'video nahi ban saki',
+      'video banana nahi', 'video banana ni', 'video banaya nahi',
+      'koi video nahi', 'koi video ni',
+    ],
+  },
+  {
+    id: 'video_share_karo_bhejiye',
+    label: 'Agent Requests: Share/Send the Video',
+    patterns: [
+      'video share karo', 'video share kar', 'video share kar dijiye',
+      'video share kar do', 'video share kar de', 'video share kar dena',
+      'video bhejiye', 'video bhej dijiye', 'video bhej do', 'video bhej de',
+      'video bhejiye ga', 'video bhej dijiye ga',
+      'video send karo', 'video send kar', 'video send kar dijiye',
+      'video upload karo', 'video upload kar', 'video upload kar dijiye',
+      'video upload kar do', 'video upload kar de',
+      'video submit karo', 'video submit kar', 'video submit kar dijiye',
+      'video upload karke bhejiye', 'video upload karke share',
+      'video portal pe upload', 'video portal pe bhejiye',
+    ],
+  },
+  {
+    id: 'complaint_invalid_rejected',
+    label: 'Complaint Invalid / Rejected / Closed',
+    patterns: [
+      'complaint invalid', 'complaint rejected', 'complaint closed',
+      'complaint cancel', 'complaint cancelled',
+      'request reject', 'request rejected', 'request rhagyi', 'request reh gayi',
+      'request pending', 'request hold pe hai',
+      'complaint deny', 'complaint denied',
+    ],
+  },
+] as const;
+
+export type VideoPhraseHit = {
+  phrase_id: string;
+  label: string;
+  count: number;
+  pct: number;
+};
+
+export type VideoPhraseLead = {
+  lead_id: string;
+  call_date: string;
+  agent: string;
+  scenario: string;
+  phrase_id: string;
+  label: string;
+  context: string;
+  mobile_no: string;
+  transcript: string;
+  call_recording: string;
+};
+
+export type VideoPhraseSummary = {
+  total_audited: number;
+  total_with_phrase: number;
+  phrase_hits: VideoPhraseHit[];
+  agent_breakdown: { agent: string; total_calls: number; phrase_calls: number; pct: number }[];
+  daily_trend: { date: string; count: number }[];
+};
+
+const VIDEO_CACHE_TABLE = 'db_masmis.video_phrase_cache';
+const VIDEO_CURSOR_TABLE = 'db_masmis.video_phrase_cursor';
+
+export async function initVideoPhraseCache(): Promise<void> {
+  const pool = getMasmisPool();
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS ${VIDEO_CACHE_TABLE} (
+      id              INT AUTO_INCREMENT PRIMARY KEY,
+      lead_id         VARCHAR(45)  NOT NULL,
+      client_id       VARCHAR(45)  NOT NULL,
+      call_date       DATETIME     NOT NULL,
+      agent           VARCHAR(100) DEFAULT NULL,
+      scenario        VARCHAR(45)  DEFAULT NULL,
+      phrase_id       VARCHAR(60)  NOT NULL,
+      context         TEXT         DEFAULT NULL,
+      computed_at     DATETIME     DEFAULT NOW(),
+      UNIQUE KEY uk_lead_phrase (lead_id, phrase_id),
+      INDEX idx_client_phrase   (client_id, phrase_id),
+      INDEX idx_client_date     (client_id, call_date),
+      INDEX idx_phrase_date     (phrase_id, call_date)
+    )
+  `);
+
+  // Version table to detect phrase pattern changes → triggers full re-scan
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS db_masmis.video_phrase_version (
+      id         TINYINT PRIMARY KEY DEFAULT 1,
+      version    VARCHAR(256) NOT NULL DEFAULT '',
+      computed_at DATETIME DEFAULT NOW()
+    )
+  `);
+  await pool.execute(`ALTER TABLE db_masmis.video_phrase_version MODIFY version VARCHAR(256) NOT NULL DEFAULT ''`).catch(() => {});
+
+  // Compute a version hash from all current phrase IDs + pattern counts
+  const { createHash } = await import('crypto');
+  const raw = VIDEO_PHRASES.map(p => `${p.id}:${p.patterns.length}`).join('|');
+  const currentVersion = createHash('sha256').update(raw).digest('hex').slice(0, 64);
+  const [verRows] = await pool.execute(`SELECT version FROM db_masmis.video_phrase_version WHERE id = 1`);
+  const storedVersion = (verRows as any[])[0]?.version ?? '';
+
+  if (storedVersion !== currentVersion) {
+    // Patterns changed → wipe cache and reset cursor so the job reprocesses everything
+    console.log(`[video-phrase] pattern version changed ("${storedVersion}" → "${currentVersion}"), resetting cache`);
+    await pool.execute(`TRUNCATE TABLE ${VIDEO_CACHE_TABLE}`);
+    // Reset cursor to seed from last 90 days
+    const seed = await querySource<{ minId: number }>(
+      `SELECT COALESCE(MIN(id), 0) AS minId FROM db_audit.call_quality_assessment WHERE ClientId = '375' AND CallDate >= DATE_SUB(NOW(), INTERVAL 90 DAY)`
+    );
+    const seedId = Math.max(0, Number(seed[0]?.minId ?? 0) - 1);
+    await pool.execute(`INSERT INTO db_masmis.video_phrase_version (id, version) VALUES (1, ?) ON DUPLICATE KEY UPDATE version = ?`, [currentVersion, currentVersion]);
+    await pool.execute(`INSERT INTO ${VIDEO_CURSOR_TABLE} (id, last_qa_id) VALUES (1, ?) ON DUPLICATE KEY UPDATE last_qa_id = ?`, [seedId, seedId]);
+  }
+
+  // Ensure cursor row exists
+  const [cursorRows] = await pool.execute(`SELECT last_qa_id FROM ${VIDEO_CURSOR_TABLE} WHERE id = 1`);
+  if ((cursorRows as any[]).length === 0) {
+    const seed = await querySource<{ minId: number }>(
+      `SELECT COALESCE(MIN(id), 0) AS minId FROM db_audit.call_quality_assessment WHERE ClientId = '375' AND CallDate >= DATE_SUB(NOW(), INTERVAL 90 DAY)`
+    );
+    const seedId = Math.max(0, Number(seed[0]?.minId ?? 0) - 1);
+    await pool.execute(`INSERT INTO ${VIDEO_CURSOR_TABLE} (id, last_qa_id) VALUES (1, ?)`, [seedId]);
+  }
+}
+
+function matchesVideoPhrase(text: string, patterns: readonly string[]): { matched: boolean; context: string } {
+  const lower = text.toLowerCase();
+  for (const p of patterns) {
+    const idx = lower.indexOf(p);
+    if (idx !== -1) {
+      const start = Math.max(0, idx - 80);
+      const end = Math.min(text.length, idx + p.length + 80);
+      return { matched: true, context: text.substring(start, end).trim() };
+    }
+  }
+  return { matched: false, context: '' };
+}
+
+async function processVideoPhraseBatch(clientId: string, batchSize = 30): Promise<number> {
+  const [cursorRow] = await queryMasmis<{ last_qa_id: number }>(
+    `SELECT last_qa_id FROM ${VIDEO_CURSOR_TABLE} WHERE id = 1`
+  );
+  const lastId = cursorRow?.last_qa_id ?? 0;
+
+  const rows = await querySource<{ id: number; lead_id: string; CallDate: string; User: string; scenario: string }>(
+    `SELECT id, lead_id, DATE_FORMAT(CallDate, '%Y-%m-%d %H:%i:%s') AS CallDate, User, scenario
+     FROM db_audit.call_quality_assessment
+     WHERE id > ? AND ClientId = ? AND Transcribe_Text IS NOT NULL AND LENGTH(Transcribe_Text) > 50
+     ORDER BY id ASC LIMIT ${batchSize}`,
+    [lastId, clientId]
+  );
+
+  if (rows.length === 0) return 0;
+
+  let inserted = 0;
+  for (const row of rows) {
+    const textRows = await querySource<{ t: string }>(
+      `SELECT Transcribe_Text AS t FROM db_audit.call_quality_assessment WHERE id = ? LIMIT 1`,
+      [row.id]
+    );
+    if (!textRows.length || !textRows[0].t) continue;
+
+    const text = textRows[0].t;
+    for (const phrase of VIDEO_PHRASES) {
+      const { matched, context } = matchesVideoPhrase(text, phrase.patterns);
+      if (matched) {
+        try {
+          await queryMasmis(
+            `INSERT IGNORE INTO ${VIDEO_CACHE_TABLE} (lead_id, client_id, call_date, agent, scenario, phrase_id, context)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [row.lead_id, clientId, row.CallDate, row.User ?? null, row.scenario ?? null, phrase.id, context]
+          );
+          inserted++;
+        } catch { /* dupe or transient */ }
+      }
+    }
+  }
+
+  await queryMasmis(
+    `UPDATE ${VIDEO_CURSOR_TABLE} SET last_qa_id = ? WHERE id = 1`,
+    [rows[rows.length - 1].id]
+  );
+
+  return inserted;
+}
+
+let _videoJobRunning = false;
+
+export function startVideoPhraseJob(clientId = '375'): void {
+  const run = async () => {
+    if (_videoJobRunning) return;
+    _videoJobRunning = true;
+    try {
+      let total = 0;
+      // Process up to 5 batches per tick to stay gentle on the source DB
+      for (let i = 0; i < 5; i++) {
+        const n = await processVideoPhraseBatch(clientId, 30);
+        total += n;
+        if (n === 0) break;
+        await new Promise(r => setTimeout(r, 2000)); // 2s pause between batches
+      }
+      if (total > 0) console.log(`[video-phrase] cached ${total} phrase hits`);
+    } catch (err) {
+      console.error('[video-phrase] job error:', (err as Error).message);
+    } finally {
+      _videoJobRunning = false;
+    }
+  };
+
+  // Run once on startup after a short delay, then every 15 minutes
+  setTimeout(run, 30_000);
+  setInterval(run, 15 * 60 * 1000);
+}
+
+export async function getVideoPhraseAnalysis(filters: InboundQualityFilters): Promise<VideoPhraseSummary> {
+  const { startDate, endDate, clientId } = filters;
+  const cid = clientId ?? '375';
+
+  // Total calls with any phrase in the period (from cache — fast)
+  const totalPhraseRows = await queryMasmis<{ c: number }>(
+    `SELECT COUNT(DISTINCT lead_id) AS c FROM ${VIDEO_CACHE_TABLE}
+     WHERE client_id = ? AND call_date BETWEEN ? AND ?`,
+    [cid, startDate, endDate]
+  );
+  const total_with_phrase = Number(totalPhraseRows[0]?.c ?? 0);
+
+  // Phrase hit counts
+  const phraseRows = await queryMasmis<{ phrase_id: string; count: number }>(
+    `SELECT phrase_id, COUNT(DISTINCT lead_id) AS count
+     FROM ${VIDEO_CACHE_TABLE}
+     WHERE client_id = ? AND call_date BETWEEN ? AND ?
+     GROUP BY phrase_id ORDER BY count DESC`,
+    [cid, startDate, endDate]
+  );
+
+  const phrase_hits: VideoPhraseHit[] = phraseRows.map(r => ({
+    phrase_id: r.phrase_id,
+    label: VIDEO_PHRASES.find(p => p.id === r.phrase_id)?.label ?? r.phrase_id,
+    count: Number(r.count),
+    pct: 0, // filled below
+  }));
+
+  // Total audited: try source DB with a short timeout, fall back to phrase count
+  let total_audited = total_with_phrase;
+  try {
+    const totalRows = await querySource<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM db_audit.call_quality_assessment
+       WHERE ClientId = ? AND CallDate BETWEEN ? AND ?`,
+      [cid, startDate, endDate]
+    );
+    total_audited = Number(totalRows[0]?.c ?? total_with_phrase);
+  } catch {
+    // Source DB slow — use phrase count as baseline
+  }
+
+  // Fill percentages
+  for (const ph of phrase_hits) {
+    ph.pct = total_audited > 0 ? Math.round((ph.count / total_audited) * 10000) / 100 : 0;
+  }
+
+  // Agent breakdown — only from cache (no source DB queries)
+  const agentRows = await queryMasmis<{ agent: string; phrase_calls: number }>(
+    `SELECT COALESCE(agent, 'Unknown') AS agent, COUNT(DISTINCT lead_id) AS phrase_calls
+     FROM ${VIDEO_CACHE_TABLE}
+     WHERE client_id = ? AND call_date BETWEEN ? AND ?
+     GROUP BY agent ORDER BY phrase_calls DESC LIMIT 20`,
+    [cid, startDate, endDate]
+  );
+  const agent_breakdown = agentRows.map(r => ({
+    agent: r.agent,
+    total_calls: 0,
+    phrase_calls: Number(r.phrase_calls),
+    pct: 0,
+  }));
+
+  // Daily trend
+  const dailyRows = await queryMasmis<{ date: string; count: number }>(
+    `SELECT DATE_FORMAT(call_date, '%Y-%m-%d') AS date, COUNT(DISTINCT lead_id) AS count
+     FROM ${VIDEO_CACHE_TABLE}
+     WHERE client_id = ? AND call_date BETWEEN ? AND ?
+     GROUP BY date ORDER BY date`,
+    [cid, startDate, endDate]
+  );
+  const daily_trend = dailyRows.map(r => ({ date: r.date, count: Number(r.count) }));
+
+  return { total_audited, total_with_phrase, phrase_hits, agent_breakdown, daily_trend };
+}
+
+export async function getVideoPhraseLeads(
+  filters: InboundQualityFilters, phraseId: string, limit = 50,
+): Promise<VideoPhraseLead[]> {
+  const { startDate, endDate, clientId } = filters;
+  const cid = clientId ?? '375';
+
+  const rows = await queryMasmis<{
+    lead_id: string; call_date: string; agent: string; scenario: string; phrase_id: string; context: string;
+  }>(
+    `SELECT lead_id, DATE_FORMAT(call_date, '%Y-%m-%d %H:%i') AS call_date,
+            agent, scenario, phrase_id, LEFT(context, 200) AS context
+     FROM ${VIDEO_CACHE_TABLE}
+     WHERE client_id = ? AND call_date BETWEEN ? AND ? AND phrase_id = ?
+     ORDER BY call_date DESC LIMIT ${limit}`,
+    [cid, startDate, endDate, phraseId]
+  );
+
+  const leadIds = rows.map(r => r.lead_id);
+
+  let sourceMap = new Map<string, { MobileNo: string; call_recording: string }>();
+  if (leadIds.length > 0) {
+    // Fetch only MobileNo and call_recording from source DB (skip Transcribe_Text — it's mediumtext and slow)
+    const sourceRows = await querySource<{
+      lead_id: string; MobileNo: string; call_recording: string;
+    }>(
+      `SELECT lead_id, COALESCE(MobileNo,'') AS MobileNo, COALESCE(call_recording,'') AS call_recording
+       FROM db_audit.call_quality_assessment
+       WHERE lead_id IN (${leadIds.map(() => '?').join(',')})
+         AND ClientId = ?
+       LIMIT ${leadIds.length}`,
+      [...leadIds, cid]
+    ).catch(() => [] as any[]);
+    sourceMap = new Map(sourceRows.map(r => [r.lead_id, r]));
+  }
+
+  return rows.map(r => {
+    const src = sourceMap.get(r.lead_id);
+    return {
+      lead_id: r.lead_id,
+      call_date: r.call_date,
+      agent: r.agent ?? 'Unknown',
+      scenario: r.scenario ?? '',
+      phrase_id: r.phrase_id,
+      label: VIDEO_PHRASES.find(p => p.id === r.phrase_id)?.label ?? r.phrase_id,
+      context: r.context ?? '',
+      mobile_no: src?.MobileNo ?? '',
+      transcript: '',
+      call_recording: src?.call_recording ?? '',
+    };
+  });
+}
+
+export async function getVideoPhraseCacheStats(): Promise<{ last_qa_id: number; total_cached: number; last_computed: string | null }> {
+  const cursorRows = await queryMasmis<{ last_qa_id: number }>(
+    `SELECT last_qa_id FROM ${VIDEO_CURSOR_TABLE} WHERE id = 1`
+  );
+  const countRows = await queryMasmis<{ c: number }>(
+    `SELECT COUNT(*) AS c FROM ${VIDEO_CACHE_TABLE}`
+  );
+  const lastRows = await queryMasmis<{ last_computed: string | null }>(
+    `SELECT DATE_FORMAT(MAX(computed_at), '%Y-%m-%d %H:%i:%s') AS last_computed FROM ${VIDEO_CACHE_TABLE}`
+  );
+  return {
+    last_qa_id: Number(cursorRows[0]?.last_qa_id ?? 0),
+    total_cached: Number(countRows[0]?.c ?? 0),
+    last_computed: lastRows[0]?.last_computed ?? null,
+  };
 }
