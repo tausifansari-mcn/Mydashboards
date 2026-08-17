@@ -1958,7 +1958,7 @@ const SLIDES = [
   { label: 'Detail Analysis',     color: 'purple'  },
   { label: 'Repeat Analysis',     color: 'teal'    },
   { label: 'CLAP Analysis',       color: 'amber'   },
-  { label: 'Video Phrases',       color: 'orange'  },
+  { label: 'Proof Collection Analysis', color: 'orange'  },
   { label: 'TNI Detection',       color: 'emerald' },
   { label: 'Fraud Call',          color: 'rose'    },
   { label: 'Raw Data',            color: 'slate'   },
@@ -2655,7 +2655,7 @@ export default function InboundQualityDashboard() {
         <div className="pill-tabs mb-6">
           {SLIDES.map((s, i) => {
             if (s.label === 'Raw Data' && !canViewRawData) return null;
-            if (s.label === 'Video Phrases' && clientId !== '375') return null;
+            if (s.label === 'Proof Collection Analysis' && clientId !== '375') return null;
             return (
               <button key={s.label}
                 onClick={() => setActiveSlide(i)}
@@ -6402,7 +6402,7 @@ export default function InboundQualityDashboard() {
                             <tbody>
                               {vp.agent_breakdown.map(a => (
                                 <tr key={a.agent} className="border-b border-slate-50 hover:bg-orange-50/50">
-                                  <td className="px-2 py-1.5 font-medium text-slate-700">{a.agent}</td>
+                                  <td className="px-2 py-1.5 font-medium text-slate-700">{resolveAgent(a.agent)}</td>
                                   <td className="px-2 py-1.5 text-right text-slate-500">{a.total_calls}</td>
                                   <td className="px-2 py-1.5 text-right font-bold text-orange-600">{a.phrase_calls}</td>
                                   <td className="px-2 py-1.5 text-right text-slate-500">{a.pct}%</td>
@@ -7420,7 +7420,8 @@ export default function InboundQualityDashboard() {
                         title="Click to view full transcript">
                         #{row.lead_id}
                       </button>
-                      <span className="text-[11px] font-semibold text-slate-700">🧑‍💼 {row.agent}</span>
+                      <span className="text-[11px] font-semibold text-slate-700">🧑‍💼 {resolveAgent(row.agent)}</span>
+                      <span className="text-[10px] font-mono text-slate-400">({row.agent})</span>
                       <span className="text-[10px] text-slate-400">|</span>
                       <span className="text-[11px] text-slate-600">📅 {row.call_date}</span>
                       {row.mobile_no && <>

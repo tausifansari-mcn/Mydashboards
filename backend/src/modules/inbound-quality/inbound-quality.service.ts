@@ -5232,6 +5232,11 @@ export const VIDEO_PHRASES = [
       'short video', 'choti video', 'chhota video', 'short video create', 'short video bana',
       'short video bhejiye', 'short video share', 'short video banake',
       'choti video bana', 'choti video bhejiye', 'choti video share kar',
+      // Additional from evaluation prompt
+      'video create kar lijiye', 'video bana lijiye', 'video bana ke bhejiye',
+      'video create karke bhejiye', 'video create karke share kijiye',
+      'short video create kar lijiye', 'choti video create kar lijiye',
+      'video create kijiye', 'video banaiye', 'video bana ke dikhaiye',
     ],
   },
   {
@@ -5246,6 +5251,15 @@ export const VIDEO_PHRASES = [
       'video or invoice', 'video aur invoice',
       'invoice ke sath share', 'invoice ke saath share',
       'screenshot ke sath', 'screenshot ke saath',
+      // Additional from evaluation prompt
+      'invoice ke sath share kar dijiye', 'invoice ke saath share kar dijiye',
+      'invoice share kar dijiye', 'invoice share kijiye',
+      'invoice bhejiye', 'invoice send kijiye',
+      'invoice upload kijiye', 'invoice upload kar dijiye',
+      'invoice aur video share', 'video aur invoice share',
+      'invoice email pe bhejiye', 'invoice mail pe bhejiye',
+      'invoice whatsapp pe bhejiye', 'invoice whatsapp kar dijiye',
+      'invoice properly share karein', 'invoice properly bhejiye',
     ],
   },
   {
@@ -5260,6 +5274,13 @@ export const VIDEO_PHRASES = [
       'proper share nahi kiya', 'proper share ni kiya', 'properly share nahi',
       'dhang se nahi', 'sahi dhang se nahi',
       'proper tarike se nahi', 'proper tareeke se nahi',
+      // Additional from evaluation prompt
+      'details share ki hain woh proper nahi', 'jo details share ki proper nahi',
+      'details proper nahi hain', 'details sahi se nahi hain',
+      'jo video share ki hai woh proper nahi', 'jo video bheji woh proper nahi',
+      'video proper nahi hai', 'invoice proper nahi hai',
+      'document proper nahi hai', 'proof proper nahi hai',
+      'clear nahi hai', 'visible nahi hai', 'dikhayi nahi de raha',
     ],
   },
   {
@@ -5303,6 +5324,18 @@ export const VIDEO_PHRASES = [
       'complaint ke liye details chahiye', 'complaint ke liye video chahiye',
       'complaint ke liye proof chahiye',
       'maaf kijiye complaint', 'maafi complaint',
+      // Additional from evaluation prompt
+      'bina proper details ke complaint', 'bina proper details complaint',
+      'bina sahi details complaint', 'bina sahi details ke complaint',
+      'proper details ke bina complaint', 'proper details bina complaint',
+      'complaint raise nahi kar paunga', 'complaint raise nahi kar paungi',
+      'complaint raise nahi kar sakta', 'complaint raise nahi kar sakti',
+      'request raise nahi kar paunga', 'request raise nahi kar paungi',
+      'request raise nahi kar sakte',
+      'maaf kahunga', 'maaf kahungi', 'maaf chahunga', 'maaf chahungi',
+      'proper details nahi hai', 'proper details nahi mile',
+      'sahi details nahi hai', 'sahi details nahi mile',
+      'request raise nahi ho paega', 'request raise nahi hogi',
     ],
   },
   {
@@ -5318,6 +5351,10 @@ export const VIDEO_PHRASES = [
       'video nahi dikha', 'video nahi dikha hai',
       'abhi tak video nahi', 'abhi tak video ni',
       'mere pass video nahi', 'mere paas video nahi', 'mere paas video ni',
+      // Additional
+      'video abhi nahi mili', 'video nahi aai abhi tak',
+      'video aayi nahi', 'video nahi receive hui',
+      'video nahi dikhi', 'video dikhayi nahi di',
     ],
   },
   {
@@ -5355,6 +5392,15 @@ export const VIDEO_PHRASES = [
       'update de denge', 'update de diya jayega', 'update kr diya jayega',
       'jaldi update', 'jaldi se update',
       'ek din m update', 'do din m update',
+      // Additional from evaluation prompt
+      'request raise ki jayegi', 'request raise karenge', 'request raise karte hain',
+      'request raise ho jayegi', 'request raise ho jayega',
+      'proper details milne ke baad request', 'proper details receive hone ke baad request',
+      'details milne ke baad request', 'details receive ke baad request',
+      'sahi details milne ke baad request', 'sahi details receive ke baad',
+      'update denge', 'update diya jayega', 'update milega',
+      'kal tak update', 'parso tak update',
+      'ek din ka time dijiye', 'do din ka time dijiye',
     ],
   },
   {
@@ -5396,6 +5442,12 @@ export const VIDEO_PHRASES = [
       'request reject', 'request rejected', 'request rhagyi', 'request reh gayi',
       'request pending', 'request hold pe hai',
       'complaint deny', 'complaint denied',
+      // Additional from evaluation prompt
+      'complaint nahi ho paegi', 'complaint nahi ho payega',
+      'request nahi ho paegi', 'request nahi ho payega',
+      'complaint process mein nahi hai', 'complaint under process hai',
+      'request pending mein hai', 'request process ho rahi hai',
+      'abhi tak process nahi hui', 'abhi tak pending hai',
     ],
   },
 ] as const;
