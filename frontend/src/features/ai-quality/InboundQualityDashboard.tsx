@@ -46,43 +46,46 @@ interface ScamWordRow {
 interface PotentialScamDetail { flags: ScamFlagCounts; wordRows: ScamWordRow[]; }
 
 interface AbuseDetailRow {
-  speaker:    'Agent' | 'Customer';
-  lead_id:    string;
-  agent_id:   string;
-  mobile_no:  string;
-  word:       string;
-  meaning:    string;
-  scenario:   string;
-  scenario1:  string;
-  date:       string;
-  client_id:  string;
-  transcript: string;
+  speaker:       'Agent' | 'Customer';
+  lead_id:       string;
+  agent_id:      string;
+  mobile_no:     string;
+  word:          string;
+  meaning:       string;
+  scenario:      string;
+  scenario1:     string;
+  date:          string;
+  client_id:     string;
+  transcript:    string;
+  call_recording: string;
 }
 interface AbuseDetailResponse { total: number; rows: AbuseDetailRow[]; }
 
 interface NegSignalDetailCallRow {
-  lead_id:    string;
-  agent_id:   string;
-  mobile_no:  string;
-  word:       string;
-  scenario:   string;
-  scenario1:  string;
-  date:       string;
-  client_id:  string;
-  transcript: string;
+  lead_id:       string;
+  agent_id:      string;
+  mobile_no:     string;
+  word:          string;
+  scenario:      string;
+  scenario1:     string;
+  date:          string;
+  client_id:     string;
+  transcript:    string;
+  call_recording: string;
 }
 interface NegSignalDetailCallResponse { total: number; rows: NegSignalDetailCallRow[]; }
 
 interface PosKeywordRow { keyword: string; customer_count: number; agent_count: number; total: number; }
 
 interface PosKeywordLeadRow {
-  lead_id:   string;
-  agent_id:  string;
-  source:    'Customer' | 'Agent';
-  phrase:    string;
-  scenario:  string;
-  scenario1: string;
-  date:      string;
+  lead_id:       string;
+  agent_id:      string;
+  source:        'Customer' | 'Agent';
+  phrase:        string;
+  scenario:      string;
+  scenario1:     string;
+  date:          string;
+  call_recording: string;
 }
 
 interface ScoreParamDetail { column: string; label: string; pct: number; }
@@ -919,7 +922,7 @@ function PosSignalDetailModal({
                   <table className="w-full text-xs border-collapse">
                     <thead>
                       <tr style={{ background: `linear-gradient(135deg, ${color}22 0%, ${color}12 100%)` }}>
-                        {['#', 'Lead ID', 'Source', 'Agent ID', 'Phrase', 'Scenario', 'Date'].map(h => (
+                        {['#', 'Lead ID', 'Source', 'Agent ID', 'Phrase', 'Scenario', 'Date', 'Recording'].map(h => (
                           <th key={h} className="text-left px-3 py-3 font-bold uppercase tracking-wider text-[10px] whitespace-nowrap"
                             style={{ color, borderBottom: `1px solid ${color}25` }}>
                             {h}
@@ -959,6 +962,11 @@ function PosSignalDetailModal({
                             </span>
                           </td>
                           <td className="px-3 py-2.5 font-mono text-slate-400 text-[10px] whitespace-nowrap">{r.date}</td>
+                          <td className="px-3 py-2.5">
+                            {r.call_recording
+                              ? <audio controls preload="metadata" src={r.call_recording} style={{ height: 30, width: 210 }} />
+                              : <span className="text-slate-300 italic text-[10px]">No recording</span>}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1059,7 +1067,7 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent 
                   <table className="w-full text-xs">
                     <thead>
                       <tr style={{ background: '#FAF5FF' }}>
-                        {['Lead ID','Speaker','Agent Name','Mobile No','Word Used','Meaning','Scenario','Sub-Scenario','Date'].map(h => (
+                        {['Lead ID','Speaker','Agent Name','Mobile No','Word Used','Meaning','Scenario','Sub-Scenario','Date','Recording'].map(h => (
                           <th key={h} className="px-4 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -1097,6 +1105,11 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent 
                             <td className="px-4 py-2.5 border-b border-slate-100 text-slate-700">{r.scenario}</td>
                             <td className="px-4 py-2.5 border-b border-slate-100 text-slate-500">{r.scenario1 === 'Unknown' ? '—' : r.scenario1}</td>
                             <td className="px-4 py-2.5 border-b border-slate-100 text-slate-500 font-mono text-[10px] whitespace-nowrap">{r.date}</td>
+                            <td className="px-4 py-2.5 border-b border-slate-100">
+                              {r.call_recording
+                                ? <audio controls preload="metadata" src={r.call_recording} style={{ height: 30, width: 210 }} />
+                                : <span className="text-slate-300 italic text-[10px]">No recording</span>}
+                            </td>
                           </tr>
                         );
                       })}
@@ -1161,7 +1174,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
             <ExportBtn onClick={() => downloadCSV(detail.wordRows.map(r => ({
               Flag: r.flag ?? 'Scam', 'Lead ID': r.lead_id ?? '', 'Agent Name': resolveAgent(r.agent_id ?? ''),
               'Mobile No': r.mobile_no ?? '', 'Word / Phrase': r.word, Scenario: r.scenario,
-              'Sub-Scenario': r.scenario1, Date: r.date ?? '', 'Social Media Info': r.social_media_info ?? '',
+              'Sub-Scenario': r.scenario1, Date: r.date ?? '', 'Contact Details': r.social_media_info ?? '',
               'Call Recording': r.call_recording ?? '', Transcript: r.transcript ?? '',
             })), 'potential-scam.csv')} />
           )}
@@ -1304,7 +1317,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
                       <table className="w-full text-xs border-collapse">
                         <thead>
                           <tr className="bg-slate-50">
-                            {['Flag', 'Lead ID', 'Agent Name', 'Mobile No', 'Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date', 'Recording'].map(h => (
+                            {['Flag', 'Lead ID', 'Agent Name', 'Mobile No', 'Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date', 'Contact Details', 'Recording'].map(h => (
                               <th key={h} className="px-3 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">
                                 {h}
                               </th>
@@ -1341,6 +1354,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
                               <td className="px-3 py-2 text-slate-600">{r.scenario}</td>
                               <td className="px-3 py-2 text-slate-500">{r.scenario1 === 'Unknown' ? '—' : r.scenario1}</td>
                               <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{r.date ?? '—'}</td>
+                              <td className="px-3 py-2 text-slate-600 text-[11px] max-w-[200px] break-words">{r.social_media_info || '—'}</td>
                               <td className="px-3 py-2" style={{ minWidth: 220 }}>
                                 {r.call_recording
                                   ? <audio controls preload="metadata" src={r.call_recording} style={{ height: 30, width: 210 }} />
@@ -1431,7 +1445,7 @@ function SocialThreatDetailModal({
                 Type: r.threat_type, 'Lead ID': r.lead_id, 'Agent Name': resolveAgent(r.agent_id),
                 'Mobile No': r.mobile_no, 'Threat Word / Phrase': r.threat_word,
                 Scenario: r.scenario, 'Sub-Scenario': r.scenario1, Date: r.date,
-                'Social Media Info': r.social_media_info, 'Call Recording': r.call_recording, Transcript: r.transcript,
+                'Contact Details': r.social_media_info, 'Call Recording': r.call_recording, Transcript: r.transcript,
               })), 'social-court-threat.csv')} />
             )}
             <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors">
@@ -1549,7 +1563,7 @@ function SocialThreatDetailModal({
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-orange-50">
-                    {['Type', 'Lead ID', 'Agent Name', 'Mobile No', 'Threat Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date', 'Recording'].map(h => (
+                    {['Type', 'Lead ID', 'Agent Name', 'Mobile No', 'Threat Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date', 'Contact Details', 'Recording'].map(h => (
                       <th key={h} className="text-left px-3 py-2.5 font-semibold text-orange-700 whitespace-nowrap border-b border-orange-100 uppercase tracking-wider text-[10px]">
                         {h}
                       </th>
@@ -1586,6 +1600,7 @@ function SocialThreatDetailModal({
                       <td className="px-3 py-2 text-slate-600">{row.scenario}</td>
                       <td className="px-3 py-2 text-slate-500">{row.scenario1 === 'Unknown' ? '—' : row.scenario1}</td>
                       <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{row.date}</td>
+                      <td className="px-3 py-2 text-slate-600 text-[11px] max-w-[200px] break-words">{row.social_media_info || '—'}</td>
                       <td className="px-3 py-2" style={{ minWidth: 220 }}>
                         {row.call_recording
                           ? <audio controls preload="metadata" src={row.call_recording} style={{ height: 30, width: 210 }} />
@@ -1676,7 +1691,7 @@ function NegSignalDetailModal({
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-50">
-                    {['Lead ID', 'Agent Name', 'Mobile No', 'Word / Phrase Used', 'Scenario', 'Sub-Scenario', 'Date'].map(h => (
+                    {['Lead ID', 'Agent Name', 'Mobile No', 'Word / Phrase Used', 'Scenario', 'Sub-Scenario', 'Date', 'Recording'].map(h => (
                       <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-slate-200">
                         {h}
                       </th>
@@ -1707,6 +1722,11 @@ function NegSignalDetailModal({
                       <td className="px-3 py-2 text-slate-600">{row.scenario}</td>
                       <td className="px-3 py-2 text-slate-500">{row.scenario1}</td>
                       <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{row.date}</td>
+                      <td className="px-3 py-2">
+                        {row.call_recording
+                          ? <audio controls preload="metadata" src={row.call_recording} style={{ height: 30, width: 210 }} />
+                          : <span className="text-slate-300 italic text-[10px]">No recording</span>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -7236,6 +7256,7 @@ export default function InboundQualityDashboard() {
                           <th className="text-left px-4 py-2.5 font-bold text-slate-700">Scenario</th>
                           <th className="text-left px-4 py-2.5 font-bold text-slate-700">Sub-Scenario</th>
                           <th className="text-left px-4 py-2.5 font-bold text-slate-700">Date</th>
+                          <th className="text-left px-4 py-2.5 font-bold text-slate-700">Recording</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -7253,6 +7274,11 @@ export default function InboundQualityDashboard() {
                             <td className="px-4 py-2.5 text-slate-600">{row.scenario}</td>
                             <td className="px-4 py-2.5 text-slate-600">{row.scenario1 || '—'}</td>
                             <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{row.date}</td>
+                            <td className="px-4 py-2.5">
+                              {row.call_recording
+                                ? <audio controls preload="metadata" src={row.call_recording} style={{ height: 30, width: 210 }} />
+                                : <span className="text-slate-300 italic">No recording</span>}
+                            </td>
                           </tr>
                         ))}
                       </tbody>

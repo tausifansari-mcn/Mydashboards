@@ -1778,13 +1778,14 @@ export async function getClapWords(filters: InboundQualityFilters): Promise<Clap
 
 // ─── Per-call leads for a positive keyword ───────────────────────────────────
 export interface PosKeywordLeadRow {
-  lead_id:   string;
-  agent_id:  string;
-  source:    'Customer' | 'Agent';
-  phrase:    string;
-  scenario:  string;
-  scenario1: string;
-  date:      string;
+  lead_id:       string;
+  agent_id:      string;
+  source:        'Customer' | 'Agent';
+  phrase:        string;
+  scenario:      string;
+  scenario1:     string;
+  date:          string;
+  call_recording: string;
 }
 
 export async function getPosKeywordLeads(
@@ -1797,14 +1798,15 @@ export async function getPosKeywordLeads(
   const params       = [startDate, endDate, ...(clientId ? [clientId] : []), likePattern];
 
   const [custRows, agentRows] = await Promise.all([
-    querySource<{ lead_id: string; agent_id: string; phrase: string; scenario: string; scenario1: string; date: string }>(`
+    querySource<{ lead_id: string; agent_id: string; phrase: string; scenario: string; scenario1: string; date: string; call_recording: string }>(`
       SELECT
         COALESCE(lead_id, '')                               AS lead_id,
         COALESCE(NULLIF(TRIM(User), ''), 'Unknown')         AS agent_id,
         COALESCE(top_positive_words, '')                    AS phrase,
         COALESCE(NULLIF(TRIM(scenario),  ''), 'Unknown')    AS scenario,
         COALESCE(NULLIF(TRIM(scenario1), ''), '')           AS scenario1,
-        DATE_FORMAT(CallDate, '%Y-%m-%d')                   AS date
+        DATE_FORMAT(CallDate, '%Y-%m-%d')                   AS date,
+        COALESCE(call_recording, '')                        AS call_recording
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?
         AND quality_percentage IS NOT NULL
@@ -1813,14 +1815,15 @@ export async function getPosKeywordLeads(
       ORDER BY CallDate DESC
       LIMIT 200
     `, params),
-    querySource<{ lead_id: string; agent_id: string; phrase: string; scenario: string; scenario1: string; date: string }>(`
+    querySource<{ lead_id: string; agent_id: string; phrase: string; scenario: string; scenario1: string; date: string; call_recording: string }>(`
       SELECT
         COALESCE(lead_id, '')                               AS lead_id,
         COALESCE(NULLIF(TRIM(User), ''), 'Unknown')         AS agent_id,
         COALESCE(top_positive_words_agent, '')              AS phrase,
         COALESCE(NULLIF(TRIM(scenario),  ''), 'Unknown')    AS scenario,
         COALESCE(NULLIF(TRIM(scenario1), ''), '')           AS scenario1,
-        DATE_FORMAT(CallDate, '%Y-%m-%d')                   AS date
+        DATE_FORMAT(CallDate, '%Y-%m-%d')                   AS date,
+        COALESCE(call_recording, '')                        AS call_recording
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?
         AND quality_percentage IS NOT NULL
@@ -1833,22 +1836,24 @@ export async function getPosKeywordLeads(
 
   return [
     ...custRows.map(r => ({
-      lead_id:   String(r.lead_id),
-      agent_id:  String(r.agent_id),
-      source:    'Customer' as const,
-      phrase:    String(r.phrase),
-      scenario:  String(r.scenario),
-      scenario1: String(r.scenario1),
-      date:      String(r.date),
+      lead_id:       String(r.lead_id),
+      agent_id:      String(r.agent_id),
+      source:        'Customer' as const,
+      phrase:        String(r.phrase),
+      scenario:      String(r.scenario),
+      scenario1:     String(r.scenario1),
+      date:          String(r.date),
+      call_recording: String(r.call_recording ?? ''),
     })),
     ...agentRows.map(r => ({
-      lead_id:   String(r.lead_id),
-      agent_id:  String(r.agent_id),
-      source:    'Agent' as const,
-      phrase:    String(r.phrase),
-      scenario:  String(r.scenario),
-      scenario1: String(r.scenario1),
-      date:      String(r.date),
+      lead_id:       String(r.lead_id),
+      agent_id:      String(r.agent_id),
+      source:        'Agent' as const,
+      phrase:        String(r.phrase),
+      scenario:      String(r.scenario),
+      scenario1:     String(r.scenario1),
+      date:          String(r.date),
+      call_recording: String(r.call_recording ?? ''),
     })),
   ].sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -1967,17 +1972,18 @@ function abuseMeaning(word: string): string {
 }
 
 export interface AbuseDetailRow {
-  speaker:    'Agent' | 'Customer';
-  lead_id:    string;
-  agent_id:   string;
-  mobile_no:  string;
-  word:       string;
-  meaning:    string;
-  scenario:   string;
-  scenario1:  string;
-  date:       string;
-  client_id:  string;
-  transcript: string;
+  speaker:       'Agent' | 'Customer';
+  lead_id:       string;
+  agent_id:      string;
+  mobile_no:     string;
+  word:          string;
+  meaning:       string;
+  scenario:      string;
+  scenario1:     string;
+  date:          string;
+  client_id:     string;
+  transcript:    string;
+  call_recording: string;
 }
 
 export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ total: number; rows: AbuseDetailRow[] }> {
@@ -1986,7 +1992,7 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
   const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
   const [agentRows, custRows] = await Promise.all([
-    querySource<{ word: string; count: number; scenario: string; scenario1: string; user: string; lead_id: string; mobile_no: string; date: string; client_id: string; transcript: string }>(`
+    querySource<{ word: string; count: number; scenario: string; scenario1: string; user: string; lead_id: string; mobile_no: string; date: string; client_id: string; transcript: string; call_recording: string }>(`
       SELECT
         TRIM(q.agent_hindi_cuss_words)  AS word,
         q.agent_hindi_cuss_count        AS count,
@@ -1997,7 +2003,8 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(q.MobileNo, '')        AS mobile_no,
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
         q.ClientId                      AS client_id,
-        COALESCE(q.Transcribe_Text, '') AS transcript
+        COALESCE(q.Transcribe_Text, '') AS transcript,
+        COALESCE(q.call_recording, '')  AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -2016,7 +2023,8 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(q.MobileNo, '') AS mobile_no,
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
         q.ClientId AS client_id,
-        COALESCE(q.Transcribe_Text, '') AS transcript
+        COALESCE(q.Transcribe_Text, '') AS transcript,
+        COALESCE(q.call_recording, '')  AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -2027,7 +2035,7 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
       ORDER BY date DESC
     `, [...params, ...params]),
 
-    querySource<{ word: string; count: number; scenario: string; scenario1: string; user: string; lead_id: string; mobile_no: string; date: string; client_id: string; transcript: string }>(`
+    querySource<{ word: string; count: number; scenario: string; scenario1: string; user: string; lead_id: string; mobile_no: string; date: string; client_id: string; transcript: string; call_recording: string }>(`
       SELECT
         TRIM(q.customer_hindi_cuss_words)  AS word,
         q.customer_hindi_cuss_count        AS count,
@@ -2038,7 +2046,8 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(q.MobileNo, '') AS mobile_no,
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
         q.ClientId AS client_id,
-        COALESCE(q.Transcribe_Text, '') AS transcript
+        COALESCE(q.Transcribe_Text, '') AS transcript,
+        COALESCE(q.call_recording, '')  AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -2057,7 +2066,8 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(q.MobileNo, '') AS mobile_no,
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
         q.ClientId AS client_id,
-        COALESCE(q.Transcribe_Text, '') AS transcript
+        COALESCE(q.Transcribe_Text, '') AS transcript,
+        COALESCE(q.call_recording, '')  AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
@@ -2071,30 +2081,32 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
 
   const rows: AbuseDetailRow[] = [
     ...agentRows.map(r => ({
-      speaker:    'Agent' as const,
-      lead_id:    String(r.lead_id ?? ''),
-      agent_id:   String(r.user),
-      mobile_no:  String(r.mobile_no ?? ''),
-      word:       String(r.word),
-      meaning:    abuseMeaning(String(r.word)),
-      scenario:   String(r.scenario),
-      scenario1:  String(r.scenario1),
-      date:       String(r.date),
-      client_id:  String(r.client_id),
-      transcript: String(r.transcript ?? ''),
+      speaker:       'Agent' as const,
+      lead_id:       String(r.lead_id ?? ''),
+      agent_id:      String(r.user),
+      mobile_no:     String(r.mobile_no ?? ''),
+      word:          String(r.word),
+      meaning:       abuseMeaning(String(r.word)),
+      scenario:      String(r.scenario),
+      scenario1:     String(r.scenario1),
+      date:          String(r.date),
+      client_id:     String(r.client_id),
+      transcript:    String(r.transcript ?? ''),
+      call_recording: String(r.call_recording ?? ''),
     })),
     ...custRows.map(r => ({
-      speaker:    'Customer' as const,
-      lead_id:    String(r.lead_id ?? ''),
-      agent_id:   String(r.user),
-      mobile_no:  String(r.mobile_no ?? ''),
-      word:       String(r.word),
-      meaning:    abuseMeaning(String(r.word)),
-      scenario:   String(r.scenario),
-      scenario1:  String(r.scenario1),
-      date:       String(r.date),
-      client_id:  String(r.client_id),
-      transcript: String(r.transcript ?? ''),
+      speaker:       'Customer' as const,
+      lead_id:       String(r.lead_id ?? ''),
+      agent_id:      String(r.user),
+      mobile_no:     String(r.mobile_no ?? ''),
+      word:          String(r.word),
+      meaning:       abuseMeaning(String(r.word)),
+      scenario:      String(r.scenario),
+      scenario1:     String(r.scenario1),
+      date:          String(r.date),
+      client_id:     String(r.client_id),
+      transcript:    String(r.transcript ?? ''),
+      call_recording: String(r.call_recording ?? ''),
     })),
   ].sort((a, b) => b.date.localeCompare(a.date));
 
@@ -2104,15 +2116,16 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
 // ─── Threat / Frustration Detail ─────────────────────────────────────────────
 
 export interface NegCallDetailRow {
-  lead_id:    string;
-  agent_id:   string;
-  mobile_no:  string;
-  word:       string;
-  scenario:   string;
-  scenario1:  string;
-  date:       string;
-  client_id:  string;
-  transcript: string;
+  lead_id:       string;
+  agent_id:      string;
+  mobile_no:     string;
+  word:          string;
+  scenario:      string;
+  scenario1:     string;
+  date:          string;
+  client_id:     string;
+  transcript:    string;
+  call_recording: string;
 }
 
 export async function getNegSignalDetail(
@@ -2129,7 +2142,7 @@ export async function getNegSignalDetail(
 
   const rows = await querySource<{
     lead_id: string; agent_id: string; mobile_no: string; word: string;
-    scenario: string; scenario1: string; date: string; client_id: string; transcript: string;
+    scenario: string; scenario1: string; date: string; client_id: string; transcript: string; call_recording: string;
   }>(`
     SELECT
       COALESCE(q.lead_id, '') AS lead_id,
@@ -2140,7 +2153,8 @@ export async function getNegSignalDetail(
       COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown') AS scenario1,
       DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i') AS date,
       q.ClientId              AS client_id,
-      COALESCE(q.Transcribe_Text, '') AS transcript
+      COALESCE(q.Transcribe_Text, '') AS transcript,
+      COALESCE(q.call_recording, '')  AS call_recording
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -2156,15 +2170,16 @@ export async function getNegSignalDetail(
   return {
     total: rows.length,
     rows: rows.map(r => ({
-      lead_id:    String(r.lead_id),
-      agent_id:   String(r.agent_id),
-      mobile_no:  String(r.mobile_no ?? ''),
-      word:       String(r.word),
-      scenario:   String(r.scenario),
-      scenario1:  String(r.scenario1),
-      date:       String(r.date),
-      client_id:  String(r.client_id),
-      transcript: String(r.transcript ?? ''),
+      lead_id:       String(r.lead_id),
+      agent_id:      String(r.agent_id),
+      mobile_no:     String(r.mobile_no ?? ''),
+      word:          String(r.word),
+      scenario:      String(r.scenario),
+      scenario1:     String(r.scenario1),
+      date:          String(r.date),
+      client_id:     String(r.client_id),
+      transcript:    String(r.transcript ?? ''),
+      call_recording: String(r.call_recording ?? ''),
     })),
   };
 }
@@ -2303,6 +2318,7 @@ export interface FraudCallRow {
   sentence:      string;
   transcript:    string;
   call_recording: string;
+  social_media_info: string;
 }
 
 export interface FraudAgentRow {
@@ -2331,6 +2347,7 @@ export async function getFraudCalls(filters: InboundQualityFilters): Promise<Fra
     querySource<{
       lead_id: string; agent_id: string; mobile_no: string; call_date: string;
       scenario: string; compliance: number; sentence: string; transcript: string; call_recording: string;
+      social_media_info: string;
     }>(`
       SELECT
         COALESCE(q.lead_id, '')                                       AS lead_id,
@@ -2341,7 +2358,8 @@ export async function getFraudCalls(filters: InboundQualityFilters): Promise<Fra
         CASE WHEN ${INBOUND_FRAUD_SENTENCE_CHECK} THEN 1 ELSE 0 END   AS compliance,
         COALESCE(q.fraud_detected_sentence, '')                       AS sentence,
         COALESCE(q.Transcribe_Text, '')                               AS transcript,
-        COALESCE(q.call_recording, '')                                AS call_recording
+        COALESCE(q.call_recording, '')                                AS call_recording,
+        COALESCE(q.Social_Media_Phone_Number_Order_ID_Email_ID, '')   AS social_media_info
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
         AND ${INBOUND_FRAUD_SENTENCE_CHECK}
@@ -2379,6 +2397,7 @@ export async function getFraudCalls(filters: InboundQualityFilters): Promise<Fra
     sentence:       String(r.sentence ?? ''),
     transcript:     String(r.transcript ?? ''),
     call_recording: String(r.call_recording ?? ''),
+    social_media_info: String(r.social_media_info ?? ''),
   }));
 
   const cleanAgents: FraudAgentRow[] = agentRows.map(r => {

@@ -15,6 +15,7 @@ interface FraudCallRow {
   sentence:       string;
   transcript:     string;
   call_recording: string;
+  social_media_info: string;
 }
 
 interface FraudAgentRow {
@@ -224,6 +225,11 @@ export default function FraudCallTab({ clientId, sd, ed, apiPath = '/inbound-qua
                             Compliance 1
                           </span>
                           <span className="text-[10px] text-slate-400 truncate">{call.scenario}</span>
+                          {call.social_media_info && (
+                            <span className="inline-flex items-center rounded-full bg-purple-50 border border-purple-200 text-purple-700 px-2 py-0.5 text-[9px] font-bold truncate max-w-[260px]" title={call.social_media_info}>
+                              {call.social_media_info}
+                            </span>
+                          )}
                           <span className="ml-auto text-[10px] font-mono text-slate-400">{call.mobile_no}</span>
                         </div>
 
