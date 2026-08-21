@@ -5469,6 +5469,54 @@ export const VIDEO_PHRASES = [
       'abhi tak process nahi hui', 'abhi tak pending hai',
     ],
   },
+  {
+    id: 'empty_box_complaint',
+    label: 'Customer Says Box Was Empty',
+    patterns: [
+      // English — direct
+      'box was empty', 'box is empty', 'box empty', 'empty box', 'received empty box',
+      'got empty box', 'box came empty', 'box arrived empty', 'package was empty',
+      'package is empty', 'empty package', 'parcel was empty', 'parcel is empty', 'empty parcel',
+      'box mein kuch nahi', 'box me kuch nahi', 'box mein kuch nahi tha',
+      'box me kuch nahi tha', 'andar kuch nahi tha', 'andar se kuch nahi tha',
+      'andar kuch nahi', 'inside box nothing', 'nothing inside box',
+      'box khali tha', 'box khali hai', 'khali box aaya', 'khali box mila',
+      'khali box receive', 'khali box mela', 'khali parcel aaya',
+      'mera box khali tha', 'mera box khali hai', 'mera box khali aaya',
+      'mera package khali tha', 'mera parcel khali tha',
+      'my box was empty', 'my box is empty', 'my package was empty',
+      'my parcel was empty', 'my box came empty', 'my box arrived empty',
+      // Hinglish — unboxing context
+      'unbox kiya to khali', 'unbox kiya toh khali', 'unbox kara to khali',
+      'unboxing ki to khali', 'unboxing ki toh khali',
+      'box khol ke dekha to khali', 'box khol ke dekha toh khali',
+      'box kholi to khali', 'box kholi toh khali',
+      'packet khol ke dekha khali', 'packet kholi to khali',
+      'parcel khol ke dekha khali', 'parcel kholi to khali',
+      'box open ki to khali', 'box open kiya to khali', 'box open kiya toh khali',
+      // Product missing / not received
+      'product nahi tha', 'product nahi tha box mein', 'product box mein nahi tha',
+      'shoe nahi tha', 'shoe box mein nahi', 'shoe box mein nahi tha',
+      'item nahi tha', 'item nahi tha box mein', 'item box mein nahi tha',
+      'kuch nahi mila box mein', 'kuch nahi mila andar',
+      'nothing was inside', 'nothing was in the box',
+      'product hi nahi tha', 'product hi nahi tha box mein',
+      // Frustration / complaint variants
+      'box khali aaya mera', 'box khali aaya hai', 'box khali aayi hai',
+      'khali box bheja', 'khali box bheji', 'khali box bheja hai',
+      'box mein kuch nahi tha bas khali tha', 'box bilkul khali tha',
+      'pura box khali tha', 'ekdum khali tha box', 'bilkul khali box aaya',
+      'box mein sirf kagaz tha', 'box mein sirf paper tha',
+      'box mein thermocol tha bas', 'box mein thermocol tha',
+      'kagaz ke alawa kuch nahi tha', 'kagaz ke siva kuch nahi',
+      'sirf kagaz tha box mein', 'sirf paper tha andar',
+      // Delivery complaint context
+      'delivery khali aayi', 'delivery khali mili', 'delivery mein kuch nahi tha',
+      'order khali aaya', 'order khali mila', 'order mein kuch nahi tha',
+      'consignment khali thi', 'consignment mein kuch nahi tha',
+      'full empty parcel', 'empty parcel mila', 'empty parcel receive',
+    ],
+  },
 ] as const;
 
 export type VideoPhraseHit = {

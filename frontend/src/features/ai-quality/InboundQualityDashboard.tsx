@@ -6403,36 +6403,7 @@ export default function InboundQualityDashboard() {
                       )}
                     </div>
 
-                    {/* Agent breakdown */}
-                    <div className="rounded-xl bg-white border border-slate-200 p-4">
-                      <p className="text-sm font-bold text-slate-700 mb-3">Agent-wise Video Phrase Mentions</p>
-                      {vp.agent_breakdown.length === 0 ? (
-                        <p className="text-xs text-slate-400">No agent data.</p>
-                      ) : (
-                        <div className="overflow-auto max-h-72">
-                          <table className="w-full text-xs border-collapse">
-                            <thead>
-                              <tr className="border-b border-slate-200">
-                                <th className="px-2 py-1.5 text-left font-semibold text-slate-500">Agent</th>
-                                <th className="px-2 py-1.5 text-right font-semibold text-slate-500">Total</th>
-                                <th className="px-2 py-1.5 text-right font-semibold text-slate-500">Phrase Hits</th>
-                                <th className="px-2 py-1.5 text-right font-semibold text-slate-500">%</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {vp.agent_breakdown.map(a => (
-                                <tr key={a.agent} className="border-b border-slate-50 hover:bg-orange-50/50">
-                                  <td className="px-2 py-1.5 font-medium text-slate-700">{resolveAgent(a.agent)}</td>
-                                  <td className="px-2 py-1.5 text-right text-slate-500">{a.total_calls}</td>
-                                  <td className="px-2 py-1.5 text-right font-bold text-orange-600">{a.phrase_calls}</td>
-                                  <td className="px-2 py-1.5 text-right text-slate-500">{a.pct}%</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
+
                   </div>
 
                   {/* Daily trend */}

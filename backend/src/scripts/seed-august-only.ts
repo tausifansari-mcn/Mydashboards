@@ -2,7 +2,6 @@ import 'dotenv/config';
 import { querySource } from '../lib/sourceDb';
 import { queryMasmis } from '../lib/masmisDb';
 import { VIDEO_PHRASES } from '../modules/inbound-quality/inbound-quality.service';
-import { createHash } from 'crypto';
 
 function matchesVideoPhrase(text: string, patterns: readonly string[]): { matched: boolean; context: string } {
   const lower = text.toLowerCase();
@@ -21,41 +20,18 @@ async function go() {
   const CID = '375';
   const TABLE = 'db_masmis.video_phrase_cache';
 
-  // Clear old cache
-  await queryMasmis(`TRUNCATE TABLE ${TABLE}`, []);
-  console.log('Cache cleared.');
+  // Do NOT truncate — only ADD August data
+  console.log('Scanning August 2026 only (no truncation)...\n');
 
-  // Update version hash
-  const raw = VIDEO_PHRASES.map(p => `${p.id}:${p.patterns.length}`).join('|');
-  const versionHash = createHash('sha256').update(raw).digest('hex').slice(0, 64);
-  await queryMasmis(
-    `INSERT INTO db_masmis.video_phrase_version (id, version) VALUES (1, ?) ON DUPLICATE KEY UPDATE version = VALUES(version)`,
-    [versionHash]
+  const rows = await querySource<{ lead_id: string }>(
+    `SELECT DISTINCT lead_id FROM db_audit.call_quality_assessment WHERE ClientId = '${CID}' AND CallDate >= '2026-08-01' AND CallDate < '2026-09-01'`, []
   );
-  console.log('Version hash updated.');
-
-  // Scan all Bellavita 2026 transcripts (all scenarios)
-  const months = [
-    { start: '2026-01-01', end: '2026-03-01' },
-    { start: '2026-03-01', end: '2026-05-01' },
-    { start: '2026-05-01', end: '2026-07-01' },
-    { start: '2026-07-01', end: '2026-09-01' },
-  ];
-  const allIds: { lead_id: string }[] = [];
-  for (const { start, end } of months) {
-    const rows = await querySource<{ lead_id: string }>(
-      `SELECT DISTINCT lead_id FROM db_audit.call_quality_assessment WHERE ClientId = '${CID}' AND CallDate >= '${start}' AND CallDate < '${end}'`, []
-    );
-    allIds.push(...rows);
-  }
-  const seen = new Set<string>();
-  const unique = allIds.filter(r => { if (seen.has(r.lead_id)) return false; seen.add(r.lead_id); return true; });
-  console.log(`Scanning ${unique.length} Bellavita 2026 transcripts with ${VIDEO_PHRASES.length} phrase categories...\n`);
+  console.log(`Found ${rows.length} unique August leads.\n`);
 
   let inserted = 0;
   let scanned = 0;
 
-  for (const { lead_id } of unique) {
+  for (const { lead_id } of rows) {
     try {
       const meta = await querySource<{ CallDate: string; User: string; scenario: string }>(
         `SELECT DATE_FORMAT(CallDate, '%Y-%m-%d %H:%i:%s') AS CallDate, User, scenario
@@ -90,10 +66,6 @@ async function go() {
 
   console.log(`\n\nScanned: ${scanned}, Phrase hits inserted: ${inserted}`);
 
-  // Set cursor past all processed records
-  await queryMasmis(`INSERT INTO db_masmis.video_phrase_cursor (id, last_qa_id) VALUES (1, 999999999) ON DUPLICATE KEY UPDATE last_qa_id = 999999999`, []).catch(() => {});
-
-  // Verify
   const cache = await queryMasmis<{ cnt: number }>(`SELECT COUNT(*) AS cnt FROM ${TABLE}`, []);
   console.log(`Cache now has ${cache[0]?.cnt} rows`);
 
