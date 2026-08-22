@@ -1305,6 +1305,21 @@ export default function ProcessQualityDashboard() {
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
 
+  // LOB filter (Bellavita only = clientId 375)
+  const isBellavita = clientId === '375';
+  const [lobOptions, setLobOptions] = useState<{ lob: string; agent_ids: string[] }[]>([]);
+  const [selectedLob, setSelectedLob] = useState<string>('All');
+  const agentIdsParam = selectedLob === 'All' ? '' : (lobOptions.find(l => l.lob === selectedLob)?.agent_ids ?? []).join(',');
+
+  useEffect(() => {
+    if (!isBellavita) return;
+    api.get<{ data: { lob: string; agent_ids: string[] }[] }>(`/quality/lob-options?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      .then(r => setLobOptions(r.data?.data ?? []))
+      .catch(() => setLobOptions([]));
+  }, [isBellavita, sd, ed, clientId]);
+
+  const agentQs = agentIdsParam ? `&agentIds=${encodeURIComponent(agentIdsParam)}` : '';
+
   const [exportingProcess, setExportingProcess] = useState(false);
   const handleExportProcess = async () => {
     if (!clientId) return;
@@ -1337,14 +1352,14 @@ export default function ProcessQualityDashboard() {
     if (!clientId) return;
     setLoading(true);
     Promise.all([
-      api.get<{ data: KPIResponse }>(`/quality/kpis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`),
+      api.get<{ data: KPIResponse }>(`/quality/kpis?startDate=${sd}&endDate=${ed}&clientId=${clientId}${agentQs}`),
       api.get<{ data: { client_id: number; client_name: string; calls: number }[] }>(`/quality/clients?startDate=${sd}&endDate=${ed}`),
     ]).then(([kR, cR]) => {
       setKpi(kR.data?.data ?? null);
       const match = (cR.data?.data ?? []).find(c => String(c.client_id) === clientId);
       setClientName(match?.client_name ?? `Process #${clientId}`);
     }).catch(() => {}).finally(() => setLoading(false));
-  }, [clientId, sd, ed]);
+  }, [clientId, sd, ed, agentQs]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -1354,11 +1369,11 @@ export default function ProcessQualityDashboard() {
     if (!clientId) return;
     setCustomerInsightsLoading(true);
     setCustomerInsightsError(false);
-    api.get<{ data: OutboundCustomerInsights }>(`/quality/customer-interaction-insights?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+    api.get<{ data: OutboundCustomerInsights }>(`/quality/customer-interaction-insights?startDate=${sd}&endDate=${ed}&clientId=${clientId}${agentQs}`)
       .then(r => setCustomerInsights(r.data?.data ?? null))
       .catch(() => { setCustomerInsights(null); setCustomerInsightsError(true); })
       .finally(() => setCustomerInsightsLoading(false));
-  }, [clientId, sd, ed]);
+  }, [clientId, sd, ed, agentQs]);
 
   const openCiDrill = (category: string, title: string) => {
     setCiDrill({ title, category, leads: [], loading: true });
@@ -1419,11 +1434,11 @@ export default function ProcessQualityDashboard() {
   const refetchMagicalScript = useCallback(() => {
     if (!clientId) return;
     setMagicalLoading(true);
-    api.get<{ data: MagicalScriptData }>(`/quality/magical-script?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+    api.get<{ data: MagicalScriptData }>(`/quality/magical-script?startDate=${sd}&endDate=${ed}&clientId=${clientId}${agentQs}`)
       .then(r => setMagicalScript(r.data?.data ?? null))
       .catch(() => setMagicalScript(null))
       .finally(() => setMagicalLoading(false));
-  }, [clientId, sd, ed]);
+  }, [clientId, sd, ed, agentQs]);
 
   // Magical Script is now the default landing slide (index 0), so it loads eagerly on mount just
   // like the header's client-name/KPI fetch, instead of waiting for its old lazy-load-on-visit trigger.
@@ -1592,6 +1607,20 @@ export default function ProcessQualityDashboard() {
           <label className="text-[11px] text-slate-500 font-medium">To</label>
           <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
             className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all" />
+          {isBellavita && lobOptions.length > 0 && (
+            <>
+              <div className="w-px h-4 bg-slate-200 mx-0.5" />
+              <label className="text-[11px] text-slate-500 font-medium">LOB</label>
+              <select value={selectedLob} onChange={e => setSelectedLob(e.target.value)}
+                className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all"
+                style={{ color: '#0f172a' }}>
+                <option value="All" style={{ color: '#0f172a' }}>All LOBs</option>
+                {lobOptions.map(l => (
+                  <option key={l.lob} value={l.lob} style={{ color: '#0f172a' }}>{l.lob} ({l.agent_ids.length})</option>
+                ))}
+              </select>
+            </>
+          )}
           <div className="ml-auto flex items-center gap-3">
             <button onClick={handleExportProcess} disabled={exportingProcess}
               title="Export all columns for this process and date range"

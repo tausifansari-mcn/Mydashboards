@@ -33,6 +33,7 @@ router.get('/agent-nps-csat',     ctrl.getAgentNPSCSAT);
 router.get('/clap-analysis',     ctrl.getClapAnalysis);
 router.get('/agent-nps',          ctrl.getAgentNPS);
 router.get('/missing-agents',     ctrl.getMissingAgents);
+router.get('/lob-options',        ctrl.getLOBOptions);
 router.post('/agent-master',      ctrl.insertAgentMaster);
 router.get('/magical-script',     ctrl.getMagicalScript);
 router.get('/magical-script-config',    ctrl.getMagicalScriptConfig);

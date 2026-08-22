@@ -7,10 +7,13 @@ function parseDateRange(req: Request): svc.QualityFilters {
   const pad = (n: number) => String(n).padStart(2, '0');
   const defaultStart = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01 00:00`;
   const defaultEnd   = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} 23:59`;
+  const agentIdsRaw = req.query.agentIds as string | undefined;
+  const agentIds = agentIdsRaw ? agentIdsRaw.split(',').map(s => s.trim()).filter(Boolean) : undefined;
   return {
     startDate: (req.query.startDate as string) || defaultStart,
     endDate:   (req.query.endDate   as string) || defaultEnd,
     clientId:  req.query.clientId as string | undefined,
+    agentIds,
   };
 }
 
@@ -293,6 +296,17 @@ export async function deleteMagicalScriptConfig(req: Request, res: Response) {
     if (!clientId || !id) { res.status(400).json({ message: 'clientId and id are required' }); return; }
     await svc.deleteMagicalScriptConfig(clientId, id);
     res.json({ ok: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getLOBOptions(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getLOBOptions(filters);
+    res.json({ data });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ message: msg });

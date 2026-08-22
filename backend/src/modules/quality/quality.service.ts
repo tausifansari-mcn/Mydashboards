@@ -7,6 +7,7 @@ export interface QualityFilters {
   startDate: string;
   endDate: string;
   clientId?: string;
+  agentIds?: string[];
 }
 
 export interface ClientSummary {
@@ -161,6 +162,14 @@ function clientClause(filters: QualityFilters): { sql: string; params: (string |
   return { sql: '', params: [] };
 }
 
+function agentClause(filters: QualityFilters): { sql: string; params: string[] } {
+  if (filters.agentIds && filters.agentIds.length > 0) {
+    const placeholders = filters.agentIds.map(() => '?').join(',');
+    return { sql: ` AND cd.agent_name IN (${placeholders})`, params: filters.agentIds };
+  }
+  return { sql: '', params: [] };
+}
+
 export async function getClients(filters: QualityFilters): Promise<ClientSummary[]> {
   const { startDate, endDate } = filters;
   return querySource<ClientSummary>(`
@@ -208,10 +217,20 @@ export async function initOutboundDashboardCacheTables(): Promise<void> {
         sale_done                TINYINT(1) NOT NULL DEFAULT 0,
         objection_subcategory    VARCHAR(120) NULL,
         feedback                 VARCHAR(20) NULL,
+        agent_id                 VARCHAR(20) NULL,
         computed_at              DATETIME DEFAULT NOW(),
-        INDEX idx_client_date (client_id, call_date)
+        INDEX idx_client_date (client_id, call_date),
+        INDEX idx_agent_id (agent_id)
       )
     `);
+    // Add agent_id column if it doesn't exist (migration for existing tables)
+    await pool.execute(`
+      ALTER TABLE db_masmis.outbound_dashboard_cache
+      ADD COLUMN IF NOT EXISTS agent_id VARCHAR(20) NULL AFTER feedback
+    `).catch(() => {});
+    await pool.execute(`
+      CREATE INDEX IF NOT EXISTS idx_agent_id ON db_masmis.outbound_dashboard_cache (agent_id)
+    `).catch(() => {});
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS db_masmis.outbound_dashboard_cursor (
         id      TINYINT PRIMARY KEY DEFAULT 1,
@@ -244,7 +263,7 @@ async function processOutboundDashboardBatch(batchSize = 1000): Promise<number> 
   if (nextId <= 0) return 0;
 
   type Row = {
-    id: number; client_id: number; CallDate: string;
+    id: number; client_id: number; CallDate: string; AgentName: string | null;
     mobile_valid: number; has_objection_category: number;
     rejected_status_a: string; rejected_status_b: string;
     sale_done: number; objection_subcategory: string | null; feedback: string | null;
@@ -252,7 +271,7 @@ async function processOutboundDashboardBatch(batchSize = 1000): Promise<number> 
 
   const rows = await querySource<Row>(`
     SELECT
-      cd.id, cd.client_id, cd.CallDate,
+      cd.id, cd.client_id, cd.CallDate, cd.AgentName,
       CASE WHEN cd.MobileNo IS NOT NULL AND cd.MobileNo != '' THEN 1 ELSE 0 END AS mobile_valid,
       CASE WHEN cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory != '' THEN 1 ELSE 0 END AS has_objection_category,
       CASE
@@ -282,12 +301,13 @@ async function processOutboundDashboardBatch(batchSize = 1000): Promise<number> 
 
   const cols = [
     'call_id', 'client_id', 'call_date', 'mobile_valid', 'has_objection_category',
-    'rejected_status_a', 'rejected_status_b', 'sale_done', 'objection_subcategory', 'feedback',
+    'rejected_status_a', 'rejected_status_b', 'sale_done', 'objection_subcategory', 'feedback', 'agent_id',
   ];
   const placeholders = rows.map(() => `(${cols.map(() => '?').join(',')},NOW())`).join(',');
   const flat = rows.flatMap(r => [
     r.id, r.client_id, r.CallDate, r.mobile_valid, r.has_objection_category,
     r.rejected_status_a, r.rejected_status_b, r.sale_done, r.objection_subcategory, r.feedback,
+    r.AgentName ?? null,
   ]);
   const updateCols = cols.filter(c => c !== 'call_id').map(c => `${c} = VALUES(${c})`).join(', ');
 
@@ -328,7 +348,8 @@ export function startOutboundDashboardCacheJob(): void {
 export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
-  const params = [startDate, endDate, ...cfParams];
+  const { sql: af, params: afParams } = agentClause(filters);
+  const params = [startDate, endDate, ...cfParams, ...afParams];
 
   // All 12 reads come from the pre-classified db_masmis cache (see initOutboundDashboardCacheTables /
   // processOutboundDashboardBatch above) instead of scanning CallDetails live — cut this endpoint
@@ -340,7 +361,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       ),
       valid AS (
         SELECT * FROM base WHERE has_objection_category = 1
@@ -357,7 +378,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     }>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       ),
       valid AS (
         SELECT * FROM base WHERE has_objection_category = 1
@@ -377,7 +398,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<{ total_opp: number; mo_count: number }>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       )
       SELECT
         (SELECT COUNT(*) FROM base WHERE rejected_status_a NOT IN ('Opening Rejected','Offering Rejected','Context Rejected')) AS total_opp,
@@ -389,7 +410,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       )
       SELECT
         CASE
@@ -414,7 +435,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       ),
       opp AS (
         SELECT * FROM base
@@ -443,7 +464,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       ),
       mo AS (
         SELECT * FROM base
@@ -472,7 +493,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<{ category: string; insight: string; cnt: number }>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       )
       SELECT
         CASE
@@ -527,7 +548,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<{ ned_category: string; ned_qs: string; ned_status: string; cnt: number }>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       )
       SELECT
         CASE
@@ -586,7 +607,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       )
       SELECT
         CASE
@@ -641,7 +662,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
         ) AS csat_score
       FROM db_masmis.outbound_dashboard_cache cd
       WHERE cd.feedback IN ('Positive','Negative','Neutral')
-        AND cd.call_date BETWEEN ? AND ? ${cf}
+        AND cd.call_date BETWEEN ? AND ? ${cf}${af}
     `, params),
 
     queryMasmis<{
@@ -664,7 +685,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
         ) AS nps_score
       FROM db_masmis.outbound_dashboard_cache cd
       WHERE cd.feedback IN ('Positive','Negative','Neutral')
-        AND cd.call_date BETWEEN ? AND ? ${cf}
+        AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       GROUP BY 1
       ORDER BY 1
     `, params),
@@ -676,7 +697,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
       FROM db_masmis.outbound_dashboard_cache cd
       WHERE cd.mobile_valid = 1
         AND cd.has_objection_category = 1
-        AND cd.call_date BETWEEN ? AND ? ${cf}
+        AND cd.call_date BETWEEN ? AND ? ${cf}${af}
       GROUP BY 1
       ORDER BY 1
     `, params),
@@ -1788,6 +1809,73 @@ export async function insertAgentMaster(agent: { masId: string; agentName: strin
      ON DUPLICATE KEY UPDATE AgentName = VALUES(AgentName), Lob = VALUES(Lob)`,
     [agent.masId, agent.agentName, agent.lob],
   );
+}
+
+export interface LOBAgent {
+  lob: string;
+  agent_ids: string[];
+}
+
+// Bellavita LOB mapping — hardcoded because AgentMaster.Lob just says 'Outbound' for everyone.
+// When AgentMaster is updated with correct LOB values, switch back to the DB query below.
+const BELLAVITA_LOB_MAP: Record<string, string[]> = {
+  'Repeat Customer LOB': [
+    'MAS59391','MAS57009','MAS60695','MAS57081','MAS57075','MAS57102','MAS59390',
+    'MAS61125','MAS61112','MAS61714','MAS61110','MAS57104','MAS61107','MAS57101',
+    'MAS61392','MAS61692','MAS61700','MAS61395','MAS61713','MAS61393','MAS61685',
+    'MAS59063','MAS61699','MAS61717','MAS61108',
+  ],
+  'Abandon Cart': [
+    'MAS54531','MAS61389','MAS60705','MAS57076','MAS61111','MAS60702','MAS61113','MAS60701',
+  ],
+};
+
+export async function getLOBOptions(filters: QualityFilters): Promise<LOBAgent[]> {
+  const { startDate, endDate, clientId } = filters;
+
+  // Only Bellavita (375) has the LOB split right now
+  if (clientId && String(clientId) === '375') {
+    // Narrow to agents who actually appear in CallDetails for this date range
+    const { sql: cf, params: cfParams } = clientClause(filters);
+    const params = [startDate, endDate, ...cfParams];
+    const activeRows = await querySource<{ MasId: string }>(`
+      SELECT DISTINCT cd.AgentName AS MasId
+      FROM db_external.CallDetails cd
+      WHERE cd.CallDate BETWEEN ? AND ?
+        AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
+        ${cf}
+    `, params);
+    const activeSet = new Set(activeRows.map(r => String(r.MasId).trim()));
+
+    const result: LOBAgent[] = [];
+    for (const [lob, ids] of Object.entries(BELLAVITA_LOB_MAP)) {
+      const activeIds = ids.filter(id => activeSet.has(id));
+      if (activeIds.length > 0) result.push({ lob, agent_ids: activeIds });
+    }
+    return result;
+  }
+
+  // Fallback: query DB (works for clients whose AgentMaster has real LOB values)
+  const { sql: cf, params: cfParams } = clientClause(filters);
+  const params = [startDate, endDate, ...cfParams];
+  const rows = await querySource<{ MasId: string; Lob: string }>(`
+    SELECT DISTINCT am.MasId, COALESCE(am.Lob, 'Unknown') AS Lob
+    FROM db_external.CallDetails cd
+    JOIN Shivamgiri.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE cd.CallDate BETWEEN ? AND ?
+      AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
+      ${cf}
+    ORDER BY Lob, MasId
+  `, params);
+
+  const lobMap = new Map<string, string[]>();
+  for (const r of rows) {
+    const lob = String(r.Lob).trim() || 'Unknown';
+    const id = String(r.MasId).trim();
+    if (!lobMap.has(lob)) lobMap.set(lob, []);
+    lobMap.get(lob)!.push(id);
+  }
+  return Array.from(lobMap.entries()).map(([lob, agent_ids]) => ({ lob, agent_ids }));
 }
 
 // ── Magical Script ────────────────────────────────────────────────────────────

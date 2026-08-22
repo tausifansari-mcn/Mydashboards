@@ -16,6 +16,7 @@ import {
 import api from '@/lib/axios';
 import RawDataTab from './RawDataTab';
 import FraudCallTab from './FraudCallTab';
+import ActionableInsightsPanel from './ActionableInsightsPanel';
 
 function toLocalDT(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -1981,6 +1982,7 @@ const SLIDES = [
   { label: 'Proof Collection Analysis', color: 'orange'  },
   { label: 'TNI Detection',       color: 'emerald' },
   { label: 'Fraud Call',          color: 'rose'    },
+  { label: 'Actionable Insights', color: 'indigo'  },
   { label: 'Raw Data',            color: 'slate'   },
 ] as const;
 
@@ -7058,8 +7060,13 @@ export default function InboundQualityDashboard() {
           <FraudCallTab clientId={clientId} sd={sd} ed={ed} />
         )}
 
+        {/* Actionable Insights slide */}
+        {activeSlide === 8 && (
+          <ActionableInsightsPanel />
+        )}
+
         {/* Raw Data slide */}
-        {activeSlide === 8 && clientId && canViewRawData && (
+        {activeSlide === 9 && clientId && canViewRawData && (
           <RawDataTab clientId={clientId} apiPath="/inbound-quality/raw-data-tab" hasRecording hasTranscript wideColumns
             recordingColumn="call_recording" freezeTranscript
             transcriptApiPath="/inbound-quality/transcript" transcriptParam="leadId" />
