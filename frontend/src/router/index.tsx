@@ -21,6 +21,7 @@ const ProcessQualityDashboard      = lazy(() => import('@/features/ai-quality/Pr
 const InboundQualityDashboard      = lazy(() => import('@/features/ai-quality/InboundQualityDashboard'));
 const InboundDashboard        = lazy(() => import('@/features/inbound/InboundDashboard'));
 const InboundProjectDashboard = lazy(() => import('@/features/inbound/InboundProjectDashboard'));
+const CallRecEmbedPage        = lazy(() => import('@/features/callrec/CallRecEmbedPage'));
 
 const wrap = (C: React.ComponentType) => (
   <Suspense fallback={<PageLoader />}>
@@ -47,6 +48,7 @@ const router = createBrowserRouter(
             { path: '/inbound',             element: wrap(InboundDashboard) },
             { path: '/inbound/:projectKey', element: wrap(InboundProjectDashboard) },
             { path: '/admin/task-scheduler', element: wrap(TaskSchedulerPage) },
+            { path: '/callrec',              element: wrap(CallRecEmbedPage) },
             { path: '/profile',             element: wrap(ProfilePage) },
             {
               element: <PrivateRoute roles={['super_admin']} />,

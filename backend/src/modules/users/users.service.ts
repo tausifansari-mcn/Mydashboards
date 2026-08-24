@@ -2,6 +2,9 @@ import bcrypt from 'bcryptjs';
 import prisma from '../../lib/prismaClient';
 import { sendWelcomeEmail } from '../../lib/mailer';
 import { querySource } from '../../lib/sourceDb';
+import {
+  getCallRecProcessCatalog, getCallRecUserProcessIds, setCallRecUserProcessIds,
+} from '../../lib/callRecClient';
 
 const ENSURE_SALE_BRAND_TABLE = `
   CREATE TABLE IF NOT EXISTS shivamgiri.md_sale_brand_access (
@@ -61,6 +64,26 @@ export async function setSaleUploaderBrands(userId: number, brands: string[]): P
       [userId, brand],
     );
   }
+}
+
+// ─── Call Rec UI process access — a real, separate app; these calls actually create/update the
+// account over there (username = this user's Mydashboards email) rather than just recording a
+// local flag, so a grant here takes effect the moment that person logs into Call Rec UI. ────────
+
+export async function getCallRecProcesses(): Promise<Awaited<ReturnType<typeof getCallRecProcessCatalog>>> {
+  return getCallRecProcessCatalog();
+}
+
+export async function getUserCallRecProcesses(userId: number): Promise<number[]> {
+  const user = await prisma.md_users.findUnique({ where: { id: userId }, select: { email: true } });
+  if (!user) return [];
+  return getCallRecUserProcessIds(user.email);
+}
+
+export async function setUserCallRecProcesses(userId: number, processIds: number[]): Promise<void> {
+  const user = await prisma.md_users.findUnique({ where: { id: userId }, select: { email: true, name: true } });
+  if (!user) throw new Error('User not found');
+  await setCallRecUserProcessIds(user.email, user.name, processIds);
 }
 
 function generateTempPassword(): string {

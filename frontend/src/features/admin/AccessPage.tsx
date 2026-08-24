@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, ShieldCheck, ShieldOff, Loader2, GitBranch, LayoutDashboard, TrendingUp, Upload, ChevronLeft, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Search, ShieldCheck, ShieldOff, Loader2, GitBranch, LayoutDashboard, TrendingUp, Upload, ChevronLeft, PanelLeftClose, PanelLeftOpen, UploadCloud, AlertTriangle } from 'lucide-react';
 import api from '@/lib/axios';
 import { User, Dashboard, PaginatedResponse } from '@/types';
 
 interface AccessRow   { dashboard: Dashboard; can_export: boolean }
 interface ProcessItem { id: number; process_name: string; lob: string; dialdesk_client_id: number; client_id: number; is_active: boolean; client?: { name: string } }
 interface MappingItem { process: ProcessItem }
+interface CallRecProcess { id: number; name: string; parentId: number | null; campaigns?: CallRecProcess[] }
 
 const LOB_COLOR: Record<string, { bg: string; text: string }> = {
   Inbound:  { bg: '#EFF6FF', text: '#1D4ED8' },
@@ -29,6 +30,10 @@ export default function AccessPage() {
   const [userProcs,  setUserProcs]  = useState<number[]>([]);
   const [saleBrands,    setSaleBrands]    = useState<string[]>([]);
   const [uploaderBrands, setUploaderBrands] = useState<string[]>([]);
+  const [callRecCatalog, setCallRecCatalog] = useState<CallRecProcess[]>([]);
+  const [callRecCatalogError, setCallRecCatalogError] = useState('');
+  const [userCallRecProcs, setUserCallRecProcs] = useState<number[]>([]);
+  const [callRecSaving, setCallRecSaving] = useState<number | null>(null);
   const [search,        setSearch]        = useState('');
   const [tab,           setTab]           = useState<'dashboards' | 'processes'>('dashboards');
   // Mobile: only one of the two panels is visible at a time. Desktop always shows both
@@ -51,6 +56,11 @@ export default function AccessPage() {
       .then((d) => setDashboards(d.data)).catch(() => {});
     api.get<ProcessItem[]>('/processes')
       .then((p) => setProcesses(p.data)).catch(() => {});
+    // Call Rec UI is a separate app — this hits it through the backend, so it can fail
+    // independently (e.g. Call Rec UI down) without breaking anything else on this page.
+    api.get<CallRecProcess[]>('/users/callrec/processes')
+      .then((p) => setCallRecCatalog(p.data))
+      .catch(() => setCallRecCatalogError('Call Rec UI is currently unreachable — process access can’t be managed right now.'));
   }, []);
 
   const loadUser = async (user: User) => {
@@ -60,16 +70,18 @@ export default function AccessPage() {
     if (window.innerWidth < 768) setShowUserList(false);
     setLoading(true);
     try {
-      const [dashRes, procRes, brandRes, uploaderRes] = await Promise.allSettled([
+      const [dashRes, procRes, brandRes, uploaderRes, callRecRes] = await Promise.allSettled([
         api.get<AccessRow[]>(`/dashboards/user/${user.id}/access`),
         api.get<MappingItem[]>(`/processes/user/${user.id}`),
         api.get<string[]>(`/users/${user.id}/sale-brands`),
         api.get<string[]>(`/users/${user.id}/sale-uploader-brands`),
+        api.get<number[]>(`/users/${user.id}/callrec-processes`),
       ]);
       setAccess(dashRes.status === 'fulfilled' ? dashRes.value.data : []);
       setUserProcs(procRes.status === 'fulfilled' ? procRes.value.data.map((m) => m.process.id) : []);
       setSaleBrands(brandRes.status === 'fulfilled' ? brandRes.value.data : []);
       setUploaderBrands(uploaderRes.status === 'fulfilled' ? uploaderRes.value.data : []);
+      setUserCallRecProcs(callRecRes.status === 'fulfilled' ? callRecRes.value.data : []);
     } finally { setLoading(false); }
   };
 
@@ -118,6 +130,24 @@ export default function AccessPage() {
   };
 
   const hasSalesAccess = access.some((a) => a.dashboard.slug === 'sales');
+  const hasCallRecAccess = access.some((a) => a.dashboard.slug === 'call-rec');
+
+  // Toggling here calls through to Call Rec UI's own backend (creating/updating its account for
+  // this user, keyed by email) — it's not just a local flag, it actually changes what that
+  // person sees the next time they log into Call Rec UI.
+  const toggleCallRecProcess = async (procId: number) => {
+    if (!selectedUser) return;
+    setCallRecSaving(procId);
+    try {
+      const next = userCallRecProcs.includes(procId)
+        ? userCallRecProcs.filter((id) => id !== procId)
+        : [...userCallRecProcs, procId];
+      await api.put(`/users/${selectedUser.id}/callrec-processes`, { processIds: next });
+      setUserCallRecProcs(next);
+    } catch {
+      // leave state as-is on failure so the toggle doesn't silently claim success
+    } finally { setCallRecSaving(null); }
+  };
 
   const toggleUploaderBrand = async (brandKey: string) => {
     if (!selectedUser) return;
@@ -410,6 +440,89 @@ export default function AccessPage() {
                         );
                       })}
                     </div>
+                  </div>
+
+                  {/* ── Call Rec UI Processes — separate app, real integration ── */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <UploadCloud className="h-4 w-4 text-orange-600" />
+                      <h3 className="text-sm font-bold text-slate-800">Call Rec UI Processes</h3>
+                      {!hasCallRecAccess && (
+                        <span className="ml-1 text-[10px] font-semibold bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full">
+                          Requires Call Rec UI dashboard access
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Grants this person a real account in Call Rec UI (a separate app) and controls which
+                      processes/campaigns they can upload data for there.
+                      {!hasCallRecAccess && ' Grant "Call Rec UI" in the Dashboard Access tab first.'}
+                    </p>
+                    {callRecCatalogError ? (
+                      <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-700">
+                        <AlertTriangle className="h-4 w-4 shrink-0" /> {callRecCatalogError}
+                      </div>
+                    ) : callRecCatalog.length === 0 ? (
+                      <div className="flex h-20 items-center justify-center text-xs text-slate-400">
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading Call Rec UI processes…
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {callRecCatalog.map((proc) => {
+                          const disabled = !hasCallRecAccess;
+                          const granted = userCallRecProcs.includes(proc.id);
+                          return (
+                            <div key={proc.id}
+                              className={`rounded-xl border bg-white p-4 shadow-sm transition-all ${
+                                disabled ? 'opacity-50' : granted ? 'border-orange-300' : 'border-slate-200'
+                              }`}>
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="font-semibold text-slate-800">{proc.name}</p>
+                                <button
+                                  onClick={() => !disabled && toggleCallRecProcess(proc.id)}
+                                  disabled={disabled || callRecSaving === proc.id}
+                                  className={`rounded-lg p-2 shrink-0 transition-colors ${
+                                    disabled ? 'bg-slate-100 text-slate-300 cursor-not-allowed' :
+                                    granted
+                                      ? 'bg-orange-100 text-orange-700 hover:bg-red-50 hover:text-red-600'
+                                      : 'bg-slate-100 text-slate-400 hover:bg-orange-100 hover:text-orange-700'
+                                  }`}>
+                                  {callRecSaving === proc.id
+                                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                                    : granted ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
+                                </button>
+                              </div>
+                              <div className={`mt-2 text-xs font-semibold ${granted && !disabled ? 'text-orange-700' : 'text-slate-400'}`}>
+                                {granted && !disabled ? '✓ Process access granted' : 'No access'}
+                              </div>
+                              {!!proc.campaigns?.length && (
+                                <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-1.5">
+                                  {proc.campaigns.map((camp) => {
+                                    const campGranted = userCallRecProcs.includes(camp.id);
+                                    return (
+                                      <button key={camp.id}
+                                        onClick={() => !disabled && toggleCallRecProcess(camp.id)}
+                                        disabled={disabled || callRecSaving === camp.id}
+                                        className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold border transition-colors ${
+                                          disabled ? 'border-slate-200 text-slate-300 cursor-not-allowed' :
+                                          campGranted
+                                            ? 'border-orange-300 bg-orange-50 text-orange-700 hover:bg-red-50 hover:border-red-200 hover:text-red-600'
+                                            : 'border-slate-200 text-slate-500 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700'
+                                        }`}>
+                                        {callRecSaving === camp.id
+                                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                                          : campGranted ? <ShieldCheck className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />}
+                                        {camp.name}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

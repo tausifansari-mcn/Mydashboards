@@ -4,6 +4,7 @@ import {
   ChevronDown, ChevronRight, Loader2, AlertTriangle, Headphones, FileText,
 } from 'lucide-react';
 import api from '@/lib/axios';
+import CaseActionPicker, { type CaseAction } from './CaseActionPicker';
 
 interface FraudCallRow {
   lead_id:        string;
@@ -52,6 +53,11 @@ export default function FraudCallTab({ clientId, sd, ed, apiPath = '/inbound-qua
   const [agentMap,  setAgentMap]  = useState<Map<string, string>>(new Map());
   const [openTx,    setOpenTx]    = useState<Set<string>>(new Set());
   const [speaking,  setSpeaking]  = useState<string | null>(null);
+  const [actions,   setActions]   = useState<Map<string, CaseAction>>(new Map());
+
+  // Same module the fraud-calls data comes from ('/inbound-quality' or '/quality') — the
+  // case-actions endpoint lives alongside it in both.
+  const apiBase = apiPath.replace(/\/fraud-calls$/, '');
 
   useEffect(() => {
     api.get<{ data: AgentMasterRow[] }>(agentMasterPath)
@@ -75,6 +81,12 @@ export default function FraudCallTab({ clientId, sd, ed, apiPath = '/inbound-qua
 
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => () => { window.speechSynthesis?.cancel(); }, []);
+
+  useEffect(() => {
+    api.get<{ data: (CaseAction & { lead_id: string })[] }>(`${apiBase}/case-actions`, { params: { feature: 'fraud_call', clientId } })
+      .then((r) => setActions(new Map((r.data?.data ?? []).map((a) => [a.lead_id, a]))))
+      .catch(() => {});
+  }, [apiBase, clientId]);
 
   const resolveAgent = (masId: string) => agentMap.get(masId) || masId;
 
@@ -181,6 +193,13 @@ export default function FraudCallTab({ clientId, sd, ed, apiPath = '/inbound-qua
 
       {!loading && data && flagged > 0 && (
         <div className="space-y-5">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Fraud Detected</p>
+            <p className="text-xs text-amber-900 leading-relaxed">
+              Immediately flag the call and freeze any pending transaction, verify the customer's identity, escalate to the fraud/legal &amp; compliance team, and block or restrict the agent pending investigation if agent involvement is suspected.
+            </p>
+          </div>
+
           {/* ─── Agent cards ────────────────────────────────────────────── */}
           {groups.map(([agentId, calls]) => {
             const name = resolveAgent(agentId);
@@ -231,6 +250,14 @@ export default function FraudCallTab({ clientId, sd, ed, apiPath = '/inbound-qua
                             </span>
                           )}
                           <span className="ml-auto text-[10px] font-mono text-slate-400">{call.mobile_no}</span>
+                          {call.lead_id && (
+                            <CaseActionPicker
+                              apiBase={apiBase} feature="fraud_call" leadId={call.lead_id} clientId={clientId}
+                              current={actions.get(call.lead_id)}
+                              onSaved={(next) => setActions((prev) => new Map(prev).set(call.lead_id, next))}
+                              compact
+                            />
+                          )}
                         </div>
 
                         <div className="p-3.5 space-y-3">

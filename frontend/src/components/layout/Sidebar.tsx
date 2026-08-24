@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, Building2, LogOut,
   ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck,
   PhoneCall, Phone, ChevronDown, BarChart3, Package, X, CalendarClock,
-  UploadCloud, ExternalLink,
+  UploadCloud,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -24,9 +24,11 @@ const BASE_LINKS = [
 
 const TASK_SCHEDULER_LINK = { to: '/admin/task-scheduler', icon: CalendarClock, label: 'Task Scheduler' };
 
-// Call Rec UI is a fully separate app (own server, own auth, own DB) — linked out to its own
-// origin/port rather than mounted as an in-SPA route. Admin-only.
-const CALL_REC_URL = 'http://localhost:5174';
+// Call Rec UI is a fully separate app (own server, own auth, own DB) but is embedded via iframe
+// at /callrec so it opens under this same origin/tab instead of a separate browser tab. Visible
+// to anyone granted the 'call-rec' dashboard (via Access), same as Task Scheduler — not
+// hardcoded to super_admin.
+const CALL_REC_LINK = { to: '/callrec', icon: UploadCloud, label: 'Call Rec UI' };
 
 const ALL_INBOUND_PROJECTS = [
   { to: '/inbound/gnc',          slug: 'gnc',          icon: '🛒', label: 'GNC' },
@@ -72,6 +74,7 @@ export default function Sidebar() {
 
   const inboundProjects = ALL_INBOUND_PROJECTS.filter((p) => canAccessInboundSlug(p.slug));
   const hasTaskScheduler = isSuperAdmin || dashboardSlugs.includes('task-scheduler');
+  const hasCallRec = isSuperAdmin || dashboardSlugs.includes('call-rec');
   const hasInbound = isSuperAdmin || (dashboardSlugs.includes('inbound') && inboundProjects.length > 0);
 
   const mainLinks = BASE_LINKS
@@ -165,13 +168,11 @@ export default function Sidebar() {
           )}
         </SidebarSection>
 
-        {(isSuperAdmin || hasTaskScheduler) && (
+        {(isSuperAdmin || hasTaskScheduler || hasCallRec) && (
           <SidebarSection label="ADMIN" expanded={desktopExpanded || isMobile}>
             {isSuperAdmin && adminLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={desktopExpanded || isMobile} />)}
             {hasTaskScheduler && <SidebarLink {...TASK_SCHEDULER_LINK} expanded={desktopExpanded || isMobile} />}
-            {isSuperAdmin && (
-              <SidebarExternalLink href={CALL_REC_URL} icon={UploadCloud} label="Call Rec UI" expanded={desktopExpanded || isMobile} />
-            )}
+            {hasCallRec && <SidebarLink {...CALL_REC_LINK} expanded={desktopExpanded || isMobile} />}
           </SidebarSection>
         )}
 
@@ -286,41 +287,6 @@ function SidebarLink({ to, icon: Icon, label, expanded }: { to: string; icon: Re
         )}
       </AnimatePresence>
     </NavLink>
-  );
-}
-
-// A different app entirely (own origin/port/auth) — plain <a target="_blank">, not a router NavLink.
-function SidebarExternalLink({ href, icon: Icon, label, expanded }: { href: string; icon: React.ElementType; label: string; expanded: boolean }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={`Opens ${label} in a new tab`}
-      className={cn(
-        'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-150',
-        !expanded && 'justify-center'
-      )}
-      style={{ color: '#ffffff' }}
-      onMouseEnter={(e) => {
-        const el = e.currentTarget as HTMLAnchorElement;
-        if (!el.style.backgroundColor) el.style.backgroundColor = 'rgba(255,255,255,0.12)';
-      }}
-      onMouseLeave={(e) => {
-        const el = e.currentTarget as HTMLAnchorElement;
-        if (el.style.backgroundColor === 'rgba(255, 255, 255, 0.12)') el.style.backgroundColor = '';
-      }}
-    >
-      <Icon className="h-4 w-4 flex-shrink-0" />
-      <AnimatePresence>
-        {expanded && (
-          <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 whitespace-nowrap flex items-center justify-between gap-2">
-            {label}
-            <ExternalLink className="h-3 w-3 opacity-60 flex-shrink-0" />
-          </motion.span>
-        )}
-      </AnimatePresence>
-    </a>
   );
 }
 

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import * as svc from './quality.service';
 import { resolveUserScope } from '../call-master/call-master.service';
+import { getCaseActions as getCaseActionsFromLib, upsertCaseAction, type CaseActionFeature } from '../../lib/caseActions';
 
 function parseDateRange(req: Request): svc.QualityFilters {
   const now = new Date();
@@ -72,6 +73,30 @@ export async function getFraudCalls(req: Request, res: Response) {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ message: msg });
+  }
+}
+
+export async function getCaseActions(req: Request, res: Response) {
+  try {
+    const feature = String(req.query.feature ?? '') as CaseActionFeature;
+    const clientId = req.query.clientId as string | undefined;
+    const data = await getCaseActionsFromLib(feature, clientId);
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+export async function upsertCaseActionCtrl(req: Request, res: Response) {
+  try {
+    const { feature, leadId, clientId, action, note, updatedBy } = req.body as {
+      feature?: CaseActionFeature; leadId?: string; clientId?: string; action?: string; note?: string; updatedBy?: string;
+    };
+    if (!feature || !leadId) { res.status(400).json({ message: 'feature and leadId are required' }); return; }
+    await upsertCaseAction(feature, leadId, clientId ?? '', action ?? 'no_action', note ?? '', updatedBy ?? '');
+    res.json({ success: true });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
   }
 }
 

@@ -18,6 +18,8 @@ router.use(
 router.get('/clients',            ctrl.getClients);
 router.get('/clients-summary',    ctrl.getClientsSummary);
 router.get('/fraud-calls',        ctrl.getFraudCalls);
+router.get('/case-actions',       ctrl.getCaseActions);
+router.post('/case-actions',      ctrl.upsertCaseActionCtrl);
 router.get('/kpis',               ctrl.getKPIs);
 router.get('/sale-done-calls',    ctrl.getSaleDoneCalls);
 router.get('/magical-script-category-sale-done', ctrl.getMagicalCategorySaleDoneCalls);

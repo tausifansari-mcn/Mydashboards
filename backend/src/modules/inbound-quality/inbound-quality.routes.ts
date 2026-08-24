@@ -68,6 +68,8 @@ router.get('/tni-analysis',            ctrl.getTNIAnalysis);
 router.get('/tni-agent-params',        ctrl.getTNIAgentParams);
 router.get('/tni-comments',            ctrl.getTNIComments);
 router.post('/tni-comments',           ctrl.upsertTNIComment);
+router.get('/case-actions',            ctrl.getCaseActions);
+router.post('/case-actions',           ctrl.upsertCaseActionCtrl);
 router.get('/clap-customer-analysis',  ctrl.getClapCustomerAnalysis);
 router.get('/clap-voc-quotes',         ctrl.getClapVocQuotes);
 router.get('/clap-product-voc-summary', ctrl.getClapProductVocSummary);

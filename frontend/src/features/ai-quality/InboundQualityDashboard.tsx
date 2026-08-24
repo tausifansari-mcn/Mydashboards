@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import api from '@/lib/axios';
 import RawDataTab from './RawDataTab';
+import CaseActionPicker, { type CaseAction } from './CaseActionPicker';
 import FraudCallTab from './FraudCallTab';
 import ActionableInsightsPanel from './ActionableInsightsPanel';
 
@@ -1127,7 +1128,10 @@ function AbuseDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent 
   );
 }
 
-function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }: { detail: PotentialScamDetail | null; loading: boolean; onClose: () => void; onLeadClick: (leadId: string) => void; resolveAgent: (masId: string) => string }) {
+function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent, clientId, actions, onActionSaved }: {
+  detail: PotentialScamDetail | null; loading: boolean; onClose: () => void; onLeadClick: (leadId: string) => void; resolveAgent: (masId: string) => string;
+  clientId: string; actions: Map<string, CaseAction>; onActionSaved: (leadId: string, next: CaseAction) => void;
+}) {
   const [tab, setTab] = useState<'Call Details' | 'Date Wise'>('Call Details');
 
   useEffect(() => {
@@ -1236,6 +1240,12 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
               {/* ── Date Wise Table ── */}
               {tab === 'Date Wise' && (
                 <div>
+                  <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Potential Scam</p>
+                    <p className="text-xs text-amber-900 leading-relaxed">
+                      Review transcript and recording immediately, classify risk, log the case and escalate high-risk/confirmed cases.
+                    </p>
+                  </div>
                   {dateWise.length === 0 ? (
                     <p className="text-center text-slate-400 text-sm py-6">No data available for this period</p>
                   ) : (
@@ -1318,7 +1328,7 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
                       <table className="w-full text-xs border-collapse">
                         <thead>
                           <tr className="bg-slate-50">
-                            {['Flag', 'Lead ID', 'Agent Name', 'Mobile No', 'Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date', 'Contact Details', 'Recording'].map(h => (
+                            {['Flag', 'Lead ID', 'Agent Name', 'Mobile No', 'Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date', 'Contact Details', 'Recording', 'Action'].map(h => (
                               <th key={h} className="px-3 py-2.5 text-left font-semibold text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 whitespace-nowrap">
                                 {h}
                               </th>
@@ -1361,6 +1371,16 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
                                   ? <audio controls preload="metadata" src={r.call_recording} style={{ height: 30, width: 210 }} />
                                   : <span className="text-slate-300 italic">No recording</span>}
                               </td>
+                              <td className="px-3 py-2">
+                                {r.lead_id ? (
+                                  <CaseActionPicker
+                                    apiBase="/inbound-quality" feature="potential_scam" leadId={r.lead_id} clientId={clientId}
+                                    current={actions.get(r.lead_id)}
+                                    onSaved={(next) => onActionSaved(r.lead_id!, next)}
+                                    compact
+                                  />
+                                ) : <span className="text-slate-300">—</span>}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -1381,13 +1401,16 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent }
 
 // ─── Social Media & Consumer Court Threat Detail Modal ───────────────────────
 function SocialThreatDetailModal({
-  detail, loading, onClose, onLeadClick, resolveAgent,
+  detail, loading, onClose, onLeadClick, resolveAgent, clientId, actions, onActionSaved,
 }: {
   detail: SocialThreatDetailResponse | null;
   loading: boolean;
   onClose: () => void;
   onLeadClick: (leadId: string) => void;
   resolveAgent: (masId: string) => string;
+  clientId: string;
+  actions: Map<string, CaseAction>;
+  onActionSaved: (leadId: string, next: CaseAction) => void;
 }) {
   const [tab, setTab] = useState<'All' | 'Social Media' | 'Court & Legal' | 'Date Wise'>('All');
 
@@ -1500,6 +1523,15 @@ function SocialThreatDetailModal({
             </div>
           )}
 
+          {!loading && tab === 'Date Wise' && (
+            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Social Media &amp; Consumer Court Threat</p>
+              <p className="text-xs text-amber-900 leading-relaxed">
+                Acknowledge concern, document the exact statement, provide an approved resolution path and escalate to the appropriate senior/CX/legal team.
+              </p>
+            </div>
+          )}
+
           {!loading && tab === 'Date Wise' && dateWise.length > 0 && (() => {
             const chartData = [...dateWise].reverse(); // ascending (oldest → newest) for a left-to-right trend line
             return (
@@ -1564,7 +1596,7 @@ function SocialThreatDetailModal({
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-orange-50">
-                    {['Type', 'Lead ID', 'Agent Name', 'Mobile No', 'Threat Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date', 'Contact Details', 'Recording'].map(h => (
+                    {['Type', 'Lead ID', 'Agent Name', 'Mobile No', 'Threat Word / Phrase', 'Scenario', 'Sub-Scenario', 'Date', 'Contact Details', 'Recording', 'Action'].map(h => (
                       <th key={h} className="text-left px-3 py-2.5 font-semibold text-orange-700 whitespace-nowrap border-b border-orange-100 uppercase tracking-wider text-[10px]">
                         {h}
                       </th>
@@ -1606,6 +1638,16 @@ function SocialThreatDetailModal({
                         {row.call_recording
                           ? <audio controls preload="metadata" src={row.call_recording} style={{ height: 30, width: 210 }} />
                           : <span className="text-slate-300 italic">No recording</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.lead_id ? (
+                          <CaseActionPicker
+                            apiBase="/inbound-quality" feature="social_threat" leadId={row.lead_id} clientId={clientId}
+                            current={actions.get(row.lead_id)}
+                            onSaved={(next) => onActionSaved(row.lead_id, next)}
+                            compact
+                          />
+                        ) : <span className="text-slate-300">—</span>}
                       </td>
                     </tr>
                   ))}
@@ -1910,6 +1952,14 @@ function cqColor(score: number): string {
   return '#64748B';
 }
 
+const CQ_PARAM_TIPS: Record<string, string> = {
+  'Opening Skill':   'Use the standard greeting script, verify caller identity immediately, and set a confident, professional tone from the first 5 seconds.',
+  'Soft Skill':      'Use empathy phrases and active-listening acknowledgements, keep a warm/respectful tone throughout, and avoid dead air or sarcasm.',
+  'Hold Procedure':  'Always ask permission before placing on hold, give a time estimate, and check back within 60 seconds.',
+  'Resolution':      'Probe accurately to find the root cause, verify system data before sharing it, and confirm the issue is fully resolved before moving on.',
+  'Closing':         'Summarise the resolution, ask if further help is needed, and use the standard closing script before ending the call.',
+};
+
 interface MetricCardProps {
   label:      string;
   value:      string | number;
@@ -1971,6 +2021,12 @@ const TNI_CAT_COLOR: Record<string, string> = {
   'Soft Skills':        '#F59E0B',
   'Process Knowledge':  '#A78BFA',
   'Communication':      '#34D399',
+};
+
+const TNI_CAT_TRAINING: Record<'Soft Skills' | 'Process Knowledge' | 'Communication', string> = {
+  'Soft Skills':       'Training: role-play empathy, tone-handling and objection scenarios in every huddle; pair the agent with a top performer for live-call shadowing. Action: enroll in the next soft-skills refresher batch and re-audit after 2 weeks.',
+  'Process Knowledge': 'Training: refresh SOP and knowledge-base walkthroughs; run process quizzes until the agent is consistently above threshold. Action: assign a process-knowledge certification test and restrict complex/escalation calls until passed.',
+  'Communication':     'Training: daily reading-aloud and pronunciation drills, plus call-recording playback sessions to fix grammar and clarity gaps. Action: enroll in a communication coaching sprint and re-evaluate after 10 audited calls.',
 };
 
 const SLIDES = [
@@ -2058,6 +2114,7 @@ export default function InboundQualityDashboard() {
   const [tniDrillData,  setTniDrillData]  = useState<TNIParamRow | null>(null);
   const [tniDrillLoading, setTniDrillLoading] = useState(false);
   const [tniComments,   setTniComments]   = useState<Map<string, string>>(new Map());
+  const [tniActions,    setTniActions]    = useState<Map<string, CaseAction>>(new Map());
   const [tniSavingId,   setTniSavingId]   = useState<string | null>(null);
   const [tniFormulaOpen, setTniFormulaOpen] = useState(false);
 
@@ -2118,7 +2175,10 @@ export default function InboundQualityDashboard() {
 
   // ── Deep analysis state ──────────────────────────────────────────────────
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
-  const [drillModal, setDrillModal] = useState<{ title: string; accent: string; rows: Record<string,unknown>[]; columns: { key: string; label: string }[] } | null>(null);
+  const [drillModal, setDrillModal] = useState<{
+    title: string; accent: string; rows: Record<string,unknown>[]; columns: { key: string; label: string }[];
+    improvement?: { score: number; params: { label: string; value: number; tip: string }[] };
+  } | null>(null);
   const [drillLoading, setDrillLoading] = useState(false);
   const [clapDrillModal, setClapDrillModal] = useState<{
     clap: string;
@@ -2213,6 +2273,7 @@ export default function InboundQualityDashboard() {
   const [scamDetailOpen,  setScamDetailOpen]  = useState(false);
   const [scamDetail,      setScamDetail]      = useState<PotentialScamDetail | null>(null);
   const [scamDetailLoading, setScamDetailLoading] = useState(false);
+  const [scamActions,     setScamActions]     = useState<Map<string, CaseAction>>(new Map());
 
   const [abuseDetailOpen,    setAbuseDetailOpen]    = useState(false);
   const [abuseDetail,        setAbuseDetail]        = useState<AbuseDetailResponse | null>(null);
@@ -2229,6 +2290,7 @@ export default function InboundQualityDashboard() {
   const [socialThreatOpen,    setSocialThreatOpen]    = useState(false);
   const [socialThreatDetail,  setSocialThreatDetail]  = useState<SocialThreatDetailResponse | null>(null);
   const [socialThreatLoading, setSocialThreatLoading] = useState(false);
+  const [socialThreatActions, setSocialThreatActions] = useState<Map<string, CaseAction>>(new Map());
 
   // Transcript
   const [transcriptLeadId, setTranscriptLeadId] = useState<string | null>(null);
@@ -2526,6 +2588,10 @@ export default function InboundQualityDashboard() {
         setTniComments(m);
       })
       .catch(() => {});
+    // load structured actions (also not date-scoped — one action per agent per client)
+    api.get<{ data: (CaseAction & { lead_id: string })[] }>(`/inbound-quality/case-actions?feature=tni&clientId=${clientId}`)
+      .then(r => setTniActions(new Map((r.data?.data ?? []).map(a => [a.lead_id, a]))))
+      .catch(() => {});
   }, [clientId, sd, ed]);
 
   const fetchVideoPhrases = useCallback(() => {
@@ -2695,7 +2761,26 @@ export default function InboundQualityDashboard() {
             {/* KPI metric cards — 7 in a row — click to drill */}
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
               <div className="cursor-pointer" title="Click for detailed breakdown"
-                onClick={() => kpis && setDrillModal({ title: 'Quality Score Distribution — Detail', accent: cqColor(kpis.cq_score), columns: [{ key: 'Category', label: 'Category' }, { key: 'Count', label: 'Count' }, { key: 'Pct', label: '%' }, { key: 'Score Range', label: 'Score Range' }], rows: [{ Category: 'Excellent', Count: kpis.excellent, Pct: `${pct(kpis.excellent)}`, 'Score Range': '98–100%' }, { Category: 'Good', Count: kpis.good, Pct: `${pct(kpis.good)}`, 'Score Range': '90–97%' }, { Category: 'Average', Count: kpis.average_count, Pct: `${pct(kpis.average_count)}`, 'Score Range': '85–89%' }, { Category: 'Below Average', Count: kpis.below_average, Pct: `${pct(kpis.below_average)}`, 'Score Range': '<85%' }, { Category: 'Fatal (Score=0)', Count: kpis.fatal_count, Pct: `${pct(kpis.fatal_count)}`, 'Score Range': '0%' }] })}>
+                onClick={() => {
+                  if (!kpis) return;
+                  const cqComponents = [
+                    { label: 'Opening Skill',  value: kpis.opening_skill },
+                    { label: 'Soft Skill',     value: kpis.soft_skill },
+                    { label: 'Hold Procedure', value: kpis.hold_procedure },
+                    { label: 'Resolution',     value: kpis.resolution },
+                    { label: 'Closing',        value: kpis.closing },
+                  ];
+                  const weakParams = cqComponents
+                    .filter(c => c.value < 90)
+                    .sort((a, b) => a.value - b.value)
+                    .map(c => ({ ...c, tip: CQ_PARAM_TIPS[c.label] }));
+                  setDrillModal({
+                    title: 'Quality Score Distribution — Detail', accent: cqColor(kpis.cq_score),
+                    columns: [{ key: 'Category', label: 'Category' }, { key: 'Count', label: 'Count' }, { key: 'Pct', label: '%' }, { key: 'Score Range', label: 'Score Range' }],
+                    rows: [{ Category: 'Excellent', Count: kpis.excellent, Pct: `${pct(kpis.excellent)}`, 'Score Range': '98–100%' }, { Category: 'Good', Count: kpis.good, Pct: `${pct(kpis.good)}`, 'Score Range': '90–97%' }, { Category: 'Average', Count: kpis.average_count, Pct: `${pct(kpis.average_count)}`, 'Score Range': '85–89%' }, { Category: 'Below Average', Count: kpis.below_average, Pct: `${pct(kpis.below_average)}`, 'Score Range': '<85%' }, { Category: 'Fatal (Score=0)', Count: kpis.fatal_count, Pct: `${pct(kpis.fatal_count)}`, 'Score Range': '0%' }],
+                    improvement: kpis.cq_score < 90 && weakParams.length > 0 ? { score: kpis.cq_score, params: weakParams } : undefined,
+                  });
+                }}>
               <MetricCard
                 label="CQ Score%"
                 value={loading ? '—' : `${(kpis?.cq_score ?? 0).toFixed(1)}%`}
@@ -2949,6 +3034,9 @@ export default function InboundQualityDashboard() {
                       .then(r => setSocialThreatDetail(r.data?.data ?? null))
                       .catch(() => setSocialThreatDetail(null))
                       .finally(() => setSocialThreatLoading(false));
+                    api.get<{ data: (CaseAction & { lead_id: string })[] }>(`/inbound-quality/case-actions?feature=social_threat&clientId=${clientId}`)
+                      .then(r => setSocialThreatActions(new Map((r.data?.data ?? []).map((a) => [a.lead_id, a]))))
+                      .catch(() => {});
                   }
                 }}>
                 <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-orange-500" />
@@ -2991,6 +3079,9 @@ export default function InboundQualityDashboard() {
                       .then(r => setScamDetail(r.data?.data ?? null))
                       .catch(() => setScamDetail(null))
                       .finally(() => setScamDetailLoading(false));
+                    api.get<{ data: (CaseAction & { lead_id: string })[] }>(`/inbound-quality/case-actions?feature=potential_scam&clientId=${clientId}`)
+                      .then(r => setScamActions(new Map((r.data?.data ?? []).map((a) => [a.lead_id, a]))))
+                      .catch(() => {});
                   }
                 }}>
                 <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-red-500" />
@@ -5345,6 +5436,15 @@ export default function InboundQualityDashboard() {
                             </div>
                           </div>
 
+                          {clapCustomerExpanded && ovNeg > 0 && (
+                            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                              <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Negative Customer Sentiment</p>
+                              <p className="text-xs text-amber-900 leading-relaxed">
+                                Acknowledge the customer's dissatisfaction, review the call for root cause, and ensure a follow-up resolution is logged before closing the case.
+                              </p>
+                            </div>
+                          )}
+
                           {/* Branch detail panel */}
                           {clapActiveBranch && (() => {
                             const m = BRANCH_META[clapActiveBranch];
@@ -5362,6 +5462,12 @@ export default function InboundQualityDashboard() {
                                     <span className="ml-auto text-[9px] text-white/60 font-semibold">{bd?.total ?? 0} total audits analysed</span>
                                   </div>
                                   <div className="bg-white p-4 space-y-4">
+                                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                                      <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Agent-Related Complaint</p>
+                                      <p className="text-xs text-amber-900 leading-relaxed">
+                                        Identify the specific agent from the quote below, coach them on the flagged behavior, and re-audit their next few calls to confirm improvement.
+                                      </p>
+                                    </div>
                                     <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} onQuoteClick={handleLeadClick} resolveAgent={resolveAgent} />
                                     {/* Scenario drill-down */}
                                     {agScens.length > 0 && (
@@ -5417,7 +5523,13 @@ export default function InboundQualityDashboard() {
                                     <span className="text-[11px] font-black uppercase tracking-widest text-white">Logistic &amp; Operations — Deep Analysis</span>
                                     <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{bd?.total ?? 0} total calls</span>
                                   </div>
-                                  <div className="bg-white p-4">
+                                  <div className="bg-white p-4 space-y-4">
+                                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                                      <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Logistic &amp; Operations Issue</p>
+                                      <p className="text-xs text-amber-900 leading-relaxed">
+                                        Verify shipment/delivery status with the logistics partner, share an updated ETA with the customer, and escalate delayed or lost orders to the logistics team for priority handling.
+                                      </p>
+                                    </div>
                                     <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} onQuoteClick={handleLeadClick} resolveAgent={resolveAgent} />
                                   </div>
                                 </div>
@@ -5472,6 +5584,12 @@ export default function InboundQualityDashboard() {
                                   <div className="bg-white p-6 text-center text-sm text-slate-400">No product mentions found.</div>
                                 ) : (
                                   <div className="bg-white p-4 space-y-4">
+                                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                                      <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Product Feedback</p>
+                                      <p className="text-xs text-amber-900 leading-relaxed">
+                                        Log the specific product/SKU with the complaint, notify the product/quality team, and flag repeat product complaints for a defect review.
+                                      </p>
+                                    </div>
                                     <div className="grid grid-cols-2 gap-4">
                                       <div className="rounded-xl overflow-hidden border border-emerald-200">
                                         <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#064E3B,#059669)' }}>
@@ -6774,7 +6892,7 @@ export default function InboundQualityDashboard() {
                       <table className="w-full text-xs">
                         <thead>
                           <tr style={{ background: '#E0F2FE' }}>
-                            {['Agent Name', 'User ID', 'Audits', 'TNI Score', 'Soft Skills (P1)', 'Process Know. (P2)', 'Communication (P3)', 'Status', 'Manager Note'].map(h => (
+                            {['Agent Name', 'User ID', 'Audits', 'TNI Score', 'Soft Skills (P1)', 'Process Know. (P2)', 'Communication (P3)', 'Status', 'Action', 'Manager Note'].map(h => (
                               <th key={h} className="py-2.5 px-3 text-left font-semibold uppercase tracking-wider text-[9px] whitespace-nowrap" style={{ color: '#0369A1' }}>{h}</th>
                             ))}
                           </tr>
@@ -6827,6 +6945,14 @@ export default function InboundQualityDashboard() {
                                   ) : (
                                     <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200">TNI {tniCnt}/3</span>
                                   )}
+                                </td>
+                                <td className="py-2.5 px-3" onClick={e => e.stopPropagation()}>
+                                  <CaseActionPicker
+                                    apiBase="/inbound-quality" feature="tni" leadId={agent.agent_id} clientId={clientId ?? ''}
+                                    current={tniActions.get(agent.agent_id)}
+                                    onSaved={(next) => setTniActions(prev => new Map(prev).set(agent.agent_id, next))}
+                                    compact
+                                  />
                                 </td>
                                 <td className="py-1 px-3" onClick={e => e.stopPropagation()}>
                                   <div className="flex items-center gap-1">
@@ -7018,6 +7144,12 @@ export default function InboundQualityDashboard() {
                                         {isTNI(catVal) && <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-red-100 text-red-600">TNI</span>}
                                       </div>
                                     </div>
+                                    {isTNI(catVal) && (
+                                      <div className="mx-4 mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                                        <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-1">How to Train &amp; Action — {cat}</p>
+                                        <p className="text-[10px] text-amber-900 leading-relaxed">{TNI_CAT_TRAINING[cat]}</p>
+                                      </div>
+                                    )}
                                     <div className="divide-y divide-sky-50">
                                       {catParams.map(p => {
                                         const val = Number(tniDrillData[p.key] ?? 0);
@@ -7086,6 +7218,27 @@ export default function InboundQualityDashboard() {
             <div className="flex items-center justify-center py-16 text-slate-500 text-sm">No data found for this period.</div>
           ) : (
             <>
+              {drillModal.improvement && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">
+                    How to Improve — CQ Score is {drillModal.improvement.score.toFixed(1)}% (below target)
+                  </p>
+                  <p className="text-xs text-amber-900 leading-relaxed mb-3">
+                    Focus coaching on the parameters below, starting with the weakest. 1:1 review calls with recordings for these parameters and re-audit after the next batch.
+                  </p>
+                  <div className="space-y-2">
+                    {drillModal.improvement.params.map(p => (
+                      <div key={p.label} className="rounded-lg border border-amber-200 bg-white p-2.5">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[11px] font-bold text-slate-800">{p.label}</span>
+                          <span className="text-[11px] font-black tabular-nums" style={{ color: p.value >= 85 ? '#F59E0B' : '#EF4444' }}>{p.value}%</span>
+                        </div>
+                        <p className="text-[10px] text-slate-600 leading-relaxed">{p.tip}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="overflow-auto" style={{ maxHeight: '70vh' }}>
                 <table className="w-full text-xs">
                   <thead className="sticky top-0">
@@ -7126,6 +7279,9 @@ export default function InboundQualityDashboard() {
           onClose={() => { setSocialThreatOpen(false); setSocialThreatDetail(null); }}
           onLeadClick={handleLeadClick}
           resolveAgent={resolveAgent}
+          clientId={clientId ?? ''}
+          actions={socialThreatActions}
+          onActionSaved={(leadId, next) => setSocialThreatActions((prev) => new Map(prev).set(leadId, next))}
         />
       )}
 
@@ -7136,6 +7292,9 @@ export default function InboundQualityDashboard() {
           onClose={() => { setScamDetailOpen(false); setScamDetail(null); }}
           onLeadClick={handleLeadClick}
           resolveAgent={resolveAgent}
+          clientId={clientId ?? ''}
+          actions={scamActions}
+          onActionSaved={(leadId, next) => setScamActions((prev) => new Map(prev).set(leadId, next))}
         />
       )}
 

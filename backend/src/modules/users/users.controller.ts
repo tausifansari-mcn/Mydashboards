@@ -103,3 +103,29 @@ export async function setSaleUploaderBrands(req: Request, res: Response): Promis
   await svc.setSaleUploaderBrands(Number(req.params.id), brands);
   res.json({ ok: true });
 }
+
+export async function getCallRecProcessCatalog(_req: Request, res: Response): Promise<void> {
+  try {
+    res.json(await svc.getCallRecProcesses());
+  } catch (err: unknown) {
+    res.status(502).json({ message: err instanceof Error ? err.message : 'Call Rec UI is unreachable' });
+  }
+}
+
+export async function getCallRecProcesses(req: Request, res: Response): Promise<void> {
+  try {
+    res.json(await svc.getUserCallRecProcesses(Number(req.params.id)));
+  } catch (err: unknown) {
+    res.status(502).json({ message: err instanceof Error ? err.message : 'Call Rec UI is unreachable' });
+  }
+}
+
+export async function setCallRecProcesses(req: Request, res: Response): Promise<void> {
+  try {
+    const { processIds } = z.object({ processIds: z.array(z.number()) }).parse(req.body);
+    await svc.setUserCallRecProcesses(Number(req.params.id), processIds);
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    res.status(502).json({ message: err instanceof Error ? err.message : 'Call Rec UI is unreachable' });
+  }
+}

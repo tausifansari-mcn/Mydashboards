@@ -223,14 +223,28 @@ export async function initOutboundDashboardCacheTables(): Promise<void> {
         INDEX idx_agent_id (agent_id)
       )
     `);
-    // Add agent_id column if it doesn't exist (migration for existing tables)
-    await pool.execute(`
-      ALTER TABLE db_masmis.outbound_dashboard_cache
-      ADD COLUMN IF NOT EXISTS agent_id VARCHAR(20) NULL AFTER feedback
-    `).catch(() => {});
-    await pool.execute(`
-      CREATE INDEX IF NOT EXISTS idx_agent_id ON db_masmis.outbound_dashboard_cache (agent_id)
-    `).catch(() => {});
+    // Add agent_id column if it doesn't exist (migration for existing tables). This server
+    // rejects `IF NOT EXISTS` on ADD COLUMN / CREATE INDEX with a parse error (ER_PARSE_ERROR),
+    // so check information_schema instead of relying on that clause — the old version silently
+    // swallowed the parse error via .catch(), meaning the column was NEVER actually added and
+    // every batch insert failed with "Unknown column 'agent_id'".
+    const [existingCols] = await pool.execute<import('mysql2').RowDataPacket[]>(
+      `SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = 'db_masmis' AND table_name = 'outbound_dashboard_cache' AND COLUMN_NAME = 'agent_id'`
+    );
+    if (existingCols.length === 0) {
+      await pool.execute(`
+        ALTER TABLE db_masmis.outbound_dashboard_cache
+        ADD COLUMN agent_id VARCHAR(20) NULL AFTER feedback
+      `).catch(() => {});
+    }
+    const [existingIdx] = await pool.execute<import('mysql2').RowDataPacket[]>(
+      `SHOW INDEX FROM db_masmis.outbound_dashboard_cache WHERE Key_name = 'idx_agent_id'`
+    );
+    if (existingIdx.length === 0) {
+      await pool.execute(`
+        CREATE INDEX idx_agent_id ON db_masmis.outbound_dashboard_cache (agent_id)
+      `).catch(() => {});
+    }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS db_masmis.outbound_dashboard_cursor (
         id      TINYINT PRIMARY KEY DEFAULT 1,
