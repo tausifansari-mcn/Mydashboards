@@ -13,6 +13,7 @@ interface Task {
   time_of_day: string;
   day_of_week: number | null;
   day_of_month: number | null;
+  period: string | null;
   recipients: string;
   is_active: boolean;
   next_run_at: string;
@@ -20,6 +21,13 @@ interface Task {
   last_run_status: string | null;
   last_run_message: string | null;
 }
+
+const PERIODS: { key: string | null; label: string; hint: string }[] = [
+  { key: null,             label: 'Auto',          hint: 'Based on frequency — daily → previous day, weekly → trailing 7 days, monthly → previous month' },
+  { key: 'today',          label: 'Today',         hint: "Today's data, up to the moment the report runs" },
+  { key: 'yesterday',      label: 'Yesterday',     hint: "Yesterday's full calendar day" },
+  { key: 'current_month',  label: 'Current Month', hint: 'From the 1st of this month through today' },
+];
 
 interface TargetOption { key: string; label: string; }
 
@@ -47,6 +55,7 @@ function fmtDateTime(s: string | null): string {
 const emptyForm = {
   name: '', pages: [] as TaskPage[],
   frequency: 'daily', time_of_day: '08:00', day_of_week: 1, day_of_month: 1,
+  period: null as string | null,
   recipients: '', is_active: true,
 };
 
@@ -100,6 +109,7 @@ export default function TaskSchedulerPage() {
       name: t.name, pages: t.pages,
       frequency: t.frequency, time_of_day: t.time_of_day,
       day_of_week: t.day_of_week ?? 1, day_of_month: t.day_of_month ?? 1,
+      period: t.period ?? null,
       recipients: t.recipients, is_active: t.is_active,
     });
     setError('');
@@ -133,6 +143,7 @@ export default function TaskSchedulerPage() {
         frequency: form.frequency, time_of_day: form.time_of_day,
         day_of_week: form.frequency === 'weekly' ? Number(form.day_of_week) : null,
         day_of_month: form.frequency === 'monthly' ? Number(form.day_of_month) : null,
+        period: form.period,
         recipients: form.recipients, is_active: form.is_active,
       };
       if (modal === 'create') await api.post('/task-scheduler', payload);
@@ -373,6 +384,25 @@ export default function TaskSchedulerPage() {
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-primary" />
                 </div>
               )}
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">Report Period</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {PERIODS.map((p) => (
+                    <button key={p.label} type="button" title={p.hint} onClick={() => setForm({ ...form, period: p.key })}
+                      className={`rounded-lg border px-3 py-2 text-xs font-semibold text-left transition-colors ${
+                        form.period === p.key
+                          ? 'border-primary bg-primary/5 text-primary'
+                          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  {PERIODS.find((p) => p.key === form.period)?.hint}
+                </p>
+              </div>
 
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">Recipients</label>
