@@ -18,6 +18,7 @@ import RawDataTab from './RawDataTab';
 import CaseActionPicker, { type CaseAction } from './CaseActionPicker';
 import FraudCallTab from './FraudCallTab';
 import ActionableInsightsPanel from './ActionableInsightsPanel';
+import ActionableGuide from './ActionableGuide';
 
 function toLocalDT(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -1240,11 +1241,8 @@ function ScamDetailModal({ detail, loading, onClose, onLeadClick, resolveAgent, 
               {/* ── Date Wise Table ── */}
               {tab === 'Date Wise' && (
                 <div>
-                  <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Potential Scam</p>
-                    <p className="text-xs text-amber-900 leading-relaxed">
-                      Review transcript and recording immediately, classify risk, log the case and escalate high-risk/confirmed cases.
-                    </p>
+                  <div className="mb-4">
+                    <ActionableGuide title="Potential Scam — Actionable Guide" items={POTENTIAL_SCAM_ACTIONABLE_ITEMS} accent="#DC2626" />
                   </div>
                   {dateWise.length === 0 ? (
                     <p className="text-center text-slate-400 text-sm py-6">No data available for this period</p>
@@ -1524,11 +1522,8 @@ function SocialThreatDetailModal({
           )}
 
           {!loading && tab === 'Date Wise' && (
-            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Social Media &amp; Consumer Court Threat</p>
-              <p className="text-xs text-amber-900 leading-relaxed">
-                Acknowledge concern, document the exact statement, provide an approved resolution path and escalate to the appropriate senior/CX/legal team.
-              </p>
+            <div className="mb-4">
+              <ActionableGuide title="Social Media & Consumer Court — Actionable Guide" items={SOCIAL_COURT_ACTIONABLE_ITEMS} accent="#7C3AED" />
             </div>
           )}
 
@@ -1951,6 +1946,60 @@ function cqColor(score: number): string {
   if (score > 0)   return '#EF4444';
   return '#64748B';
 }
+
+// ── CLAP / Fraud / Scam / Threat actionable guides — scenario → action, shown via the
+// ActionableGuide icon at each relevant panel. One list per context, covering the common
+// scenarios reported for that context.
+const PRODUCT_ACTIONABLE_ITEMS = [
+  { scenario: 'Order is cancelled',                        action: "Verify the reason for cancellation, check whether a refund/replacement has already been initiated, and confirm the cancellation status with the customer before closing the case." },
+  { scenario: 'Wrong product received',                     action: 'Apologize immediately, verify the correct item that was ordered, and initiate an urgent replacement or pickup-and-refund.' },
+  { scenario: 'Have not received any order today',          action: 'Check the live tracking status and confirm dispatch; if delayed beyond SLA, escalate to logistics and share an updated ETA with the customer.' },
+  { scenario: 'Product received is damaged or defective',   action: 'Arrange an immediate replacement or refund, and log the defect for the product/quality team to review.' },
+  { scenario: 'Product quality is not as described',        action: 'Log the specific feedback, offer a return or exchange, and flag it for a product-quality review if similar complaints repeat.' },
+  { scenario: 'Item(s) missing from the order',              action: 'Verify the order manifest against what was actually delivered, then dispatch the missing item or refund the shortfall.' },
+];
+
+const AGENT_ACTIONABLE_ITEMS = [
+  { scenario: 'Agent was rude or unprofessional',            action: "Apologize on behalf of the agent, log the complaint against the agent's profile, and escalate to the team lead for coaching." },
+  { scenario: 'Agent gave incorrect information',            action: "Correct the information immediately using the knowledge base, and flag the agent for a knowledge refresher." },
+  { scenario: 'Agent did not resolve the issue',             action: 'Escalate to a senior agent or supervisor and track the case until it is genuinely resolved.' },
+  { scenario: 'Call got disconnected by the agent',          action: 'Call the customer back immediately, apologize, and resolve the pending issue in the same interaction.' },
+  { scenario: 'Agent kept the customer on hold too long',    action: "Apologize for the delay, expedite the resolution, and review the agent's hold-procedure compliance." },
+  { scenario: 'Agent could not understand the issue / language barrier', action: 'Transfer to a language-appropriate agent and confirm the issue is fully understood before closing.' },
+];
+
+const LOGISTIC_ACTIONABLE_ITEMS = [
+  { scenario: 'Old or used product received',                action: 'Arrange an immediate replacement with a packaging-integrity check, and escalate to the warehouse/logistics QC team.' },
+  { scenario: 'Order is delayed',                            action: 'Share an updated delivery ETA, escalate to the logistics team, and offer compensation if the SLA has been breached.' },
+  { scenario: 'Wrong information filled during order (address/contact)', action: "Correct the customer's details immediately, confirm them verbally, and reprocess the shipment." },
+  { scenario: 'Order not received on the committed day',     action: 'Track the shipment with the courier partner, escalate internally, and provide a revised delivery date.' },
+  { scenario: 'Package damaged in transit',                  action: 'Arrange a replacement, file a claim with the courier partner, and log it for logistics review.' },
+  { scenario: 'Delivered to the wrong address',               action: 'Coordinate a redelivery with the courier and correct the address on file.' },
+];
+
+const FRAUD_ACTIONABLE_ITEMS = [
+  { scenario: 'Customer shared their OTP',                   action: 'Advise the customer to immediately change related passwords/PINs, block the linked transaction if possible, and report to the fraud/compliance team.' },
+  { scenario: 'Customer shared personal or bank information', action: "Advise the customer to monitor their account closely, alert their bank, and flag the account for enhanced monitoring." },
+  { scenario: 'Customer was asked to make a payment/transfer', action: 'Warn the customer not to proceed with any payment, verify legitimacy through official channels, and escalate to the fraud team.' },
+  { scenario: 'Caller impersonated the company or a bank official', action: "Verify the caller's identity against company records, escalate to security, and report the impersonating number." },
+  { scenario: 'A suspicious link or file was shared',         action: 'Advise the customer not to click or open it, report the link, and escalate to IT security.' },
+  { scenario: "Customer's account appears compromised",       action: 'Freeze/secure the account immediately, reset credentials, and escalate to the security team.' },
+];
+
+const POTENTIAL_SCAM_ACTIONABLE_ITEMS = [
+  { scenario: 'Caller asked for OTP',                        action: 'Advise the customer never to share an OTP, block the linked transaction if possible, and report to the fraud/compliance team.' },
+  { scenario: 'Caller impersonated a bank/company official',  action: "Verify the caller's identity, do not act on the caller's instructions, and report the number." },
+  { scenario: 'Caller demanded an advance payment or fee',    action: 'Advise the customer not to pay, verify legitimacy independently through official channels, and report the request.' },
+  { scenario: 'Caller threatened legal action to extract money', action: 'Advise the customer not to pay under threat, verify via official channels, and log the threat for escalation.' },
+  { scenario: 'Customer already made a payment based on the call', action: 'Escalate immediately to the fraud team for a possible reversal and file a formal report.' },
+];
+
+const SOCIAL_COURT_ACTIONABLE_ITEMS = [
+  { scenario: 'Customer threatens to post on social media',  action: 'Acknowledge the concern, offer an immediate resolution, and request time to resolve before anything is posted.' },
+  { scenario: 'Customer threatens consumer court / legal action', action: 'Document the exact complaint, escalate to the legal team, and respond formally with a resolution timeline.' },
+  { scenario: 'Customer has already posted negative content', action: 'Escalate to the social media/PR team, respond professionally and promptly, and offer a resolution.' },
+  { scenario: 'Customer demands compensation under threat',   action: 'Escalate to senior management for review — do not commit to unauthorized compensation on the call.' },
+];
 
 const CQ_PARAM_TIPS: Record<string, string> = {
   'Opening Skill':   'Use the standard greeting script, verify caller identity immediately, and set a confident, professional tone from the first 5 seconds.',
@@ -5462,12 +5511,7 @@ export default function InboundQualityDashboard() {
                                     <span className="ml-auto text-[9px] text-white/60 font-semibold">{bd?.total ?? 0} total audits analysed</span>
                                   </div>
                                   <div className="bg-white p-4 space-y-4">
-                                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-                                      <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Agent-Related Complaint</p>
-                                      <p className="text-xs text-amber-900 leading-relaxed">
-                                        Identify the specific agent from the quote below, coach them on the flagged behavior, and re-audit their next few calls to confirm improvement.
-                                      </p>
-                                    </div>
+                                    <ActionableGuide title="Agent — Actionable Guide" items={AGENT_ACTIONABLE_ITEMS} accent="#E11D48" />
                                     <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} onQuoteClick={handleLeadClick} resolveAgent={resolveAgent} />
                                     {/* Scenario drill-down */}
                                     {agScens.length > 0 && (
@@ -5524,12 +5568,7 @@ export default function InboundQualityDashboard() {
                                     <span className="ml-auto text-[9px] font-semibold" style={{ color: 'rgba(255,255,255,0.6)' }}>{bd?.total ?? 0} total calls</span>
                                   </div>
                                   <div className="bg-white p-4 space-y-4">
-                                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-                                      <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Logistic &amp; Operations Issue</p>
-                                      <p className="text-xs text-amber-900 leading-relaxed">
-                                        Verify shipment/delivery status with the logistics partner, share an updated ETA with the customer, and escalate delayed or lost orders to the logistics team for priority handling.
-                                      </p>
-                                    </div>
+                                    <ActionableGuide title="Logistic — Actionable Guide" items={LOGISTIC_ACTIONABLE_ITEMS} accent="#F59E0B" />
                                     <VocQuoteList positive={clapVocQuotes?.positive ?? []} negative={clapVocQuotes?.negative ?? []} loading={clapVocLoading} onQuoteClick={handleLeadClick} resolveAgent={resolveAgent} />
                                   </div>
                                 </div>
@@ -5584,12 +5623,7 @@ export default function InboundQualityDashboard() {
                                   <div className="bg-white p-6 text-center text-sm text-slate-400">No product mentions found.</div>
                                 ) : (
                                   <div className="bg-white p-4 space-y-4">
-                                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-                                      <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Product Feedback</p>
-                                      <p className="text-xs text-amber-900 leading-relaxed">
-                                        Log the specific product/SKU with the complaint, notify the product/quality team, and flag repeat product complaints for a defect review.
-                                      </p>
-                                    </div>
+                                    <ActionableGuide title="Product — Actionable Guide" items={PRODUCT_ACTIONABLE_ITEMS} accent="#10B981" />
                                     <div className="grid grid-cols-2 gap-4">
                                       <div className="rounded-xl overflow-hidden border border-emerald-200">
                                         <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#064E3B,#059669)' }}>

@@ -1194,9 +1194,13 @@ export async function getRawCallData(
     ...(cursor ? [cursor] : []),
   ];
 
+  // Same FORCE INDEX reasoning as streamInboundExportCsv above — without it, MySQL can pick the
+  // PRIMARY (id) index for this all-columns query and scan far more rows than the date/client
+  // filter actually matches before reaching LIMIT, which is slow enough with 89 heavy columns to
+  // risk the query timeout on wide date ranges or deep "Load More" pagination.
   const rows = await querySource<Record<string, unknown>>(`
     SELECT ${CQA_EXPORT_COLUMNS.map(c => exportSelectExpr(c)).join(', ')}
-    FROM db_audit.call_quality_assessment q
+    FROM db_audit.call_quality_assessment q ${mobileNo ? '' : 'FORCE INDEX (Index_2)'}
     WHERE 1=1 ${dateClause} ${cf} ${mf} ${cursorClause}
     ORDER BY q.id DESC
     LIMIT ${limit}
@@ -5211,9 +5215,16 @@ export async function streamInboundExportCsv(
   const BATCH = 2000;
   let lastId = 0;
   for (;;) {
+    // FORCE INDEX (Index_2) is load-bearing, not an optimization: without it MySQL picks the
+    // PRIMARY (id) index for this id-ordered query and scans hundreds of thousands of rows from
+    // the very start of the table — filtering CallDate/ClientId row-by-row via "Using where" —
+    // before it finds enough matches. With 89 columns including several large TEXT fields, that
+    // scan alone blows the 20s query timeout on the very first batch, so the export silently
+    // returns just the header row. Forcing the CallDate index turns it into a cheap index-range
+    // scan (confirmed via EXPLAIN: ~24K rows examined vs 400K+), completing in ~6s instead.
     const rows = await querySource<Record<string, unknown>>(`
       SELECT ${CQA_EXPORT_COLUMNS.map(c => exportSelectExpr(c)).join(', ')}
-      FROM db_audit.call_quality_assessment q
+      FROM db_audit.call_quality_assessment q FORCE INDEX (Index_2)
       WHERE q.id > ? AND q.CallDate BETWEEN ? AND ? ${clientFilter}
       ORDER BY q.id ASC
       LIMIT ${BATCH}

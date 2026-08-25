@@ -5,6 +5,16 @@ import {
 } from 'lucide-react';
 import api from '@/lib/axios';
 import CaseActionPicker, { type CaseAction } from './CaseActionPicker';
+import ActionableGuide from './ActionableGuide';
+
+const FRAUD_ACTIONABLE_ITEMS = [
+  { scenario: 'Customer shared their OTP',                   action: 'Advise the customer to immediately change related passwords/PINs, block the linked transaction if possible, and report to the fraud/compliance team.' },
+  { scenario: 'Customer shared personal or bank information', action: 'Advise the customer to monitor their account closely, alert their bank, and flag the account for enhanced monitoring.' },
+  { scenario: 'Customer was asked to make a payment/transfer', action: 'Warn the customer not to proceed with any payment, verify legitimacy through official channels, and escalate to the fraud team.' },
+  { scenario: 'Caller impersonated the company or a bank official', action: "Verify the caller's identity against company records, escalate to security, and report the impersonating number." },
+  { scenario: 'A suspicious link or file was shared',         action: 'Advise the customer not to click or open it, report the link, and escalate to IT security.' },
+  { scenario: "Customer's account appears compromised",       action: 'Freeze/secure the account immediately, reset credentials, and escalate to the security team.' },
+];
 
 interface FraudCallRow {
   lead_id:        string;
@@ -193,12 +203,7 @@ export default function FraudCallTab({ clientId, sd, ed, apiPath = '/inbound-qua
 
       {!loading && data && flagged > 0 && (
         <div className="space-y-5">
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 mb-1">Suggested Action — Fraud Detected</p>
-            <p className="text-xs text-amber-900 leading-relaxed">
-              Immediately flag the call and freeze any pending transaction, verify the customer's identity, escalate to the fraud/legal &amp; compliance team, and block or restrict the agent pending investigation if agent involvement is suspected.
-            </p>
-          </div>
+          <ActionableGuide title="Fraud Call — Actionable Guide" items={FRAUD_ACTIONABLE_ITEMS} accent="#DC2626" />
 
           {/* ─── Agent cards ────────────────────────────────────────────── */}
           {groups.map(([agentId, calls]) => {
