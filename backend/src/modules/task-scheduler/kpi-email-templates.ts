@@ -2,8 +2,12 @@
 // email-safe HTML (table-based layout, inline styles) — same labels/colors as the live page,
 // so a scheduled report reads like a snapshot of the page itself, not a generic data dump.
 import { getProjectSummary, getProjectsMeta } from '../inbound/inbound.service';
-import { getInboundProcessKPIs, type InboundProcessKPIs } from '../inbound-quality/inbound-quality.service';
+import {
+  getInboundProcessKPIs, type InboundProcessKPIs,
+  getAgentParameterWise, getDayWiseQuality, getWeekWiseQuality,
+} from '../inbound-quality/inbound-quality.service';
 import { getKPIs } from '../quality/quality.service';
+import { withQuartile } from '../../lib/quartile';
 
 function escapeHtml(s: string): string {
   return s
@@ -86,17 +90,6 @@ function aiQualityInboundCards(k: InboundProcessKPIs): Card[] {
   ];
 }
 
-function aiQualityInboundScoreComponents(k: InboundProcessKPIs): Card[] {
-  return [
-    { label: 'Opening Skill',  value: `${k.opening_skill}%`,  color: '#0EA5E9' },
-    { label: 'Soft Skill',     value: `${k.soft_skill}%`,     color: '#8B5CF6' },
-    { label: 'Hold Procedure', value: `${k.hold_procedure}%`, color: '#F59E0B' },
-    { label: 'Resolution',     value: `${k.resolution}%`,     color: '#14B8A6' },
-    { label: 'Closing',        value: `${k.closing}%`,        color: '#EC4899' },
-    { label: 'Avg Score',      value: `${k.avg_score}%`,      color: '#8B5CF6' },
-  ];
-}
-
 function outboundCstCards(cst: { totalCalls: number; ops: number; cps: number; offeredSuccess: number; saleDone: number; successRatePct: number }): Card[] {
   return [
     { label: 'Total Calls',     value: cst.totalCalls.toLocaleString(),     color: '#3B82F6' },
@@ -157,19 +150,38 @@ function miniTable(title: string, accent: string, headers: string[], rows: strin
     </table>`;
 }
 
-// ─── Inbound Quality Risk Cards ──────────────────────────────────────────────
-function aiQualityInboundRiskCards(k: InboundProcessKPIs): Card[] {
-  return [
-    { label: 'Fatal', value: k.fatal_count.toLocaleString(), color: '#EF4444' },
-    { label: 'Social Media / Court Threat', value: k.social_media_court_threat.toLocaleString(), color: '#B91C1C' },
-    { label: 'Potential Scam', value: k.potential_scam.toLocaleString(), color: '#DC2626' },
-    { label: 'Frustration', value: k.frustration_count.toLocaleString(), color: '#F59E0B' },
-    { label: 'Threats', value: k.threat_count.toLocaleString(), color: '#EF4444' },
-    { label: 'Abuse', value: k.abuse_count.toLocaleString(), color: '#DC2626' },
-    { label: 'Cuss / Abuse', value: k.cuss_abuse_count.toLocaleString(), color: '#B91C1C' },
-    { label: 'Slang', value: k.slang_count.toLocaleString(), color: '#F59E0B' },
-    { label: 'Sarcasm', value: k.sarcasm_count.toLocaleString(), color: '#F59E0B' },
-  ];
+// ─── Inbound Quality — Agent / Date / Week wise mini tables (mirrors the CSV report shapes) ──
+async function agentWiseMiniTable(target_label: string, clientId: string, startDate: string, endDate: string): Promise<string> {
+  const rows = await getAgentParameterWise({ startDate, endDate, clientId });
+  return miniTable(
+    `${target_label} — Agent Wise Audit Score`, '#7C3AED',
+    ['Agent ID', 'Agent Name', 'Audit Count', 'FE Count', 'Quality Score', 'Quartile'],
+    withQuartile([...rows].sort((a, b) => b.cq_score - a.cq_score), r => r.cq_score)
+      .map(r => [r.agent_id, r.agent_name, String(r.audit_count), String(r.fatal_count), `${r.cq_score}%`, r.quartile]),
+    10,
+  );
+}
+
+async function dateWiseMiniTable(target_label: string, clientId: string, startDate: string, endDate: string): Promise<string> {
+  const rows = await getDayWiseQuality({ startDate, endDate, clientId });
+  return miniTable(
+    `${target_label} — Audit / Fatal / CQ% — Date Wise`, '#0EA5E9',
+    ['Audit Date', 'Audit Count', 'Fatal Count', 'CQ%', 'Quartile'],
+    withQuartile(rows, r => r.cq_score)
+      .map(r => [r.call_date, String(r.audit_count), String(r.fatal_count), `${r.cq_score}%`, r.quartile]),
+    10,
+  );
+}
+
+async function weekWiseMiniTable(target_label: string, clientId: string, startDate: string, endDate: string): Promise<string> {
+  const rows = await getWeekWiseQuality({ startDate, endDate, clientId });
+  return miniTable(
+    `${target_label} — Audit / Fatal / CQ% — Week Wise`, '#14B8A6',
+    ['Week', 'Audit Count', 'Fatal Count', 'CQ%', 'Quartile'],
+    withQuartile(rows, r => r.cq_score)
+      .map(r => [r.week_label, String(r.audit_count), String(r.fatal_count), `${r.cq_score}%`, r.quartile]),
+    10,
+  );
 }
 
 // ─── Public entry point — one HTML block per selected page ────────────────────
@@ -188,9 +200,13 @@ export async function buildPageKpiHtml(
 
   if (page.module === 'ai_quality_inbound') {
     const k = await getInboundProcessKPIs({ startDate, endDate, clientId: page.target_key });
+    const [agentWise, dateWise, weekWise] = await Promise.all([
+      agentWiseMiniTable(page.target_label, page.target_key, startDate, endDate),
+      dateWiseMiniTable(page.target_label, page.target_key, startDate, endDate),
+      weekWiseMiniTable(page.target_label, page.target_key, startDate, endDate),
+    ]);
     return kpiSection(`${page.target_label} — AI Quality Inbound Overview`, '#1565C0', aiQualityInboundCards(k))
-         + kpiSection(`${page.target_label} — Score Components`, '#7C3AED', aiQualityInboundScoreComponents(k))
-         + kpiSection(`${page.target_label} — Risk & Customer Stress`, '#DC2626', aiQualityInboundRiskCards(k));
+         + agentWise + dateWise + weekWise;
   }
 
   if (page.module === 'ai_quality_outbound') {

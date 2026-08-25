@@ -57,7 +57,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ message: 'Internal server error' });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info(`Backend running on port ${PORT}`);
   initNeemansTables().catch(err => logger.error('[startup] initNeemansTables failed:', err.message));
   initBellavitaRepeatAllocationTable().catch(err => logger.error('[startup] initBellavitaRepeatAllocationTable failed:', err.message));
@@ -75,5 +75,17 @@ app.listen(PORT, () => {
     .then(() => startVideoPhraseJob())
     .catch(err => logger.error('[startup] initVideoPhraseCache failed:', err.message));
 });
+
+// Without this, PM2's restart/stop signal kills the process before the OS has released the
+// listening socket, so the replacement instance PM2 spawns immediately after races for the same
+// port and crashes with EADDRINUSE — visible as a few seconds of 502s/connection errors on every
+// deploy, until PM2's autorestart eventually wins the race. Closing the server explicitly and
+// waiting for its callback ensures the port is actually free before this process exits.
+const shutdown = () => {
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+};
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 export default app;

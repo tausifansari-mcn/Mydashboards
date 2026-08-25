@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Play, CalendarClock, CheckCircle2, XCircle, FileText } from 'lucide-react';
 import api from '@/lib/axios';
 
-interface TaskPage { module: string; target_key: string; target_label: string; }
+interface TaskPage { module: string; target_key: string; target_label: string; report_type?: string; }
 
 interface Task {
   id: number;
@@ -38,6 +38,16 @@ const MODULES: { key: string; label: string }[] = [
   { key: 'sales',               label: 'Sales' },
 ];
 const MODULE_LABELS: Record<string, string> = Object.fromEntries(MODULES.map(m => [m.key, m.label]));
+
+// Only 'ai_quality_inbound' pages can pick a report shape — every other module only ever has
+// the one (raw) export.
+const INBOUND_QUALITY_REPORT_TYPES: { key: string; label: string }[] = [
+  { key: 'raw',        label: 'Raw Call Export' },
+  { key: 'agent_wise', label: 'Agent Wise Audit Score' },
+  { key: 'date_wise',  label: 'Audit / Fatal / CQ% — Date Wise' },
+  { key: 'week_wise',  label: 'Audit / Fatal / CQ% — Week Wise' },
+];
+const REPORT_TYPE_LABELS: Record<string, string> = Object.fromEntries(INBOUND_QUALITY_REPORT_TYPES.map(r => [r.key, r.label]));
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -74,6 +84,7 @@ export default function TaskSchedulerPage() {
   // "Add a page" picker row — independent of already-added pages
   const [newPageModule, setNewPageModule] = useState('ai_quality_inbound');
   const [newPageTargetKey, setNewPageTargetKey] = useState('');
+  const [newPageReportType, setNewPageReportType] = useState('raw');
   const [pickerTargets, setPickerTargets] = useState<TargetOption[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
 
@@ -91,6 +102,7 @@ export default function TaskSchedulerPage() {
     if (!modal) return;
     setPickerLoading(true);
     setNewPageTargetKey('');
+    setNewPageReportType('raw');
     api.get<{ data: TargetOption[] }>('/task-scheduler/targets', { params: { module: newPageModule } })
       .then(r => setPickerTargets(r.data.data))
       .catch(() => setPickerTargets([]))
@@ -100,7 +112,7 @@ export default function TaskSchedulerPage() {
 
   const openCreate = () => {
     setForm(emptyForm); setError(''); setSelected(null);
-    setNewPageModule('ai_quality_inbound'); setNewPageTargetKey('');
+    setNewPageModule('ai_quality_inbound'); setNewPageTargetKey(''); setNewPageReportType('raw');
     setModal('create');
   };
   const openEdit = (t: Task) => {
@@ -113,7 +125,7 @@ export default function TaskSchedulerPage() {
       recipients: t.recipients, is_active: t.is_active,
     });
     setError('');
-    setNewPageModule('ai_quality_inbound'); setNewPageTargetKey('');
+    setNewPageModule('ai_quality_inbound'); setNewPageTargetKey(''); setNewPageReportType('raw');
     setModal('edit');
   };
 
@@ -121,9 +133,10 @@ export default function TaskSchedulerPage() {
     if (!newPageTargetKey) return;
     const opt = pickerTargets.find(t => t.key === newPageTargetKey);
     const label = opt?.label ?? newPageTargetKey;
-    // Avoid attaching the exact same module+target twice
-    if (form.pages.some(p => p.module === newPageModule && p.target_key === newPageTargetKey)) return;
-    setForm(f => ({ ...f, pages: [...f.pages, { module: newPageModule, target_key: newPageTargetKey, target_label: label }] }));
+    const reportType = newPageModule === 'ai_quality_inbound' ? newPageReportType : undefined;
+    // Avoid attaching the exact same module+target+report-shape twice
+    if (form.pages.some(p => p.module === newPageModule && p.target_key === newPageTargetKey && (p.report_type ?? 'raw') === (reportType ?? 'raw'))) return;
+    setForm(f => ({ ...f, pages: [...f.pages, { module: newPageModule, target_key: newPageTargetKey, target_label: label, report_type: reportType }] }));
     setNewPageTargetKey('');
   };
 
@@ -220,8 +233,10 @@ export default function TaskSchedulerPage() {
                 <td className="px-4 py-3 text-slate-600">
                   <div className="flex flex-wrap gap-1 max-w-[260px]">
                     {t.pages.map((p, idx) => (
-                      <span key={idx} className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600" title={MODULE_LABELS[p.module] ?? p.module}>
+                      <span key={idx} className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600"
+                        title={[MODULE_LABELS[p.module] ?? p.module, p.report_type && p.report_type !== 'raw' ? REPORT_TYPE_LABELS[p.report_type] : null].filter(Boolean).join(' · ')}>
                         <FileText className="h-3 w-3" />{p.target_label}
+                        {p.report_type && p.report_type !== 'raw' && <span className="text-amber-600">· {REPORT_TYPE_LABELS[p.report_type] ?? p.report_type}</span>}
                       </span>
                     ))}
                   </div>
@@ -320,6 +335,9 @@ export default function TaskSchedulerPage() {
                         <div className="flex items-center gap-2 text-xs">
                           <span className="rounded bg-primary/10 px-1.5 py-0.5 font-semibold text-primary">{MODULE_LABELS[p.module] ?? p.module}</span>
                           <span className="font-medium text-slate-700">{p.target_label}</span>
+                          {p.module === 'ai_quality_inbound' && p.report_type && p.report_type !== 'raw' && (
+                            <span className="rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-700">{REPORT_TYPE_LABELS[p.report_type] ?? p.report_type}</span>
+                          )}
                         </div>
                         <button onClick={() => handleRemovePage(idx)} className="text-slate-400 hover:text-red-600"><X className="h-3.5 w-3.5" /></button>
                       </div>
@@ -327,23 +345,27 @@ export default function TaskSchedulerPage() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
-                  <div>
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
                     <select value={newPageModule} onChange={(e) => setNewPageModule(e.target.value)}
                       className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-primary">
                       {MODULES.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
                     </select>
-                  </div>
-                  <div>
                     <select value={newPageTargetKey} onChange={(e) => setNewPageTargetKey(e.target.value)} disabled={pickerLoading}
                       className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-primary disabled:opacity-60">
-                      <option value="">{pickerLoading ? 'Loading…' : '— Select —'}</option>
+                      <option value="">{pickerLoading ? 'Loading…' : '— Select Process —'}</option>
                       {pickerTargets.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
                     </select>
                   </div>
+                  {newPageModule === 'ai_quality_inbound' && (
+                    <select value={newPageReportType} onChange={(e) => setNewPageReportType(e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-primary">
+                      {INBOUND_QUALITY_REPORT_TYPES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+                    </select>
+                  )}
                   <button type="button" onClick={handleAddPage} disabled={!newPageTargetKey}
-                    className="flex items-center gap-1 rounded-lg bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 disabled:opacity-40">
-                    <Plus className="h-3.5 w-3.5" /> Add
+                    className="flex w-full items-center justify-center gap-1 rounded-lg bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 disabled:opacity-40">
+                    <Plus className="h-3.5 w-3.5" /> Add Page
                   </button>
                 </div>
                 <p className="mt-1 text-[11px] text-slate-400">Each page adds its own CSV attachment; AI Quality and Inbound pages also add a KPI summary to the email body.</p>

@@ -6,6 +6,8 @@ const pageSchema = z.object({
   module:       z.enum(['inbound', 'ai_quality_inbound', 'ai_quality_outbound', 'sales']),
   target_key:   z.string().min(1),
   target_label: z.string().min(1),
+  // Only meaningful for module === 'ai_quality_inbound'; picks which CSV shape to attach.
+  report_type:  z.enum(['raw', 'agent_wise', 'date_wise', 'week_wise']).optional(),
 });
 
 const taskSchema = z.object({

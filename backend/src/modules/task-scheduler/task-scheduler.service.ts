@@ -4,10 +4,14 @@ import prisma from '../../lib/prismaClient';
 import { csvEscape } from '../../lib/csv';
 import { sendReportEmail } from '../../lib/mailer';
 import { streamProjectRawCsv } from '../inbound/inbound.service';
-import { streamInboundExportCsv, getInboundClients } from '../inbound-quality/inbound-quality.service';
+import {
+  streamInboundExportCsv, getInboundClients,
+  getAgentParameterWise, getDayWiseQuality, getWeekWiseQuality,
+} from '../inbound-quality/inbound-quality.service';
 import { streamOutboundExportCsv, getClients as getOutboundClients } from '../quality/quality.service';
 import { getSalesExport } from '../sales/sales.service';
 import { buildPageKpiHtml } from './kpi-email-templates';
+import { withQuartile } from '../../lib/quartile';
 
 // ─── Static / near-static target lists per module ─────────────────────────────
 
@@ -29,7 +33,10 @@ const SALES_BRANDS = [
 ];
 
 export interface TargetOption { key: string; label: string; }
-export interface TaskPage { module: string; target_key: string; target_label: string; }
+// report_type only applies to the 'ai_quality_inbound' module — picks which CSV shape gets
+// attached for that page. Absent/'raw' = the original full call-level export (all other modules
+// only ever have that one shape).
+export interface TaskPage { module: string; target_key: string; target_label: string; report_type?: string; }
 
 function pad(n: number): string { return String(n).padStart(2, '0'); }
 function fmtDate(d: Date): string { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
@@ -181,6 +188,56 @@ export function computeNextRun(
   return candidate;
 }
 
+// ─── AI Quality Inbound — alternate report shapes (Agent / Date / Week wise, with Quartile) ──
+async function buildAgentWiseAuditScoreCsv(clientId: string, startDate: string, endDate: string): Promise<Buffer> {
+  const rows = await getAgentParameterWise({ startDate, endDate, clientId });
+  // Best-to-worst is the useful order for a ranked report — unlike date/week-wise below, where
+  // chronological order must be preserved, so withQuartile is given pre-sorted rows here.
+  const ranked = [...rows].sort((a, b) => b.cq_score - a.cq_score);
+  const withQ = withQuartile(ranked, r => r.cq_score);
+  return rowsToCsvBuffer(withQ.map(r => ({
+    'Agent ID':      r.agent_id,
+    'Agent Name':    r.agent_name,
+    'Audit Count':   r.audit_count,
+    'FE Count':      r.fatal_count,
+    'Quality Score': r.cq_score,
+    'Quartile':      r.quartile,
+  })));
+}
+
+async function buildDateWiseAuditScoreCsv(clientId: string, startDate: string, endDate: string): Promise<Buffer> {
+  const rows = await getDayWiseQuality({ startDate, endDate, clientId });
+  const withQ = withQuartile(rows, r => r.cq_score);
+  return rowsToCsvBuffer(withQ.map(r => ({
+    'Audit Date':   r.call_date,
+    'Audit Count':  r.audit_count,
+    'Fatal Count':  r.fatal_count,
+    'CQ%':          r.cq_score,
+    'Quartile':     r.quartile,
+  })));
+}
+
+async function buildWeekWiseAuditScoreCsv(clientId: string, startDate: string, endDate: string): Promise<Buffer> {
+  const rows = await getWeekWiseQuality({ startDate, endDate, clientId });
+  const withQ = withQuartile(rows, r => r.cq_score);
+  return rowsToCsvBuffer(withQ.map(r => ({
+    'Week':         r.week_label,
+    'Audit Count':  r.audit_count,
+    'Fatal Count':  r.fatal_count,
+    'CQ%':          r.cq_score,
+    'Quartile':     r.quartile,
+  })));
+}
+
+const INBOUND_QUALITY_REPORT_BUILDERS: Record<string, {
+  fn: (clientId: string, startDate: string, endDate: string) => Promise<Buffer>;
+  suffix: string;
+}> = {
+  agent_wise: { fn: buildAgentWiseAuditScoreCsv, suffix: 'agent_wise_audit_score' },
+  date_wise:  { fn: buildDateWiseAuditScoreCsv,  suffix: 'date_wise_audit_score' },
+  week_wise:  { fn: buildWeekWiseAuditScoreCsv,  suffix: 'week_wise_audit_score' },
+};
+
 // ─── Build one page's CSV attachment (raw row-level export, same as its manual button) ──
 async function buildPageCsv(
   page: TaskPage, startDate: string, endDate: string, safeRange: string,
@@ -194,6 +251,12 @@ async function buildPageCsv(
     return { filename: `${safeLabel}_inbound_${safeRange}.csv`, content: res.getBuffer() };
   }
   if (page.module === 'ai_quality_inbound') {
+    const reportType = page.report_type ?? 'raw';
+    const builder = INBOUND_QUALITY_REPORT_BUILDERS[reportType];
+    if (builder) {
+      const content = await builder.fn(page.target_key, startDate, endDate);
+      return { filename: `${safeLabel}_${builder.suffix}_${safeRange}.csv`, content };
+    }
     const res = new BufferResponse();
     await streamInboundExportCsv(res as unknown as Response, startDate, endDate, [Number(page.target_key)]);
     return { filename: `${safeLabel}_ai_quality_inbound_${safeRange}.csv`, content: res.getBuffer() };

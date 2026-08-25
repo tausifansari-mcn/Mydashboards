@@ -2916,6 +2916,7 @@ const _CLOSING = `ROUND(AVG(
 // ─── Agent & Parameter Wise CQ Score% ────────────────────────────────────────
 
 export interface AgentParamRow {
+  agent_id:       string;
   agent_name:     string;
   tq_mq_bq:       string;
   audit_count:    number;
@@ -2937,14 +2938,15 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
   if (scenario) { extra += ' AND TRIM(q.scenario) = ?'; params.push(scenario); }
 
   const rows = await querySource<{
-    agent_name: string; tq_mq_bq: string;
+    agent_id: string; agent_name: string; tq_mq_bq: string;
     audit_count: number; cq_score: number | null;
     fatal_count: number; fatal_pct: number | null;
     opening_skill: number | null; soft_skill: number | null;
     hold_procedure: number | null; resolution: number | null; closing: number | null;
   }>(`
     SELECT
-      COALESCE(am.AgentName, q.User) AS agent_name,
+      q.User AS agent_id,
+      COALESCE(am2.AgentName, am.AgentName, q.User) AS agent_name,
       IFNULL(NULLIF(TRIM(q.Campaign),''),'-')      AS tq_mq_bq,
       COUNT(*)                                     AS audit_count,
       ROUND(AVG(${CQ_SCORE_SQL}) * 100,1)           AS cq_score,
@@ -2957,15 +2959,17 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
       ${_CLOSING}    AS closing
     FROM db_audit.call_quality_assessment q
     LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN shivamgiri.AgentsMaster am2 ON am2.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
       AND q.User IS NOT NULL AND TRIM(q.User) != ''
       ${extra}
-    GROUP BY q.User, q.Campaign, am.AgentName
+    GROUP BY q.User, q.Campaign, am.AgentName, am2.AgentName
     ORDER BY q.User ASC
   `, params);
 
   return rows.map(r => ({
+    agent_id:       String(r.agent_id),
     agent_name:     String(r.agent_name),
     tq_mq_bq:       String(r.tq_mq_bq),
     audit_count:    Number(r.audit_count),
