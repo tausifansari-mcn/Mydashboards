@@ -25,6 +25,8 @@ import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.rout
 import { initVideoPhraseCache, startVideoPhraseJob } from './modules/inbound-quality/inbound-quality.service';
 import taskSchedulerRoutes from './modules/task-scheduler/task-scheduler.routes';
 import { startTaskSchedulerJob } from './modules/task-scheduler/task-scheduler.service';
+import settingsRoutes from './modules/settings/settings.routes';
+import { initSmtpFromDb } from './lib/mailer';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -49,6 +51,7 @@ app.use('/api/inbound', inboundRoutes);
 app.use('/api/quality', qualityRoutes);
 app.use('/api/inbound-quality', inboundQualityRoutes);
 app.use('/api/task-scheduler', taskSchedulerRoutes);
+app.use('/api/settings', settingsRoutes);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date() }));
 
@@ -59,6 +62,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 const server = app.listen(PORT, () => {
   logger.info(`Backend running on port ${PORT}`);
+  initSmtpFromDb().catch(err => logger.error('[startup] initSmtpFromDb failed:', err.message));
   initNeemansTables().catch(err => logger.error('[startup] initNeemansTables failed:', err.message));
   initBellavitaRepeatAllocationTable().catch(err => logger.error('[startup] initBellavitaRepeatAllocationTable failed:', err.message));
   initOutboundInsightsTables()

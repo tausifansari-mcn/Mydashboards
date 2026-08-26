@@ -1,24 +1,50 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { type Transporter } from 'nodemailer';
+import { querySource } from './sourceDb';
+import { encryptSecret, decryptSecret } from './crypto';
+
+// Kept in shivamgiri (same DB as the rest of the app's own tables) but created/read via the raw
+// querySource connection rather than Prisma — a `prisma db push` diffs the ENTIRE live schema
+// against schema.prisma, and this DB already has several tables (AgentsMaster, md_magical_scripts,
+// md_sale_brand_access, ...) that were created ad hoc via raw SQL and were never added back into
+// schema.prisma; pushing a new model here would have offered to drop all of them. Single-row
+// table (id is always 1) — smtp_pass_enc is AES-256-GCM encrypted (see lib/crypto.ts).
+async function ensureSmtpSettingsTable(): Promise<void> {
+  await querySource(`
+    CREATE TABLE IF NOT EXISTS shivamgiri.md_smtp_settings (
+      id INT PRIMARY KEY,
+      smtp_pass_enc TEXT,
+      updated_by_name VARCHAR(100),
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+}
 
 const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
 
 // Gmail App Passwords are displayed with spaces (e.g. "xxxx xxxx xxxx xxxx")
 // but must be sent without spaces — strip them here.
-const smtpPass = (process.env.SMTP_PASS || '').replace(/\s+/g, '');
+function cleanPass(pass: string): string {
+  return pass.replace(/\s+/g, '');
+}
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: SMTP_PORT,
-  secure: SMTP_PORT === 465,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: smtpPass,
-  },
-  tls: { rejectUnauthorized: false },
-});
+let transporter: Transporter = buildTransporter(process.env.SMTP_PASS || '');
+let usingStoredPassword = false;
 
-// Verify SMTP connection on startup and log result
-if (process.env.SMTP_USER) {
+function buildTransporter(pass: string): Transporter {
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_PORT === 465,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: cleanPass(pass),
+    },
+    tls: { rejectUnauthorized: false },
+  });
+}
+
+function verifyAndLog(): void {
+  if (!process.env.SMTP_USER) return;
   transporter.verify((err) => {
     if (err) {
       console.error('[mailer] SMTP connection FAILED:', err.message);
@@ -26,6 +52,65 @@ if (process.env.SMTP_USER) {
       console.log('[mailer] SMTP connection OK — ready to send emails');
     }
   });
+}
+
+verifyAndLog();
+
+// Called once at server startup — if an admin has previously saved a replacement SMTP password
+// via the Profile page (e.g. because a Gmail app password expired), use that instead of
+// whatever's baked into .env, without requiring a new deploy to pick it up.
+export async function initSmtpFromDb(): Promise<void> {
+  try {
+    await ensureSmtpSettingsTable();
+    const rows = await querySource<{ smtp_pass_enc: string | null }>(
+      'SELECT smtp_pass_enc FROM shivamgiri.md_smtp_settings WHERE id = 1',
+    );
+    if (rows[0]?.smtp_pass_enc) {
+      transporter = buildTransporter(decryptSecret(rows[0].smtp_pass_enc));
+      usingStoredPassword = true;
+      console.log('[mailer] Using SMTP password stored via Profile page');
+      verifyAndLog();
+    }
+  } catch (err) {
+    console.error('[mailer] Failed to load stored SMTP password, falling back to .env:', err instanceof Error ? err.message : err);
+  }
+}
+
+// Called after a successful save from the Profile page — swaps the live transporter in
+// immediately so a fixed password (e.g. a freshly rotated app password) takes effect without a
+// restart, and reports back whether nodemailer can actually authenticate with it.
+export async function updateSmtpPassword(newPassword: string, updatedByName: string): Promise<{ ok: boolean; error?: string }> {
+  const candidate = buildTransporter(newPassword);
+  try {
+    await candidate.verify();
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'SMTP verification failed' };
+  }
+  await ensureSmtpSettingsTable();
+  const encrypted = encryptSecret(newPassword);
+  await querySource(`
+    INSERT INTO shivamgiri.md_smtp_settings (id, smtp_pass_enc, updated_by_name)
+    VALUES (1, ?, ?)
+    ON DUPLICATE KEY UPDATE smtp_pass_enc = VALUES(smtp_pass_enc), updated_by_name = VALUES(updated_by_name)
+  `, [encrypted, updatedByName]);
+  transporter = candidate;
+  usingStoredPassword = true;
+  console.log('[mailer] SMTP password updated from Profile page — verified and active');
+  return { ok: true };
+}
+
+export async function getSmtpStatus(): Promise<{ host: string | undefined; user: string | undefined; usingStoredPassword: boolean; updatedByName: string | null; updatedAt: string | null }> {
+  await ensureSmtpSettingsTable();
+  const rows = await querySource<{ updated_by_name: string | null; updated_at: string | null }>(
+    'SELECT updated_by_name, updated_at FROM shivamgiri.md_smtp_settings WHERE id = 1',
+  );
+  return {
+    host: process.env.SMTP_HOST,
+    user: process.env.SMTP_USER,
+    usingStoredPassword,
+    updatedByName: rows[0]?.updated_by_name ?? null,
+    updatedAt: rows[0]?.updated_at ?? null,
+  };
 }
 
 const FROM = `"${process.env.SMTP_FROM_NAME || 'My Dashboard'}" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`;
