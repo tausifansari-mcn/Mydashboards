@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Call Master Analytics · LOB</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+<style>
+:root{
+    --green:#1565C0;
+    --green-dark:#0D47A1;
+    --mint:#dbe9fb;
+    --mint-2:#eef5fd;
+    --ink:#15212d;
+    --text:#25323d;
+    --muted:#71808c;
+    --line:#e5ebe9;
+    --surface:#fff;
+    --blue:#3d8df5;
+    --blue-soft:#edf5ff;
+    --orange:#f5a623;
+    --orange-soft:#fff5e5;
+    --purple:#7a52e8;
+    --purple-soft:#f2edff;
+    --pink:#f34f7c;
+    --pink-soft:#fff0f4;
+    --teal:#25b7bd;
+    --teal-soft:#eafafa;
+    --shadow:0 10px 30px rgba(28,57,47,.07);
+    --shadow-hover:0 18px 40px rgba(28,57,47,.13);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+    min-height:100vh;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
+    background:#f8fbfa;color:var(--text);overflow-x:hidden
+}
+button,input{font:inherit}
+button{color:inherit}
+.app-shell{width:min(1400px,calc(100% - 48px));margin:0 auto}
+.app{min-height:100vh;background:#fff}
+.topbar{
+    height:76px;display:flex;align-items:center;justify-content:space-between;gap:22px;
+    padding:0 28px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.96);
+    position:sticky;top:0;z-index:50
+}
+.brand{display:flex;align-items:center;gap:12px;min-width:220px}
+.brand-mark{
+    width:39px;height:39px;border-radius:11px;display:grid;place-items:center;
+    background:linear-gradient(135deg,#1565C0,#0D47A1);color:#fff;box-shadow:0 7px 18px rgba(21,101,192,.28)
+}
+.brand-mark i{font-size:17px}
+.brand-title{font-size:14px;font-weight:800;color:var(--ink)}
+.brand-sub{font-size:10px;color:var(--muted);margin-top:3px}
+.header-search{
+    flex:1;max-width:430px;position:relative
+}
+.header-search i{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#9aa7b1;font-size:13px}
+.header-search input{
+    width:100%;height:40px;border:1px solid var(--line);border-radius:10px;
+    padding:0 40px;background:#fbfcfc;color:var(--text);outline:none;font-size:11px
+}
+.header-search input:focus{border-color:#a9c9ee;box-shadow:0 0 0 3px rgba(21,101,192,.1)}
+.search-key{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:10px;color:#9aa7b1}
+.header-actions{display:flex;align-items:center;gap:10px}
+.refresh-btn{
+    height:40px;padding:0 16px;border:1px solid #c7dbf5;background:var(--mint-2);
+    border-radius:10px;color:var(--green-dark);font-size:11px;font-weight:700;cursor:pointer
+}
+.refresh-btn:hover{background:var(--mint);transform:translateY(-1px)}
+.icon-btn{
+    width:40px;height:40px;border:1px solid var(--line);background:#fff;border-radius:10px;
+    display:grid;place-items:center;color:#63717c;cursor:pointer;position:relative
+}
+.notify-dot{position:absolute;right:7px;top:6px;width:7px;height:7px;background:var(--green);border:2px solid #fff;border-radius:50%}
+.user{
+    display:flex;align-items:center;gap:9px;padding-left:4px
+}
+.user-avatar{width:35px;height:35px;border-radius:50%;background:#1565C0;color:#fff;display:grid;place-items:center;font-weight:800}
+.user-name{font-size:11px;font-weight:800;color:var(--ink)}.user-role{font-size:9px;color:var(--muted);margin-top:2px}
+.main{padding:34px 28px 20px}
+.hero{
+    display:grid;grid-template-columns:1.05fr .95fr;align-items:center;gap:30px;
+    margin-bottom:28px;position:relative;overflow:hidden
+}
+.hero-copy{padding:12px 0 8px}
+.hero-kicker{
+    display:inline-flex;align-items:center;gap:7px;color:var(--green-dark);font-size:10px;
+    font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px
+}
+.hero-kicker span{width:6px;height:6px;background:var(--green);border-radius:50%}
+.hero h1{font-size:clamp(30px,4vw,48px);line-height:1.08;letter-spacing:-1.8px;color:#121e29;max-width:650px}
+.hero h1 span{display:block;color:#1565C0}
+.hero p{max-width:640px;font-size:12px;line-height:1.7;color:var(--muted);margin-top:13px}
+.hero-visual{min-height:235px;position:relative;display:flex;align-items:center;justify-content:center}
+.hero-blob{
+    position:absolute;width:430px;height:250px;border-radius:46% 54% 48% 52%;
+    background:linear-gradient(135deg,#e3f0fd,#f5f9ff);right:15px;top:0
+}
+.hero-chart{
+    position:relative;width:min(450px,100%);height:205px;border:1px solid #dbe7f5;
+    background:rgba(255,255,255,.9);border-radius:18px;box-shadow:0 18px 45px rgba(31,79,62,.09);
+    padding:18px;z-index:1
+}
+.hero-chart-top{display:flex;justify-content:space-between;color:#9aa7b1;font-size:9px}
+.hero-chart-title{font-size:12px;font-weight:800;color:var(--ink);margin-top:7px}
+.chart-area{height:120px;margin-top:8px;display:flex;align-items:flex-end;gap:12px}
+.bar{flex:1;border-radius:7px 7px 3px 3px;background:linear-gradient(180deg,#5b9df0,#bcdcfa);min-height:25px}
+.bar:nth-child(2){height:52%}.bar:nth-child(3){height:70%}.bar:nth-child(4){height:46%}.bar:nth-child(5){height:83%}.bar:nth-child(6){height:66%}
+.floating-stat{position:absolute;right:-10px;top:24px;background:#fff;border:1px solid #e4eee9;border-radius:12px;padding:10px 13px;box-shadow:var(--shadow);z-index:2}
+.floating-stat strong{display:block;font-size:17px;color:var(--green-dark)}.floating-stat span{font-size:8px;color:var(--muted)}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:31px}
+.metric{
+    min-height:95px;border:1px solid var(--line);border-radius:13px;background:#fff;
+    padding:14px 15px;display:flex;align-items:center;gap:12px;box-shadow:0 5px 18px rgba(28,57,47,.04)
+}
+.metric-icon{width:43px;height:43px;border-radius:11px;display:grid;place-items:center;font-size:18px;flex:none}
+.metric:nth-child(1) .metric-icon{background:var(--mint);color:var(--green-dark)}
+.metric:nth-child(2) .metric-icon{background:var(--blue-soft);color:var(--blue)}
+.metric:nth-child(3) .metric-icon{background:var(--mint);color:var(--green-dark)}
+.metric:nth-child(4) .metric-icon{background:var(--orange-soft);color:#f28d0b}
+.metric-label{font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.45px}
+.metric-value{font-size:22px;font-weight:800;color:var(--ink);margin-top:4px}
+.metric-note{font-size:8px;color:#96a2aa;margin-top:3px}
+.section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:15px;margin-bottom:15px}
+.section-title-wrap{border-left:3px solid var(--green);padding-left:11px}
+.section-title{font-size:16px;font-weight:800;color:var(--ink)}
+.section-sub{font-size:10px;color:var(--muted);margin-top:4px}
+.process-toolbar{display:flex;justify-content:flex-end;margin-bottom:14px}
+.main-search{width:min(390px,100%);position:relative}
+.main-search i{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:#9ca8b0;font-size:11px}
+.main-search input{width:100%;height:38px;border:1px solid var(--line);border-radius:10px;padding:0 13px 0 35px;outline:none;background:#fff;font-size:10px}
+.main-search input:focus{border-color:#a9c9ee;box-shadow:0 0 0 3px rgba(21,101,192,.09)}
+.process-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:15px}
+.process-card{
+    min-height:170px;border:1px solid #e4eae8;border-radius:14px;background:#fff;padding:18px;
+    box-shadow:0 5px 17px rgba(28,57,47,.045);cursor:pointer;transition:.22s;position:relative;overflow:hidden
+}
+.process-card:hover{transform:translateY(-4px);box-shadow:var(--shadow-hover);border-color:#bcd4f2}
+.card-top{display:flex;align-items:flex-start;justify-content:space-between}
+.process-icon{
+    width:50px;height:50px;border-radius:13px;display:grid;place-items:center;font-size:20px;
+    background:var(--mint);color:var(--green-dark)
+}
+.process-card:nth-child(4n+2) .process-icon{background:var(--blue-soft);color:var(--blue)}
+.process-card:nth-child(4n+3) .process-icon{background:var(--orange-soft);color:#ed940d}
+.process-card:nth-child(4n+4) .process-icon{background:var(--purple-soft);color:var(--purple)}
+.card-arrow{color:#82919c;font-size:17px;transition:.2s}
+.process-card:hover .card-arrow{color:var(--green);transform:translate(2px,-2px)}
+.process-name{font-size:15px;font-weight:800;color:var(--ink);margin-top:22px}
+.process-meta{display:flex;align-items:center;gap:7px;margin-top:8px;min-height:20px}
+.count-pill,.status-pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:5px 8px;font-size:9px;font-weight:700;border:1px solid #e4e9e7;background:#fafcfc;color:#71808b}
+.status-pill{color:#169a73;background:#eafaf4;border-color:#d3f2e7}
+.status-dot{width:6px;height:6px;border-radius:50%;background:#2dc69d}
+.process-stats-row{display:flex;align-items:center;gap:12px;margin-top:16px;padding-top:14px;border-top:1px solid #edf1ef}
+.process-stat{display:flex;align-items:center;gap:5px;font-size:10px;font-weight:700}
+.process-stat i{font-size:9px}
+.process-stat.stat-closed{color:#169a73}
+.process-stat.stat-open{color:#c17c0e}
+.view-link{color:var(--green-dark);font-size:10px;font-weight:800;margin-top:14px;text-align:right}
+.special-section{margin-top:35px;padding-top:26px;border-top:1px solid #edf1ef}
+.special-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:15px;margin-bottom:14px}
+.special-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+.special-card{
+    min-height:158px;border:1.5px dashed #b9cbc5;border-radius:14px;background:#fcfffe;padding:18px;
+    display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:14px;cursor:pointer;transition:.22s
+}
+.special-card:hover{border-color:#8fb9e8;background:#f5f9ff;transform:translateY(-2px)}
+.special-card .process-icon{background:#eaf2fc;color:var(--green-dark)}
+.special-copy h3{font-size:15px;color:var(--ink);font-weight:800}
+.special-copy .status{display:inline-flex;margin-top:7px;padding:5px 8px;border-radius:999px;background:#fff5df;color:#db8d0b;font-size:8px;font-weight:800;border:1px solid #f5dfad}
+.special-copy p{font-size:10px;line-height:1.6;color:var(--muted);margin-top:11px}
+.special-arrow{color:var(--green);font-size:17px}
+.footer{margin-top:30px;padding:15px 20px;background:#f3fbf8;border-radius:10px;display:flex;justify-content:space-between;color:#70817b;font-size:9px}
+.footer strong{color:var(--green-dark)}
+.detail-view{display:none}
+.detail-head{margin-bottom:20px}.breadcrumb{display:flex;gap:8px;color:var(--muted);font-size:9px;margin-bottom:10px}.breadcrumb strong{color:var(--ink)}.breadcrumb-link{cursor:pointer}.breadcrumb-link:hover{color:var(--green-dark);text-decoration:underline}
+.detail-title{display:flex;align-items:center;gap:10px;font-size:28px;font-weight:800;color:var(--ink)}
+.detail-title i{color:var(--green)}.detail-sub{font-size:12px;color:var(--muted);margin-top:5px}
+.process-note{margin:14px 0;padding:13px 15px;border:1px solid #f2dca9;border-radius:12px;background:#fff9ec;color:#9b6c13;font-size:10px;line-height:1.6;display:flex;gap:9px}
+.process-note i{color:#e6a21b;margin-top:2px}
+.phase-tabs{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px}
+.phase-tab{border:1px solid var(--line);background:#fff;color:var(--muted);padding:8px 12px;border-radius:9px;cursor:pointer;font-size:9px;font-weight:700}
+.phase-tab.active{border-color:#b2cef2;background:var(--mint-2);color:var(--green-dark)}
+
+.insight-board-wrap{
+    margin-top:16px;border:1px solid #dce9e5;border-radius:18px;background:#fff;
+    box-shadow:0 14px 35px rgba(28,57,47,.07);overflow:hidden
+}
+.insight-board-head{
+    display:flex;align-items:center;justify-content:space-between;gap:15px;
+    padding:17px 18px;border-bottom:1px solid #e5eeeb;background:linear-gradient(135deg,#f8fbff,#f0f6fd)
+}
+.trend-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:8px;color:#7a8b88}
+.trend-legend span{display:inline-flex;align-items:center;gap:5px}
+.trend-legend i{width:8px;height:8px;border-radius:50%;display:inline-block;background:#1565C0}
+.trend-legend .trend-live i{background:#ffb23e}
+.insight-table{width:100%}
+.insight-table-head,.insight-row{
+    display:grid;grid-template-columns:minmax(250px,1.02fr) minmax(380px,1.48fr) minmax(340px,1.28fr);
+}
+.insight-table-head{
+    background:linear-gradient(90deg,#1565C0,#3d8df5);color:#fff;
+    font-size:9px;font-weight:900;letter-spacing:.8px
+}
+.insight-table-head>div{padding:12px 16px;border-right:1px solid rgba(255,255,255,.22)}
+.insight-table-head>div:last-child{border-right:0}
+.insight-row{border-top:1px solid #e6eeeb;min-height:185px}
+.insight-row:hover{background:#fbfefd}
+.insight-cell{padding:16px;border-right:1px solid #e6eeeb;min-width:0}
+.insight-cell:last-child{border-right:0}
+.insight-activity{display:flex;gap:11px;align-items:flex-start}
+.insight-activity-icon{
+    width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:none;
+    background:#e9f8f3;color:#18ae84;font-size:16px
+}
+.insight-row.priority-critical .insight-activity-icon{background:#fff0f4;color:#e74f73}
+.insight-row.priority-high .insight-activity-icon{background:#fff6e8;color:#e89a22}
+.insight-row.priority-medium .insight-activity-icon{background:#eef6ff;color:#438fe8}
+.insight-priority{
+    display:inline-flex;align-items:center;gap:5px;font-size:8px;font-weight:900;
+    text-transform:uppercase;letter-spacing:.65px;margin-bottom:5px
+}
+.insight-priority.critical{color:#e74f73}.insight-priority.high{color:#e89a22}.insight-priority.medium{color:#438fe8}
+.insight-activity-name{font-size:13px;line-height:1.35;font-weight:900;color:#102033}
+.insight-activity-desc{font-size:9px;line-height:1.55;color:#758581;margin-top:6px}
+.insight-chart{height:150px;position:relative}
+.insight-chart svg{width:100%;height:118px;display:block;overflow:visible}
+.chart-gridline{stroke:#e8efed;stroke-width:1}
+.chart-area{fill:rgba(31,190,145,.10)}
+.chart-line{fill:none;stroke:#22b990;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+.insight-row.priority-critical .chart-line{stroke:#e84e72}.insight-row.priority-critical .chart-area{fill:rgba(232,78,114,.10)}
+.insight-row.priority-high .chart-line{stroke:#eea12b}.insight-row.priority-high .chart-area{fill:rgba(238,161,43,.11)}
+.insight-row.priority-medium .chart-line{stroke:#478fe7}.insight-row.priority-medium .chart-area{fill:rgba(71,143,231,.10)}
+.chart-bar{fill:#22b990}
+.insight-row.priority-critical .chart-bar{fill:#e84e72}
+.insight-row.priority-high .chart-bar{fill:#eea12b}
+.insight-row.priority-medium .chart-bar{fill:#478fe7}
+.chart-view-toggle{border:1px solid #d5e3f5;background:#fff;color:#5c78a7;border-radius:7px;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:9px;flex:none}
+.chart-view-toggle:hover{background:#eef5fd;border-color:#a9c9ee}
+.chart-view-toggle.active{background:#1565C0;border-color:#1565C0;color:#fff}
+.chart-view-tabs{display:flex;gap:4px}
+.chart-data-label{font-size:9px;font-weight:800;fill:#3a4d48;font-family:Inter,system-ui,sans-serif}
+.multi-line-data-label{font-size:7px}
+.insight-row.priority-critical .chart-data-label{fill:#c13a5c}
+.insight-row.priority-high .chart-data-label{fill:#b57a10}
+.insight-row.priority-medium .chart-data-label{fill:#2f6cc4}
+.chart-point{fill:#fff;stroke:#22b990;stroke-width:2}
+.insight-row.priority-critical .chart-point{stroke:#e84e72}
+.insight-row.priority-high .chart-point{stroke:#eea12b}
+.insight-row.priority-medium .chart-point{stroke:#478fe7}
+.chart-labels{display:flex;justify-content:space-between;gap:5px;font-size:7px;color:#8b9996;margin:1px 4px 0}
+.chart-title-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px}
+.chart-caption{font-size:8px;font-weight:800;color:#6f7e7b}
+.chart-badge{font-size:7px;padding:4px 7px;border-radius:999px;background:#f0f7f5;color:#64817a;font-weight:800}
+.scenario-picker-row{margin-bottom:9px}
+.scenario-picker{width:100%;font-size:10px;font-weight:700;color:var(--ink);background:#f7fafd;border:1px solid #d5e3f5;border-radius:7px;padding:6px 8px;cursor:pointer}
+.scenario-picker:focus{outline:none;border-color:var(--green)}
+.clap-branch-panel{margin-top:10px;padding-top:10px;border-top:1px dashed #e2ece9;display:flex;flex-direction:column;gap:7px}
+.clap-branch-row{display:flex;align-items:center;gap:8px;font-size:9px}
+.clap-branch-label{width:52px;flex:none;font-weight:800;color:#546b66}
+.clap-branch-bars{flex:1;display:flex;align-items:center;gap:6px}
+.clap-branch-bar-track{flex:1;height:6px;border-radius:99px;background:#eef2f1;overflow:hidden;display:flex}
+.clap-branch-bar-pos{flex:0 0 auto;height:100%;background:#20b98f}
+.clap-branch-bar-neg{flex:0 0 auto;height:100%;background:#e8607d}
+.clap-branch-counts{flex:none;font-weight:800;font-family:'Courier New',monospace;font-size:8px;white-space:nowrap}
+.clap-branch-counts .pos{color:#189873}
+.clap-branch-counts .neg{color:#c93f61}
+.multi-line-legend{display:flex;flex-wrap:wrap;gap:9px;margin:6px 4px 0}
+.multi-line-legend-item{display:inline-flex;align-items:center;gap:4px;font-size:8px;color:#546b66;font-weight:700}
+.multi-line-legend-item b{color:var(--ink);font-weight:800}
+.multi-line-swatch{width:7px;height:7px;border-radius:50%;flex:none}
+.sentiment-toggle-row{display:flex;gap:5px;margin-bottom:8px}
+.sentiment-toggle{border:1px solid #d5e3f5;background:#fff;color:#5c78a7;border-radius:99px;padding:4px 11px;font-size:8px;font-weight:800;cursor:pointer;text-transform:uppercase;letter-spacing:.4px}
+.sentiment-toggle:hover{background:#eef5fd}
+.sentiment-toggle.active.negative{background:#e8607d;border-color:#e8607d;color:#fff}
+.sentiment-toggle.active.positive{background:#20b98f;border-color:#20b98f;color:#fff}
+.action-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
+.action-item{display:flex;align-items:flex-start;gap:9px;font-size:11px;line-height:1.55;color:#243a35;padding:2px 0}
+.tni-action-note{margin-top:8px;padding:8px 10px;border-radius:8px;background:#f3fbf8;border-left:3px solid #20b98f;color:#35665a;font-size:9px;line-height:1.45}
+
+.action-item:before{
+    content:"✓";width:20px;height:20px;border-radius:50%;display:grid;place-items:center;
+    flex:none;background:#e7f8f2;color:#13a87e;font-size:10px;font-weight:900;margin-top:1px
+}
+.insight-cell:last-child{background:linear-gradient(180deg,#ffffff 0%,#fbfefd 100%)}
+.insight-cell:last-child:before{content:"ACTIONABLE INSIGHTS";display:block;font-size:8px;font-weight:900;letter-spacing:.7px;color:#1ba981;margin-bottom:10px}
+.insight-row.priority-critical .action-item:before{background:#fff0f4;color:#e74f73}
+.insight-row.priority-high .action-item:before{background:#fff6e8;color:#e89a22}
+.insight-row.priority-medium .action-item:before{background:#eef6ff;color:#438fe8}
+.action-more{margin-top:8px;font-size:8px;color:#82918d;font-style:italic}
+.insight-empty{padding:30px;text-align:center;color:#879590;font-size:10px}
+.insight-section-divider{
+    grid-column:1/-1;padding:8px 16px;background:#f7fbf9;border-top:1px solid #e6eeeb;
+    color:#81908d;font-size:8px;font-weight:900;letter-spacing:.7px;text-transform:uppercase
+}
+@media(max-width:1050px){
+    .insight-table-head,.insight-row{grid-template-columns:1fr}
+    .insight-table-head{display:none}
+    .insight-row{margin:12px;border:1px solid #e2ece9;border-radius:14px;overflow:hidden;box-shadow:0 5px 18px rgba(28,57,47,.04)}
+    .insight-cell{border-right:0;border-bottom:1px solid #e6eeeb}
+    .insight-cell:last-child{border-bottom:0}
+}
+
+.priority-board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+.priority-column{min-width:0;border:1px solid var(--line);border-radius:15px;background:#fbfdfc;padding:13px;min-height:260px}
+.priority-column.critical{border-top:4px solid var(--pink);background:linear-gradient(180deg,#fff5f8 0%,#fbfdfc 18%)}
+.priority-column.high{border-top:4px solid var(--orange);background:linear-gradient(180deg,#fff8eb 0%,#fbfdfc 18%)}
+.priority-column.medium{border-top:4px solid var(--blue);background:linear-gradient(180deg,#f2f7ff 0%,#fbfdfc 18%)}
+.priority-column-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+.priority-heading{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:var(--ink)}
+.priority-heading i{font-size:11px}
+.priority-column.critical .priority-heading i{color:var(--pink)}
+.priority-column.high .priority-heading i{color:var(--orange)}
+.priority-column.medium .priority-heading i{color:var(--blue)}
+.priority-count{min-width:23px;height:23px;padding:0 7px;border-radius:999px;display:grid;place-items:center;font-size:9px;font-weight:800;background:#fff;border:1px solid #e4e9e7;color:var(--muted)}
+.priority-list{display:flex;flex-direction:column;gap:10px}
+.activity-card{border:1px solid var(--line);border-radius:12px;background:#fff;padding:14px;cursor:pointer;transition:.2s;box-shadow:0 4px 15px rgba(28,57,47,.035)}
+.activity-card:hover,.activity-card.selected{border-color:#b9e2d5;box-shadow:var(--shadow);transform:translateY(-2px)}
+.activity-top{display:flex;justify-content:space-between;gap:8px}.activity-title{font-size:11px;font-weight:800;line-height:1.45;color:var(--ink)}
+.activity-title i{color:var(--green);margin-right:5px}
+.activity-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:12px;padding-top:10px;border-top:1px solid #eef1f0}
+.meta-chip{font-size:8px;color:var(--muted);display:inline-flex;align-items:center;gap:4px}
+.priority-critical{color:var(--pink)!important}.priority-high{color:#e2910e!important}.priority-medium{color:var(--blue)!important}
+.priority-empty{padding:28px 10px;text-align:center;color:#9aa6ad;font-size:9px}
+.priority-empty i{display:block;font-size:18px;margin-bottom:7px;color:#bdc8c4}
+.loader-wrap{min-height:420px;display:grid;place-items:center}.loader-box{text-align:center}.loader-ring{width:42px;height:42px;border:3px solid #e6eeeb;border-top-color:var(--green);border-radius:50%;animation:spin 1s linear infinite;margin:auto auto 12px}.loader-text{font-size:10px;color:var(--muted)}
+.empty-state{grid-column:1/-1;text-align:center;padding:50px 20px;color:var(--muted);font-size:10px}.empty-state i{font-size:24px;color:#b5c2bd;margin-bottom:10px}
+.error-box{text-align:center;padding:50px;color:#c45b6f;font-size:11px}.retry{margin-top:12px;padding:8px 12px;border:1px solid #b9e6d8;background:var(--mint-2);color:var(--green-dark);border-radius:8px;cursor:pointer;font-size:9px;font-weight:800}
+.hidden{display:none!important}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:1100px){.process-grid{grid-template-columns:repeat(3,1fr)}.metrics{grid-template-columns:repeat(2,1fr)}.hero{grid-template-columns:1fr}.hero-visual{display:none}.priority-board{grid-template-columns:repeat(3,minmax(240px,1fr));overflow-x:auto;padding-bottom:6px}.priority-column{min-width:240px}}
+@media(max-width:760px){
+    .app-shell{width:100%}.topbar{padding:0 15px;height:68px}.header-search{display:none}.user-copy{display:none}
+    .main{padding:24px 15px}.hero h1{font-size:33px}.process-grid{grid-template-columns:repeat(2,1fr)}
+    .special-grid{grid-template-columns:1fr}.priority-board{grid-template-columns:1fr}.priority-column{min-width:0}.detail-grid{grid-template-columns:1fr 1fr}.detection-list{grid-template-columns:1fr}
+    .help-card{align-items:flex-start}.footer{flex-direction:column;gap:5px}
+}
+@media(max-width:480px){
+    .metrics{grid-template-columns:1fr}.process-grid{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr}
+    .detail-item.full{grid-column:auto}.special-card{grid-template-columns:auto 1fr}.special-arrow{display:none}
+    .refresh-btn{padding:0 10px}.brand-sub{display:none}
+}
+
+.detection-section,
+.detection-section-head,
+.detection-list{max-width:none}
+.detection-section-head{width:100%}
+</style>
+</head>
+
+<body>
+<div class="app-shell">
+<div class="app">
+
+<header class="topbar">
+    <div class="brand">
+        <div class="brand-mark"><i class="fas fa-bolt"></i></div>
+        <div>
+            <div class="brand-title">Call Master Analytics</div>
+            <div class="brand-sub">LOB Operations · Quality · Ownership</div>
+        </div>
+    </div>
+
+    <div class="header-search">
+        <i class="fas fa-magnifying-glass"></i>
+        <input id="headerSearch" placeholder="Search process / LOB...">
+        <span class="search-key">⌘K</span>
+    </div>
+
+    <div class="header-actions">
+        <button class="refresh-btn" id="backBtn" style="display:none;background:#fff;border-color:#dce8e4;color:#5f706b"><i class="fas fa-arrow-left"></i>&nbsp; Processes</button>
+        <button class="refresh-btn" id="refreshBtn"><i class="fas fa-rotate-right"></i>&nbsp; Refresh</button>
+        <button class="icon-btn" title="Notifications"><i class="far fa-bell"></i><span class="notify-dot"></span></button>
+        <div class="user">
+            <div class="user-avatar">A</div>
+            <div class="user-copy"><div class="user-name">Admin</div><div class="user-role">Administrator</div></div>
+            <i class="fas fa-chevron-down" style="font-size:9px;color:#84919a"></i>
+        </div>
+    </div>
+</header>
+
+<main class="main">
+
+<section class="hero" id="homeHero">
+    <div class="hero-copy">
+        <div class="hero-kicker"><span></span> Call Master workspace</div>
+        <h1>Call Master <span>Analytics</span></h1>
+        <p>Explore processes, phases, activities, ownership, priorities, TAT and recommended actions — all in one place.</p>
+    </div>
+    <div class="hero-visual">
+        <div class="hero-blob"></div>
+        <div class="hero-chart">
+            <div class="hero-chart-top"><span>Operational overview</span><span>Live</span></div>
+            <div class="hero-chart-title">Process performance</div>
+            <div class="chart-area">
+                <span class="bar" style="height:38%"></span><span class="bar"></span><span class="bar"></span>
+                <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+            </div>
+        </div>
+        <div class="floating-stat"><strong>+14%</strong><span>Operational visibility</span></div>
+    </div>
+</section>
+
+<section class="metrics" id="metrics">
+    <div class="metric"><div class="metric-icon"><i class="fas fa-list-check"></i></div><div><div class="metric-label">Total Processes</div><div class="metric-value" id="metricProcesses">—</div><div class="metric-note">Active processes</div></div></div>
+    <div class="metric"><div class="metric-icon"><i class="fas fa-chart-column"></i></div><div><div class="metric-label">Total Activities</div><div class="metric-value" id="metricActivities">—</div><div class="metric-note">Across all processes</div></div></div>
+    <div class="metric"><div class="metric-icon"><i class="fas fa-circle-check"></i></div><div><div class="metric-label">Closed Activities</div><div class="metric-value" id="metricClosed">—</div><div class="metric-note">Completed items</div></div></div>
+    <div class="metric"><div class="metric-icon"><i class="fas fa-hourglass-half"></i></div><div><div class="metric-label">Open Activities</div><div class="metric-value" id="metricOpen">—</div><div class="metric-note">Still in progress</div></div></div>
+</section>
+
+<div id="loadingState" class="loader-wrap">
+    <div class="loader-box"><div class="loader-ring"></div><div class="loader-text">Loading operational data…</div></div>
+</div>
+
+<section id="processView" class="hidden">
+    <div class="section-head">
+        <div class="section-title-wrap"><div class="section-title">Your Processes</div><div class="section-sub">Click on any process to view phases and activities</div></div>
+        <div class="toolbar-note" id="processCount">—</div>
+    </div>
+    <div class="process-toolbar">
+        <div class="main-search"><i class="fas fa-magnifying-glass"></i><input id="processSearch" type="search" placeholder="Search process / LOB..."></div>
+    </div>
+    <div id="processContainer" class="process-grid"></div>
+
+    <div class="special-section">
+        <div class="special-heading">
+            <div class="section-title-wrap">
+                <div class="section-title">Additional Processes — MCN Dialer Not Used</div>
+                <div class="section-sub">Housing and Lawyer Panel are not using MCN Dialer. Call Master is not started for these processes.</div>
+            </div>
+        </div>
+        <div id="specialProcessContainer" class="special-grid"></div>
+    </div>
+</section>
+
+<section id="detailView" class="detail-view">
+    <div class="detail-head">
+        <div class="breadcrumb"><span id="breadcrumbHome" class="breadcrumb-link">Workspace</span><i class="fas fa-chevron-right"></i><strong id="breadcrumbProcess">Process</strong></div>
+        <div class="detail-title" id="detailProcessTitle"></div>
+        <div class="detail-sub" id="detailProcessSub"></div>
+    </div>
+    <div id="processNote" class="process-note hidden"></div>
+    <div class="phase-tabs" id="phaseTabs"></div>
+    <div class="main-search" style="margin-bottom:14px"><i class="fas fa-magnifying-glass"></i><input id="activitySearch" type="search" placeholder="Search activity in this process..."></div>
+    <div class="insight-board-wrap">
+        <div class="insight-board-head">
+            <div>
+                <div class="section-title" style="font-size:16px;margin-bottom:4px">Activity Intelligence</div>
+                <div class="section-sub">Activity · date-wise trend · actionable insight — ordered Critical → High → Medium</div>
+            </div>
+            <div class="trend-legend"><span><i></i> Activity trend</span><span class="trend-live"><i></i> Data-driven when date field is available</span></div>
+        </div>
+        <div class="insight-table">
+            <div class="insight-table-head">
+                <div>ACTIVITY</div>
+                <div>DATE-WISE TREND</div>
+                <div>ACTIONABLE INSIGHTS</div>
+            </div>
+            <div id="insightRows"></div>
+        </div>
+    </div>
+
+</section>
+
+<footer class="footer"><span>© 2026 Call Master Analytics. All rights reserved.</span><span>Built with <strong>♥</strong> for Operational Excellence</span></footer>
+</main>
+</div>
+</div>
+
+<script>
+(function(){
+let allData=[],currentProcess=null,currentPhase=null,activitySearchQuery='';
+// { normalizedActivityName: { 'YYYY-MM-DD': count } } — populated from the ActivitySync sheet
+// tab that the Mydashboards Task Scheduler writes to (see getActivityTrendSeries in Code.gs).
+// Empty until that sync is set up; every chart falls back to its own honest preview until then.
+let activityTrendData={};
+const $=id=>document.getElementById(id);
+const loading=$('loadingState'),processView=$('processView'),detailView=$('detailView'),processContainer=$('processContainer'),phaseTabs=$('phaseTabs');
+
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function getProcesses(){return [...new Set(allData.map(x=>x.Process).filter(Boolean))].filter(p=>p!=='Housing'&&p!=='Lawyer Panel')}
+// Phase is status-driven, not sheet-driven: Phase 1 always groups every closed activity, Phase 2
+// always groups every open/ongoing one — independent of whatever MileStone/Phase value the sheet
+// itself carries.
+const PHASES=[
+    {key:'closed',label:'Phase 1 · Closed',icon:'fa-circle-check'},
+    {key:'open',label:'Phase 2 · Open / Ongoing',icon:'fa-hourglass-half'}
+];
+function getPhases(p){return PHASES}
+function getActivities(p,ph){
+    const items=allData.filter(x=>x.Process===p);
+    if(ph==='closed')return items.filter(isClosed);
+    if(ph==='open')return items.filter(x=>!isClosed(x));
+    return items;
+}
+function iconFor(name){
+    const n=String(name||'').toLowerCase();
+    if(n.includes('bella'))return'fa-bag-shopping';
+    if(n.includes('gnc'))return'fa-building';
+    if(n.includes('neeman'))return'fa-users';
+    if(n.includes('viega'))return'fa-faucet-drip';
+    if(n.includes('medi')||n.includes('health'))return'fa-heart-pulse';
+    if(n.includes('dubai')||n.includes('tour'))return'fa-plane';
+    if(n.includes('travel'))return'fa-plane';
+    if(n.includes('bank')||n.includes('finance'))return'fa-building-columns';
+    if(n.includes('mobile')||n.includes('samsung'))return'fa-mobile-screen-button';
+    if(n.includes('law'))return'fa-scale-balanced';
+    if(n.includes('housing')||n.includes('home'))return'fa-house';
+    return'fa-building';
+}
+function priorityClass(p){const x=String(p||'').toLowerCase();return x.includes('critical')?'priority-critical':x.includes('high')?'priority-high':'priority-medium'}
+function statusClass(s){return String(s||'').toLowerCase().includes('close')?'closed':'open'}
+
+function isClosed(item){return /close/i.test(item?.Status||'')}
+function updateMetrics(){
+    const processes=getProcesses();
+    const closed=allData.filter(isClosed).length;
+    const open=allData.length-closed;
+    $('metricProcesses').textContent=processes.length;
+    $('metricActivities').textContent=allData.length;
+    $('metricClosed').textContent=closed;
+    $('metricOpen').textContent=open;
+}
+function renderProcesses(filter=''){
+    const q=filter.trim().toLowerCase();
+    const processes=getProcesses().filter(p=>p.toLowerCase().includes(q));
+    $('processCount').textContent=`${processes.length} process${processes.length===1?'':'es'}`;
+    processContainer.innerHTML='';
+    if(!processes.length){processContainer.innerHTML='<div class="empty-state"><i class="fas fa-magnifying-glass"></i><div>No matching process found.</div></div>';return}
+    processes.forEach((p,i)=>{
+        const items=allData.filter(x=>x.Process===p);
+        const count=items.length;
+        const closedCount=items.filter(isClosed).length;
+        const openCount=count-closedCount;
+        const card=document.createElement('article');card.className='process-card';
+        const icon=iconFor(p);
+        card.innerHTML=`
+            <div class="card-top"><div class="process-icon"><i class="fas ${icon}"></i></div><i class="fas fa-arrow-up-right-from-square card-arrow"></i></div>
+            <div class="process-name">${esc(p)}</div>
+            <div class="process-meta"><span class="count-pill"><i class="fas fa-list"></i>${count} Activities</span><span class="status-pill"><span class="status-dot"></span> Active</span></div>
+            <div class="process-stats-row">
+                <span class="process-stat stat-closed"><i class="fas fa-circle-check"></i>${closedCount} Closed</span>
+                <span class="process-stat stat-open"><i class="fas fa-hourglass-half"></i>${openCount} Open</span>
+            </div>
+            <div class="view-link">View <i class="fas fa-arrow-right"></i></div>`;
+        card.onclick=()=>selectProcess(p);
+        processContainer.appendChild(card);
+    });
+}
+function renderSpecialProcesses(){
+    const container=$('specialProcessContainer');container.innerHTML='';
+    [{name:'Housing',icon:'fa-house'},{name:'Lawyer Panel',icon:'fa-scale-balanced'}].forEach(item=>{
+        const card=document.createElement('article');card.className='special-card';
+        card.innerHTML=`
+            <div class="process-icon"><i class="fas ${item.icon}"></i></div>
+            <div class="special-copy"><h3>${item.name}</h3><span class="status">Not using MCN Dialer</span>
+            <p><strong style="color:var(--green-dark)">Call Master Not Started Yet</strong><br>This process is not using the MCN Dialer, so we cannot get the call recording from the MCN Server.</p></div>
+            <i class="fas fa-arrow-right special-arrow"></i>`;
+        card.onclick=()=>showSpecialProcess(item.name);
+        container.appendChild(card);
+    });
+}
+function showSpecialProcess(p){
+    currentProcess=p;currentPhase=null;
+    $('breadcrumbProcess').textContent=p;
+    $('detailProcessTitle').innerHTML=`<i class="fas ${p==='Housing'?'fa-house':'fa-scale-balanced'}"></i>${esc(p)}`;
+    $('detailProcessSub').textContent='Call Master integration not started';
+    $('processNote').classList.remove('hidden');
+    $('processNote').innerHTML=`<i class="fas fa-triangle-exclamation"></i><div><strong>Call Master Not Started Yet</strong><br>This process is not using the MCN Dialer, so we cannot get the call recording from the MCN Server.</div>`;
+    phaseTabs.innerHTML='';
+    $('insightRows').innerHTML=`<div class="insight-row"><div class="insight-cell" style="grid-column:1/-1"><div class="empty-state"><i class="fas fa-phone-slash"></i><div><strong>Call recording is not available</strong></div><div style="margin-top:7px">${esc(p)} is not using the MCN Dialer.</div></div></div></div>`;
+    processView.classList.add('hidden');$('homeHero').classList.add('hidden');$('metrics').classList.add('hidden');detailView.style.display='block';$('backBtn').style.display='inline-flex';window.scrollTo({top:0,behavior:'smooth'});
+}
+function renderPhases(){
+    const phases=getPhases(currentProcess);phaseTabs.innerHTML='';
+    phases.forEach(ph=>{
+        const count=getActivities(currentProcess,ph.key).length;
+        const b=document.createElement('button');b.className='phase-tab'+(ph.key===currentPhase?' active':'');
+        b.innerHTML=`<i class="fas ${ph.icon}"></i>${esc(ph.label)} (${count})`;
+        b.onclick=()=>{currentPhase=ph.key;renderPhases();renderInsightBoard()};
+        phaseTabs.appendChild(b);
+    });
+}
+
+function insightPriority(item){
+    const p=String(item?.Priority||'').toLowerCase();
+    if(p.includes('critical')) return 'critical';
+    if(p.includes('high')) return 'high';
+    return 'medium';
+}
+
+function insightIcon(name){
+    const n=String(name||'').toLowerCase();
+    if(n.includes('social')||n.includes('consumer court')) return 'fa-comments';
+    if(n.includes('scam')||n.includes('fraud')) return 'fa-user-secret';
+    if(n.includes('clap')) return 'fa-thumbs-up';
+    if(n.includes('logistic')) return 'fa-truck-fast';
+    if(n.includes('scenario')) return 'fa-comments';
+    if(n.includes('cq score')) return 'fa-gauge-high';
+    if(n.includes('quality')) return 'fa-shield-halved';
+    if(n.includes('sale')) return 'fa-chart-line';
+    return 'fa-chart-line';
+}
+
+const actionableInsightLibrary = {
+"Social Media & Consumer Court Threat":[
+"Customer threatens to post on social media → acknowledge the concern, offer an immediate resolution, and request time to resolve before anything is posted.",
+"Customer threatens consumer court / legal action → document the exact complaint, escalate to the legal team, and respond formally with a resolution timeline.",
+"Customer has already posted negative content → escalate to the social media/PR team, respond professionally and promptly, and offer a resolution.",
+"Customer demands compensation under threat → escalate to senior management for review; do not commit to unauthorized compensation on the call."
+],
+"Potential Scam Leads":[
+"Customer provides suspicious payment, OTP, bank or card information → stop the risky flow, do not request/repeat sensitive credentials, preserve evidence and escalate to Fraud/Compliance.",
+"Customer asks for payment through an unusual or unauthorized channel → do not approve the transaction; verify through the approved process and escalate if the pattern remains suspicious.",
+"Scam-like language, impersonation or deceptive promises are detected → document the exact statement, review the recording and escalate confirmed/high-risk cases.",
+"Lead shows inconsistent identity or repeated suspicious behaviour → mark the lead as suspicious, preserve supporting evidence and route it to Fraud Investigation + Compliance."
+],
+"CLAP Analysis":[
+"Customer experience VOC → identify the exact pain point, assign an owner and track the corrective action to closure.",
+"Product VOC → capture the issue with evidence, route it to Product and track the resolution/recheck.",
+"Logistics VOC → identify the logistics root cause, map it to SLA, assign the action owner and track closure.",
+"Agent/handling VOC → review the call, identify the handling gap, provide targeted coaching and perform a follow-up quality check."
+],
+"Customer VOC – Logistics":[
+"Identify top logistics VOC themes, map to logistics root cause/SLA, assign action and track closure.",
+"Delivery delay → verify shipment status, identify the root cause, provide an approved customer update and track the case to closure.",
+"Damaged/wrong/missing item → validate order evidence, raise the correct logistics case and track replacement/refund against SLA.",
+"Repeated logistics complaints → identify the recurring root cause, assign an operations owner and monitor recurrence after corrective action."
+],
+"Repeat Call Analysis":[
+"Analyze repeat reasons by agent/scenario, identify avoidable repeats, improve resolution guidance and monitor recurrence.",
+"Same issue repeated → review the previous interaction, identify the missed resolution step and coach the responsible agent.",
+"Repeat complaint on the same issue → acknowledge the customer's frustration, review why the earlier complaint wasn't resolved, and escalate with priority against SLA.",
+"High repeat-call pattern → identify the root cause by agent, scenario and reason, then assign corrective action to the relevant owner.",
+"Repeat call after a promised resolution → verify whether the promised action was completed and escalate unresolved cases against SLA."
+],
+"Proof Collection Analysis":[
+"Unboxing video detected:Verify package condition, shipping label/order ID and complete opening sequence. If all evidence is clear and authentic, mark the proof as valid and route the case to the next resolution step..",
+"Empty video / package appears empty:Check video continuity, package/order details and signs of tampering. Do not approve the claim immediately; flag the case for investigation and escalate to the appropriate team..",
+"Damaged product in unboxing video:Capture the damage evidence, validate the order/package details and confirm the damage is visible in the original recording. Route the case for replacement/refund as per SOP.",
+"Wrong product detected:Compare the received product with the order details, document the mismatch with evidence and escalate for replacement/refund according to SOP."
+],
+"Fraud Call Analysis":[
+"Customer provides suspicious payment, OTP, bank or card information → stop the risky flow, do not request/repeat sensitive credentials, preserve evidence and escalate to Fraud/Compliance.",
+"Fraud/scam/impersonation language → review the flagged statement and recording, classify the fraud type and escalate according to the fraud/security matrix.",
+"Sensitive information requested in a suspicious context → stop unauthorized data handling, preserve evidence and escalate to Security/Compliance.",
+"Repeated suspicious intent or manipulation → classify the risk, document the pattern and route the case to Fraud Investigation.",
+"Confirmed high-risk fraud signal → escalate immediately, preserve the call evidence and follow the approved incident workflow."
+],
+"Scenarios":[
+"Query → answer using the approved SOP, identify any knowledge gap and route unresolved cases to the correct owner.",
+"Complaint → acknowledge the complaint, document the root cause, provide the approved resolution path and track closure.",
+"Request → validate the request, follow the applicable SOP and complete or route it within the expected TAT.",
+"Sale Done → validate the sale outcome, ensure required steps are completed and record the result accurately for downstream operations."
+],
+"TNI Detection":[
+"Agent score is low → identify the exact parameters responsible for the low score instead of giving generic feedback.",
+"Low score in a specific parameter → review failed calls, identify the behaviour gap and provide parameter-specific coaching with examples of the correct handling.",
+"Repeated low score → create an individual improvement plan with clear targets, required training modules, coaching owner and a defined re-audit timeline.",
+"Low score caused by knowledge/process gaps → conduct focused refresher training, share the approved SOP and test the agent again on the same scenario.",
+"Low score caused by communication/soft-skill gaps → provide role-play coaching, demonstrate the expected communication pattern and review subsequent calls.",
+"Critical parameter failure → escalate to QA/Team Lead, review the call recording and implement immediate corrective coaching before the next monitored call.",
+"Score improves after coaching → compare before-vs-after scores, recognize the improvement and continue monitoring to ensure the improvement is sustained.",
+"Score remains low after training → conduct a deeper root-cause review, assign additional coaching/training and schedule another targeted re-audit.",
+"Identify recurring training gaps across soft skills, process knowledge and communication based on QA outputs.",
+"Prioritize the lowest-performing skills/parameters, map each gap to the relevant training module and assign an owner.",
+"Create a targeted learning plan and conduct remedial training for agents with repeated knowledge or communication gaps.",
+"Re-audit subsequent calls, compare pre/post training performance and re-monitor until the gap is closed."
+],
+"Probing Adherence":[
+"Map required probing questions to the scenario and verify whether the agent asked the mandatory probes.",
+"Identify missed or incomplete probes, coach the specific probing gap and provide scenario-level guidance.",
+"Monitor probing compliance across agents and scenarios to identify recurring misses.",
+"Re-audit subsequent calls and track improvement against the required probing standard."
+],
+"CQ Score %":[
+"Overall quality score below target → conduct a 1:1 coaching session, review failed parameters and create a targeted training plan.",
+"Repeated failure on the same quality parameter → identify the recurring behaviour, provide parameter-specific coaching and perform a follow-up quality review.",
+"Critical quality parameter missed → escalate the critical failure to QA/Team Lead, document the issue and initiate corrective action.",
+"Quality improvement not sustained → schedule a re-audit, compare with the previous score and continue coaching until the required standard is achieved."
+]
+};
+
+// Shown for every open/ongoing activity (Phase 2) — the concrete criteria that closes it out,
+// so an open item is never just a status with no next step attached.
+const closeGuidanceLibrary = {
+"CQ Score %":"Close once the agent's CQ score reaches the target threshold (≥90%) and stays there across the next 2 audits following coaching.",
+"Social Media & Consumer Court Threat":"Close once the customer's concern is acknowledged, the resolution is confirmed accepted by the customer, and no further escalation (social post / legal notice) is raised within the SLA window.",
+"Potential Scam Leads":"Close once the case is reviewed, classified as genuine risk or false positive, and — for confirmed risk — escalated to Fraud/Compliance with the outcome logged.",
+"CLAP Analysis":"Close once the dominant negative VOC branch has a documented root cause, corrective action assigned to an owner, and a recheck confirms the issue is no longer recurring.",
+"Customer VOC – Logistics":"Close once the logistics root cause is fixed, the customer has been updated, and no repeat complaint appears in the next audit cycle.",
+"Repeat Call Analysis":"Close once the repeat-call root cause is identified, the corrective coaching/process fix is applied, and the repeat rate for that scenario drops back within target.",
+"Proof Collection Analysis":"Close once the unboxing/proof evidence is verified as valid (or the claim resolved/rejected per SOP) and logged.",
+"Fraud Call Analysis":"Close once the flagged call is classified, evidence is preserved, and the case outcome (cleared / escalated to Security) is recorded.",
+"Scenarios":"Close once the contact reason is actioned per SOP and the case outcome is recorded, with no follow-up required from the customer.",
+"TNI Detection":"Close once the agent completes the assigned training/coaching and a re-audit confirms the score has improved to the required standard.",
+"Probing Adherence":"Close once the probing gap is coached and a re-audit of subsequent calls confirms the required probes are consistently being asked."
+};
+function getCloseGuidance(item){
+    const name=normalizeActivityName(item?.SubActivity||item?.Activity||"");
+    for(const key of Object.keys(closeGuidanceLibrary)){
+        const k=normalizeActivityName(key);
+        if(k===name || name.includes(k) || k.includes(name)) return closeGuidanceLibrary[key];
+    }
+    if(item?.RecommendedAction) return `Complete the recommended action: ${item.RecommendedAction}`;
+    return "Complete the required review/action for this activity and update its Status to Close once done.";
+}
+
+function normalizeActivityName(name){
+    return String(name||"").toLowerCase().replace(/[–—]/g,"-").replace(/\s+/g," ").trim();
+}
+
+// The Google Sheet still calls this activity "Proof Collection Analysis" — this only renames
+// what's shown on-screen, so the guidance/actionable-insight libraries (keyed off the sheet's
+// real name) keep matching correctly.
+const ACTIVITY_DISPLAY_NAME_OVERRIDES={'proof collection analysis':'Proof Collection SOP Adherence'};
+function displayActivityName(rawName){
+    return ACTIVITY_DISPLAY_NAME_OVERRIDES[normalizeActivityName(rawName)]||rawName;
+}
+
+// Score/percentage-style activities must be averaged across a week/month, not summed — summing
+// e.g. seven ~75% days would show ~525, which is meaningless. Count-style activities (incident
+// counts) correctly sum. Keyed by normalized activity name so this stays in sync with dayValueMap.
+const AVERAGE_ACTIVITIES=new Set(['cq score %']);
+function isAverageActivity(activityKey){
+    return AVERAGE_ACTIVITIES.has(activityKey);
+}
+
+function getActionableInsights(item){
+    const name=normalizeActivityName(item?.SubActivity||item?.Activity||"");
+    for(const key of Object.keys(actionableInsightLibrary)){
+        const k=normalizeActivityName(key);
+        if(k===name || name.includes(k) || k.includes(name)) return actionableInsightLibrary[key];
+    }
+
+    const scenarios=getDetectionScenarios(item);
+    const actions=[];
+    scenarios.forEach(s=>{
+        const a=String(s.action||s.recommendedAction||"").trim();
+        if(a && !actions.includes(a)) actions.push(a);
+    });
+    if(!actions.length && item?.RecommendedAction) actions.push(String(item.RecommendedAction));
+    return actions.slice(0,4);
+}
+
+function dateValueFromItem(item){
+    // TaskEndDate is the one real date field the sheet actually provides (mapped from the
+    // "Task End Date" column in Code.gs) — checking for it here is what lets the trend switch
+    // from an illustrative preview to a genuinely data-driven "Live trend" whenever it's filled in.
+    const keys=['TaskEndDate','Task End Date','Date','date','ActivityDate','Activity Date','CreatedDate','Created Date','CallDate','Call Date','Timestamp','timestamp','UpdatedDate','Updated Date'];
+    for(const k of keys){
+        if(item && item[k]){
+            const d=new Date(item[k]);
+            if(!Number.isNaN(d.getTime())) return d;
+        }
+    }
+    return null;
+}
+
+// A single sheet row only carries one TaskEndDate, which alone can't form a trend line — so pull
+// every row across every process/phase that shares this same activity name, giving the trend a
+// real chance at multiple genuinely dated points instead of always falling back to a preview.
+function relatedActivityRows(item){
+    const name=normalizeActivityName(item?.SubActivity||item?.Activity||'');
+    if(!name)return [item];
+    return allData.filter(x=>normalizeActivityName(x?.SubActivity||x?.Activity||'')===name);
+}
+function normalizeProcessName(name){
+    return String(name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+
+// Scenarios activity: per-scenario-type daily counts for the current process (Query, Complaint,
+// Request, Sale Done, etc.), sourced from Code.gs's real snapshot. Used to populate the scenario
+// picker and its own trend line on the Scenarios row.
+function getScenarioBreakdown(){
+    const processKey=normalizeProcessName(currentProcess||'');
+    return (activityTrendData[processKey]||{}).scenario_breakdown||{};
+}
+function scenarioNamesSorted(){
+    const breakdown=getScenarioBreakdown();
+    return Object.keys(breakdown).sort((a,b)=>{
+        const totalA=Object.values(breakdown[a]).reduce((s,v)=>s+v,0);
+        const totalB=Object.values(breakdown[b]).reduce((s,v)=>s+v,0);
+        return totalB-totalA;
+    });
+}
+function scenarioTrendData(scenarioName){
+    const breakdown=getScenarioBreakdown();
+    const series=breakdown[scenarioName]||{};
+    const keys=Object.keys(series).sort().slice(-8);
+    return {
+        labels:keys.map(k=>new Date(k+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short'})),
+        values:keys.map(k=>series[k]),
+        live:Object.keys(series).length>0
+    };
+}
+
+// CLAP Analysis: how much Positive vs Negative customer voice signal falls into each of the
+// Logistic / Agent / Product branches for the current process (Customer branch is general query
+// volume, not an actionable VOC signal, so it's excluded here).
+function getClapBranchBreakdown(){
+    const processKey=normalizeProcessName(currentProcess||'');
+    const fallback={Logistic:{pos:0,neg:0},Agent:{pos:0,neg:0},Product:{pos:0,neg:0}};
+    return (activityTrendData[processKey]||{}).clap_branch_breakdown||fallback;
+}
+function getClapBranchDaily(){
+    const processKey=normalizeProcessName(currentProcess||'');
+    const fallback={Logistic:{pos:{},neg:{}},Agent:{pos:{},neg:{}},Product:{pos:{},neg:{}}};
+    return (activityTrendData[processKey]||{}).clap_branch_daily||fallback;
+}
+// Logistic/Agent/Product as one multi-line series for the given sentiment ('pos' or 'neg'),
+// aligned to the same trailing date window so all three lines share an axis.
+function clapBranchMultiSeries(sentiment){
+    const daily=getClapBranchDaily();
+    const branches=['Logistic','Agent','Product'];
+    const allDates=new Set();
+    branches.forEach(b=>Object.keys((daily[b]||{})[sentiment]||{}).forEach(d=>allDates.add(d)));
+    const dates=[...allDates].sort().slice(-8);
+    const series=branches.map(b=>({label:b,values:dates.map(d=>((daily[b]||{})[sentiment]||{})[d]||0)}));
+    return {dates,series,live:allDates.size>0};
+}
+// Every scenario as one multi-line series, aligned to the same trailing date window.
+function allScenariosMultiSeries(){
+    const breakdown=getScenarioBreakdown();
+    const names=scenarioNamesSorted();
+    const allDates=new Set();
+    names.forEach(n=>Object.keys(breakdown[n]).forEach(d=>allDates.add(d)));
+    const dates=[...allDates].sort().slice(-8);
+    const series=names.map(n=>({label:n,values:dates.map(d=>breakdown[n][d]||0)}));
+    return {dates,series,live:allDates.size>0};
+}
+function fmtDateLabel(d){
+    return new Date(d+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+}
+
+// One real-vs-preview day→value map shared by the daily, weekly and MTD views, so all three
+// stay consistent with each other and the "live"/"preview" label is honest for every one of them.
+// Keyed by (process, activity) — every process gets its own real numbers, not one shared
+// all-client aggregate reused everywhere.
+function dayValueMap(items){
+    // getActivityTrendSeries() in Code.gs is a frozen snapshot of real per-process daily counts
+    // pulled directly from the Mydashboards database (see the comment there for how to refresh
+    // it) — the authoritative source whenever it has an entry for this exact process+activity.
+    const activityKey=normalizeActivityName(items[0]?.SubActivity||items[0]?.Activity||'');
+    const processKey=normalizeProcessName(currentProcess||'');
+    const processData=activityTrendData[processKey];
+    // Use `in` rather than checking Object.keys().length, so a real-but-empty snapshot (the DB
+    // genuinely returned zero matching calls for this process+activity) is shown as an honest
+    // flat "Live trend" — not silently swapped for a fabricated preview.
+    if(processData && activityKey in processData){
+        const perProcess=processData[activityKey];
+        if(Object.keys(perProcess).length){
+            return {map:new Map(Object.entries(perProcess)),live:true};
+        }
+        const map=new Map();
+        const now=new Date();
+        for(let i=29;i>=0;i--){
+            const d=new Date(now);d.setDate(now.getDate()-i);
+            map.set(d.toISOString().slice(0,10),0);
+        }
+        return {map,live:true};
+    }
+
+    const dated=items.map(x=>({item:x,date:dateValueFromItem(x)})).filter(x=>x.date);
+    if(dated.length){
+        const map=new Map();
+        dated.forEach(x=>{
+            const key=x.date.toISOString().slice(0,10);
+            map.set(key,(map.get(key)||0)+1);
+        });
+        return {map,live:true};
+    }
+
+    // Fallback for when there's no real snapshot for this process+activity yet: a clearly
+    // labelled preview bounded to a realistic small daily-count range, seeded from BOTH the
+    // process and the activity so different processes don't show identical illustrative numbers.
+    const seed=(processKey.length*19 + activityKey.length*7 + items.length*11);
+    const map=new Map();
+    const now=new Date();
+    for(let i=29;i>=0;i--){
+        const d=new Date(now);d.setDate(now.getDate()-i);
+        const key=d.toISOString().slice(0,10);
+        const wave=[0,2,-1,3,1,-1,2,4][i%8];
+        map.set(key,Math.max(0,Math.min(10,2+((seed+i*13)%6)+wave)));
+    }
+    return {map,live:false};
+}
+
+function buildTrendData(items){
+    const {map,live}=dayValueMap(items);
+    const keys=[...map.keys()].sort().slice(-8);
+    return {
+        labels:keys.map(k=>new Date(k+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short'})),
+        values:keys.map(k=>map.get(k)),
+        live
+    };
+}
+
+// Month-relative week buckets, not a rolling Mon–Sun week: W-1 = days 1–7 of the month, W-2 =
+// 8–14, W-3 = 15–21, W-4 = 22–end. Matches how the team actually refers to "week 1/2/3/4 of the
+// month". Prefixed with the month abbreviation so weeks from different months stay distinguishable
+// (e.g. "Jul W-4", "Aug W-1").
+function buildWeeklyTrendData(items){
+    const {map,live}=dayValueMap(items);
+    const activityKey=normalizeActivityName(items[0]?.SubActivity||items[0]?.Activity||'');
+    const average=isAverageActivity(activityKey);
+    const weekMap=new Map(); // 'YYYY-MM#N' -> { label, total, count }
+    [...map.keys()].sort().forEach(k=>{
+        const d=new Date(k+'T00:00:00');
+        const bucket=Math.min(4,Math.ceil(d.getDate()/7));
+        const monthKey=k.slice(0,7);
+        const key=monthKey+'#'+bucket;
+        if(!weekMap.has(key)){
+            weekMap.set(key,{label:`${d.toLocaleDateString('en-IN',{month:'short'})} W-${bucket}`,total:0,count:0,order:monthKey+bucket});
+        }
+        const entry=weekMap.get(key);
+        entry.total+=map.get(k);entry.count++;
+    });
+    const entries=[...weekMap.values()].sort((a,b)=>a.order.localeCompare(b.order)).slice(-8);
+    return {
+        labels:entries.map(e=>e.label),
+        values:entries.map(e=>average?Math.round((e.total/e.count)*10)/10:e.total),
+        live
+    };
+}
+
+// Aggregate per calendar month — most recent 6 months with data, labelled "Aug", "Jul", etc.
+// Count-style activities sum; score/percentage-style activities (CQ Score %) average instead.
+function buildMonthlyTrendData(items){
+    const {map,live}=dayValueMap(items);
+    const activityKey=normalizeActivityName(items[0]?.SubActivity||items[0]?.Activity||'');
+    const average=isAverageActivity(activityKey);
+    const monthMap=new Map();
+    [...map.keys()].sort().forEach(k=>{
+        const monthKey=k.slice(0,7);
+        if(!monthMap.has(monthKey))monthMap.set(monthKey,{total:0,count:0});
+        const entry=monthMap.get(monthKey);
+        entry.total+=map.get(k);entry.count++;
+    });
+    const mkeys=[...monthMap.keys()].sort().slice(-6);
+    return {
+        labels:mkeys.map(k=>new Date(k+'-01T00:00:00').toLocaleDateString('en-IN',{month:'short'})),
+        values:mkeys.map(k=>{const e=monthMap.get(k);return average?Math.round((e.total/e.count)*10)/10:e.total;}),
+        live
+    };
+}
+
+// Every day so far in the current calendar month.
+function buildMtdTrendData(items){
+    const {map,live}=dayValueMap(items);
+    const activityKey=normalizeActivityName(items[0]?.SubActivity||items[0]?.Activity||'');
+    const average=isAverageActivity(activityKey);
+    const monthPrefix=new Date().toISOString().slice(0,7);
+    const keys=[...map.keys()].filter(k=>k.startsWith(monthPrefix)).sort();
+    const sum=keys.reduce((s,k)=>s+map.get(k),0);
+    return {
+        labels:keys.map(k=>new Date(k+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short'})),
+        values:keys.map(k=>map.get(k)),
+        live,
+        total:average?(keys.length?Math.round((sum/keys.length)*10)/10:0):sum,
+        isAverage:average
+    };
+}
+
+function lineChartSvg(values,priority){
+    const w=520,h=112,padX=18,padY=22; // extra top padding so the data-label text never clips
+    const max=Math.max(...values,1),min=Math.min(...values,0);
+    const range=Math.max(1,max-min);
+    const pts=values.map((v,i)=>{
+        const x=padX+(i*(w-padX*2))/Math.max(values.length-1,1);
+        const y=h-padY-((v-min)/range)*(h-padY*2-10);
+        return [x,y];
+    });
+    const line=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+    const area=line+' L '+pts[pts.length-1][0].toFixed(1)+' '+(h-padY)+' L '+pts[0][0].toFixed(1)+' '+(h-padY)+' Z';
+    const grid=[.25,.5,.75].map(t=>`<line class="chart-gridline" x1="${padX}" y1="${(h-padY)-t*(h-padY*2)}" x2="${w-padX}" y2="${(h-padY)-t*(h-padY*2)}"></line>`).join('');
+    const circles=pts.map(p=>`<circle class="chart-point" cx="${p[0]}" cy="${p[1]}" r="3.4"></circle>`).join('');
+    // Data label per point — the actual value, so every activity's chart states its numbers
+    // instead of relying on a viewer to eyeball the line height.
+    const labels=pts.map((p,i)=>`<text class="chart-data-label" x="${p[0]}" y="${(p[1]-9).toFixed(1)}" text-anchor="middle">${esc(values[i])}</text>`).join('');
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-label="${priority} trend line chart">${grid}<path class="chart-area" d="${area}"></path><path class="chart-line" d="${line}"></path>${circles}${labels}</svg>`;
+}
+
+const MULTI_LINE_PALETTE=['#1565C0','#e8607d','#eea12b','#20b98f','#8854d0','#e67e22','#16a2b8','#c0392b','#5c78a7','#2f9e44'];
+
+// Several lines sharing one date axis — used by CLAP Analysis (Logistic/Agent/Product) and by
+// the Scenarios "all scenarios" view. No per-point data-labels here (too many points across
+// several lines to stay readable) — the legend below the chart carries the numbers instead.
+function multiLineChartSvg(series){
+    const w=520,h=124,padX=18,padY=28; // extra top padding so per-line data labels don't clip
+    const n=Math.max(...series.map(s=>s.values.length),1);
+    const allValues=series.flatMap(s=>s.values);
+    const max=Math.max(...allValues,1),min=Math.min(...allValues,0);
+    const range=Math.max(1,max-min);
+    const xFor=i=>padX+(i*(w-padX*2))/Math.max(n-1,1);
+    const yFor=v=>h-padY-((v-min)/range)*(h-padY*2-10);
+    const grid=[.25,.5,.75].map(t=>`<line class="chart-gridline" x1="${padX}" y1="${(h-padY)-t*(h-padY*2)}" x2="${w-padX}" y2="${(h-padY)-t*(h-padY*2)}"></line>`).join('');
+    const paths=series.map((s,si)=>{
+        const color=s.color||MULTI_LINE_PALETTE[si%MULTI_LINE_PALETTE.length];
+        const pts=s.values.map((v,i)=>[xFor(i),yFor(v)]);
+        const line=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+        const circles=pts.map(p=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.6" fill="${color}" stroke="#fff" stroke-width="1"></circle>`).join('');
+        // Data label per point, colour-matched to its own line so overlapping series stay
+        // distinguishable even where the legend isn't visible at a glance.
+        const labels=pts.map((p,i)=>`<text class="chart-data-label multi-line-data-label" style="fill:${color}" x="${p[0].toFixed(1)}" y="${(p[1]-7).toFixed(1)}" text-anchor="middle">${esc(s.values[i])}</text>`).join('');
+        return `<path d="${line}" fill="none" stroke="${color}" stroke-width="2"></path>${circles}${labels}`;
+    }).join('');
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-label="multi-line trend chart">${grid}${paths}</svg>`;
+}
+
+// Legend row for multiLineChartSvg — swatch + name + latest value, so the lines stay identifiable
+// without cluttering the chart itself with per-point labels.
+function multiLineLegendHtml(series){
+    return `<div class="multi-line-legend">${series.map((s,si)=>{
+        const color=s.color||MULTI_LINE_PALETTE[si%MULTI_LINE_PALETTE.length];
+        const latest=s.values.length?s.values[s.values.length-1]:0;
+        return `<span class="multi-line-legend-item"><span class="multi-line-swatch" style="background:${color}"></span>${esc(s.label)} <b>${esc(latest)}</b></span>`;
+    }).join('')}</div>`;
+}
+
+function barChartSvg(values,labels,priority){
+    const w=520,h=112,padX=18,padY=22,gap=6;
+    const max=Math.max(...values,1);
+    const n=Math.max(values.length,1);
+    const barW=Math.max(4,(w-padX*2-gap*(n-1))/n);
+    const grid=[.25,.5,.75].map(t=>`<line class="chart-gridline" x1="${padX}" y1="${(h-padY)-t*(h-padY*2-10)}" x2="${w-padX}" y2="${(h-padY)-t*(h-padY*2-10)}"></line>`).join('');
+    const bars=values.map((v,i)=>{
+        const barH=Math.max(2,(v/max)*(h-padY*2-10));
+        const x=padX+i*(barW+gap);
+        const y=(h-padY)-barH;
+        return `<rect class="chart-bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="3"></rect>
+                <text class="chart-data-label" x="${(x+barW/2).toFixed(1)}" y="${(y-6).toFixed(1)}" text-anchor="middle">${esc(v)}</text>`;
+    }).join('');
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-label="${priority} bar chart">${grid}${bars}</svg>`;
+}
+
+function renderInsightBoard(){
+    const host=$('insightRows');
+    if(!host) return;
+
+    // Strictly the selected process AND selected phase — Phase 1 only ever shows this process's
+    // closed activities, Phase 2 only its open ones. No silent fallback to the other phase's data.
+    let items=getActivities(currentProcess,currentPhase);
+
+    const excludedInsightActivities = new Set([
+        "agent sop scorecard",
+        "customer voc - product",
+        "customer voc – product",
+        "logistics"
+    ]);
+    items = items.filter(x => {
+        const n=String(x?.SubActivity||x?.Activity||"").toLowerCase().replace(/[–—]/g,"-").replace(/\s+/g," ").trim();
+        return !excludedInsightActivities.has(n);
+    });
+
+    const q=activitySearchQuery.trim().toLowerCase();
+    if(q){
+        items=items.filter(x=>{
+            const raw=String(x?.SubActivity||x?.Activity||'');
+            return raw.toLowerCase().includes(q)||displayActivityName(raw).toLowerCase().includes(q);
+        });
+    }
+
+    host.innerHTML='';
+    if(q && !items.length){
+        host.innerHTML=`<div class="insight-row"><div class="insight-cell" style="grid-column:1/-1"><div class="insight-empty">No activity matching "${esc(activitySearchQuery)}" in this process/phase.</div></div></div>`;
+        return;
+    }
+
+    const groups={critical:[],high:[],medium:[]};
+    items.forEach(item=>groups[insightPriority(item)].push(item));
+
+    // Within a priority group, items otherwise keep the sheet's own row order — this only pins
+    // Probing Adherence to sit right after CQ Score % when both are present in the same group.
+    const PINNED_AFTER={'probing adherence':'cq score %'};
+    Object.values(groups).forEach(list=>{
+        Object.entries(PINNED_AFTER).forEach(([afterName,beforeName])=>{
+            const afterIdx=list.findIndex(x=>normalizeActivityName(x?.SubActivity||x?.Activity||'')===afterName);
+            const beforeIdx=list.findIndex(x=>normalizeActivityName(x?.SubActivity||x?.Activity||'')===beforeName);
+            if(afterIdx===-1||beforeIdx===-1||afterIdx===beforeIdx+1)return;
+            const [moved]=list.splice(afterIdx,1);
+            const reinsertAt=list.findIndex(x=>normalizeActivityName(x?.SubActivity||x?.Activity||'')===beforeName)+1;
+            list.splice(reinsertAt,0,moved);
+        });
+    });
+
+    const ordered=['critical','high','medium'];
+
+    ordered.forEach(priority=>{
+        groups[priority].forEach(item=>{
+            const trend=buildTrendData(relatedActivityRows(item));
+            const actions=getActionableInsights(item);
+            const name=item.SubActivity||item.Activity||'Unnamed activity';
+            const displayName=displayActivityName(name);
+            const desc=item.WhatItDetects||'Activity monitoring and operational intelligence.';
+            const badge=trend.live?'Live trend':'Trend preview';
+
+            const open=!isClosed(item);
+            const closeGuidance=open?getCloseGuidance(item):'';
+
+            const related=relatedActivityRows(item);
+            const trendViews={
+                daily:{data:trend,caption:'Date-wise activity trend',icon:'fa-chart-line'},
+                weekly:{data:buildWeeklyTrendData(related),caption:'Week-wise comparison',icon:'fa-chart-bar'},
+                monthly:{data:buildMonthlyTrendData(related),caption:'Month-wise comparison',icon:'fa-calendar-week'},
+                mtd:{data:buildMtdTrendData(related),caption:'Month-to-date',icon:'fa-calendar-days'}
+            };
+
+            // Scenarios row: a scenario picker lets the viewer isolate one contact-reason
+            // (Query, Complaint, Request, Sale Done, ...) and see its own daily trend instead of
+            // the blended total — the daily/weekly/monthly/mtd toggle keeps controlling the
+            // overall total, since only daily series are pulled per-scenario.
+            const activityKey=normalizeActivityName(name);
+            const isScenariosRow=activityKey==='scenarios';
+            const scenarioOptions=isScenariosRow?scenarioNamesSorted():[];
+            const scenarioPickerHtml=scenarioOptions.length?`
+                <div class="scenario-picker-row">
+                    <select class="scenario-picker" data-role="scenarioPicker">
+                        <option value="">All scenarios · overall trend</option>
+                        ${scenarioOptions.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('')}
+                    </select>
+                </div>`:'';
+
+            // CLAP Analysis row: a Positive/Negative toggle drives a 3-line chart (one line per
+            // Logistic / Agent / Product branch); the bar panel below still shows whole-window
+            // totals for both sentiments at a glance.
+            const isClapRow=activityKey==='clap analysis';
+            const sentimentToggleHtml=isClapRow?`
+                <div class="sentiment-toggle-row">
+                    <button type="button" class="sentiment-toggle negative active" data-sentiment="neg">Negative</button>
+                    <button type="button" class="sentiment-toggle positive" data-sentiment="pos">Positive</button>
+                </div>`:'';
+            function clapBranchBar(label,counts){
+                const total=Math.max(counts.pos+counts.neg,1);
+                const posPct=(counts.pos/total*100).toFixed(1);
+                const negPct=(counts.neg/total*100).toFixed(1);
+                return `<div class="clap-branch-row">
+                    <span class="clap-branch-label">${esc(label)}</span>
+                    <div class="clap-branch-bars"><div class="clap-branch-bar-track"><span class="clap-branch-bar-pos" style="width:${posPct}%"></span><span class="clap-branch-bar-neg" style="width:${negPct}%"></span></div></div>
+                    <span class="clap-branch-counts"><span class="pos">▲${counts.pos}</span> <span class="neg">▼${counts.neg}</span></span>
+                </div>`;
+            }
+            const clapBranchPanelHtml=isClapRow?(()=>{
+                const b=getClapBranchBreakdown();
+                return `<div class="clap-branch-panel">
+                    ${clapBranchBar('Logistic',b.Logistic)}
+                    ${clapBranchBar('Agent',b.Agent)}
+                    ${clapBranchBar('Product',b.Product)}
+                </div>`;
+            })():'';
+
+            // Initial chart cell content: Scenarios defaults to an "all scenarios" multi-line
+            // view, CLAP Analysis defaults to the 3-branch Negative-signal view; every other
+            // activity keeps its normal single-line trend.
+            function chartCellInnerHtml(){
+                if(isScenariosRow){
+                    const m=allScenariosMultiSeries();
+                    if(m.series.length){
+                        return `${multiLineChartSvg(m.series)}<div class="chart-labels">${m.dates.map(d=>`<span>${esc(fmtDateLabel(d))}</span>`).join('')}</div>${multiLineLegendHtml(m.series)}`;
+                    }
+                }
+                if(isClapRow){
+                    const m=clapBranchMultiSeries('neg');
+                    return `${multiLineChartSvg(m.series)}<div class="chart-labels">${m.dates.map(d=>`<span>${esc(fmtDateLabel(d))}</span>`).join('')}</div>${multiLineLegendHtml(m.series)}`;
+                }
+                return `${lineChartSvg(trend.values,priority)}<div class="chart-labels">${trend.labels.map(x=>`<span>${esc(x)}</span>`).join('')}</div>`;
+            }
+            function chartCellBadge(){
+                if(isScenariosRow){const m=allScenariosMultiSeries();if(m.series.length)return m.live?'Live trend':'Trend preview';}
+                if(isClapRow){return clapBranchMultiSeries('neg').live?'Live trend':'Trend preview';}
+                return badge;
+            }
+
+            const row=document.createElement('div');
+            row.className=`insight-row priority-${priority}`;
+            row.innerHTML=`
+                <div class="insight-cell">
+                    <div class="insight-activity">
+                        <div class="insight-activity-icon"><i class="fas ${insightIcon(name)}"></i></div>
+                        <div>
+                            <div class="insight-priority ${priority}">
+                                <i class="fas ${priority==='critical'?'fa-circle-exclamation':priority==='high'?'fa-triangle-exclamation':'fa-circle-info'}"></i>
+                                ${priority}
+                            </div>
+                            <div class="insight-activity-name">${esc(displayName)}</div>
+                            <div class="insight-activity-desc">${esc(desc)}</div>
+                            <span class="status-pill" style="margin-top:8px;${open?'color:#c17c0e;background:#fff6e8;border-color:#f5dfad':''}"><span class="status-dot" style="${open?'background:#eea12b':''}"></span> ${esc(item.Status||(open?'Open':'Close'))}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="insight-cell">
+                    ${scenarioPickerHtml}
+                    ${sentimentToggleHtml}
+                    <div class="chart-title-row">
+                        <div class="chart-caption" data-role="caption">Date-wise activity trend${isScenariosRow&&allScenariosMultiSeries().series.length?' · all scenarios':''}${isClapRow?' · Negative signal by branch':''}</div>
+                        <div style="display:flex;align-items:center;gap:6px">
+                            <div class="chart-badge" data-role="badge">${chartCellBadge()}</div>
+                            <div class="chart-view-tabs" data-role="viewTabs">
+                                <button type="button" class="chart-view-toggle active" data-view="daily" title="Date-wise trend"><i class="fas fa-chart-line"></i></button>
+                                <button type="button" class="chart-view-toggle" data-view="weekly" title="Week-wise comparison (W-1 to W-4 per month)"><i class="fas fa-chart-bar"></i></button>
+                                <button type="button" class="chart-view-toggle" data-view="monthly" title="Month-wise comparison"><i class="fas fa-calendar-week"></i></button>
+                                <button type="button" class="chart-view-toggle" data-view="mtd" title="Month-to-date"><i class="fas fa-calendar-days"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="insight-chart" data-role="chart">
+                        ${chartCellInnerHtml()}
+                    </div>
+                    ${clapBranchPanelHtml}
+                </div>
+                <div class="insight-cell">
+                    <ul class="action-list">
+                        ${actions.map(a=>`<li class="action-item">${esc(a)}</li>`).join('')}
+                    </ul>
+                    ${actions.length>0?'<div class="action-more">Recommended actions for this activity</div>':''}
+                    ${open?`<div class="tni-action-note"><i class="fas fa-flag-checkered"></i> <strong>How to close this activity:</strong> ${esc(closeGuidance)}</div>`:''}
+                </div>`;
+
+            let currentClapSentiment='neg';
+
+            // View toggle — swaps the chart cell's content in place. Daily view restores each
+            // row's special default (all-scenarios multi-line for Scenarios, branch sentiment
+            // multi-line for CLAP Analysis) rather than the flat single-line trend.
+            row.querySelectorAll('.chart-view-toggle').forEach(btn=>{
+                btn.addEventListener('click',e=>{
+                    e.stopPropagation();
+                    const view=btn.dataset.view;
+                    row.querySelectorAll('.chart-view-toggle').forEach(b=>b.classList.toggle('active',b===btn));
+                    const chartHost=row.querySelector('[data-role="chart"]');
+                    if(view==='daily'&&isScenariosRow&&!row.querySelector('[data-role="scenarioPicker"]')?.value){
+                        chartHost.innerHTML=chartCellInnerHtml();
+                        row.querySelector('[data-role="caption"]').textContent='Date-wise activity trend · all scenarios';
+                        row.querySelector('[data-role="badge"]').textContent=chartCellBadge();
+                        return;
+                    }
+                    if(view==='daily'&&isClapRow){
+                        const m=clapBranchMultiSeries(currentClapSentiment);
+                        chartHost.innerHTML=`${multiLineChartSvg(m.series)}<div class="chart-labels">${m.dates.map(d=>`<span>${esc(fmtDateLabel(d))}</span>`).join('')}</div>${multiLineLegendHtml(m.series)}`;
+                        row.querySelector('[data-role="caption"]').textContent=`Date-wise activity trend · ${currentClapSentiment==='pos'?'Positive':'Negative'} signal by branch`;
+                        row.querySelector('[data-role="badge"]').textContent=m.live?'Live trend':'Trend preview';
+                        return;
+                    }
+                    const v=trendViews[view];
+                    const svg=view==='daily'?lineChartSvg(v.data.values,priority):barChartSvg(v.data.values,v.data.labels,priority);
+                    chartHost.innerHTML=`${svg}<div class="chart-labels">${v.data.labels.map(x=>`<span>${esc(x)}</span>`).join('')}</div>`;
+                    row.querySelector('[data-role="caption"]').textContent=v.caption+(view==='mtd'?` · ${v.data.total} ${v.data.isAverage?'avg':'total'} so far`:'');
+                    row.querySelector('[data-role="badge"]').textContent=v.data.live?'Live trend':'Trend preview';
+                });
+            });
+
+            // Scenario picker — swaps the chart to a single scenario's own daily trend. The
+            // daily/weekly/monthly/mtd toggle only applies to the overall total, so it's hidden
+            // while a specific scenario is selected.
+            const scenarioPicker=row.querySelector('[data-role="scenarioPicker"]');
+            if(scenarioPicker){
+                scenarioPicker.addEventListener('change',()=>{
+                    const val=scenarioPicker.value;
+                    const chartHost=row.querySelector('[data-role="chart"]');
+                    const viewTabs=row.querySelector('[data-role="viewTabs"]');
+                    if(!val){
+                        viewTabs.style.display='';
+                        row.querySelectorAll('.chart-view-toggle').forEach(b=>b.classList.toggle('active',b.dataset.view==='daily'));
+                        chartHost.innerHTML=chartCellInnerHtml();
+                        row.querySelector('[data-role="caption"]').textContent='Date-wise activity trend · all scenarios';
+                        row.querySelector('[data-role="badge"]').textContent=chartCellBadge();
+                    }else{
+                        viewTabs.style.display='none';
+                        const sTrend=scenarioTrendData(val);
+                        chartHost.innerHTML=`${lineChartSvg(sTrend.values,priority)}<div class="chart-labels">${sTrend.labels.map(x=>`<span>${esc(x)}</span>`).join('')}</div>`;
+                        row.querySelector('[data-role="caption"]').textContent=`Date-wise trend · ${val}`;
+                        row.querySelector('[data-role="badge"]').textContent=sTrend.live?'Live trend':'Trend preview';
+                    }
+                });
+            }
+
+            // Sentiment toggle (CLAP Analysis only) — swaps the 3-branch line chart between
+            // Positive and Negative signal counts. Always returns the view to daily, since the
+            // branch breakdown is only computed per-day.
+            row.querySelectorAll('.sentiment-toggle').forEach(btn=>{
+                btn.addEventListener('click',e=>{
+                    e.stopPropagation();
+                    currentClapSentiment=btn.dataset.sentiment;
+                    row.querySelectorAll('.sentiment-toggle').forEach(b=>b.classList.toggle('active',b===btn));
+                    row.querySelectorAll('.chart-view-toggle').forEach(b=>b.classList.toggle('active',b.dataset.view==='daily'));
+                    const chartHost=row.querySelector('[data-role="chart"]');
+                    const m=clapBranchMultiSeries(currentClapSentiment);
+                    chartHost.innerHTML=`${multiLineChartSvg(m.series)}<div class="chart-labels">${m.dates.map(d=>`<span>${esc(fmtDateLabel(d))}</span>`).join('')}</div>${multiLineLegendHtml(m.series)}`;
+                    row.querySelector('[data-role="caption"]').textContent=`Date-wise activity trend · ${currentClapSentiment==='pos'?'Positive':'Negative'} signal by branch`;
+                    row.querySelector('[data-role="badge"]').textContent=m.live?'Live trend':'Trend preview';
+                });
+            });
+
+            host.appendChild(row);
+        });
+
+        if(!groups[priority].length){
+            const empty=document.createElement('div');
+            empty.className=`insight-row priority-${priority}`;
+            empty.innerHTML=`<div class="insight-cell" style="grid-column:1/-1"><div class="insight-empty">No ${priority} priority activity found for this process / phase.</div></div>`;
+            host.appendChild(empty);
+        }
+    });
+}
+
+
+const scenarioLibrary={
+"Social Media & Consumer Court Threat":[
+{detect:"Customer threatens to post on social media",action:"Acknowledge the concern, offer an immediate resolution, and request time to resolve before anything is posted."},
+{detect:"Customer threatens consumer court / legal action",action:"Document the exact complaint, escalate to the legal team, and respond formally with a resolution timeline."},
+{detect:"Customer has already posted negative content",action:"Escalate to the social media/PR team, respond professionally and promptly, and offer a resolution."},
+{detect:"Customer demands compensation under threat",action:"Escalate to senior management for review — do not commit to unauthorized compensation on the call."}
+],
+"Potential Scam Leads":[
+{detect:"Customer provides suspicious payment, OTP, bank or card-related information",action:"Do not request or repeat sensitive credentials. Stop the risky flow, preserve call evidence and escalate to Fraud/Compliance."},
+{detect:"Customer asks for payment through an unusual or unauthorized channel",action:"Do not approve the transaction. Flag the case, verify through the approved process and escalate if the pattern remains suspicious."},
+{detect:"Agent or customer uses scam-like language, impersonation or deceptive promises",action:"Review the exact statement and recording, classify the risk and escalate confirmed or high-risk cases under the fraud matrix."},
+{detect:"Suspicious lead shows repeated attempts, inconsistent identity or unusual behaviour",action:"Log the lead as suspicious, preserve supporting evidence and route it to Fraud Investigation + Compliance."}
+],
+"Fraud Call Analysis":[
+{detect:"Fraud, scam or impersonation language is detected",action:"Review the flagged sentence with the recording, classify the fraud type and escalate according to the fraud/security matrix."},
+{detect:"Customer or agent requests sensitive information in a suspicious context",action:"Preserve the evidence, stop unauthorized data handling and escalate to Security/Compliance."},
+{detect:"Repeated suspicious intent, manipulation or unusual transaction behaviour",action:"Classify the risk, document the pattern and route the case to the Fraud Team for investigation."}
+],
+"CLAP Analysis":[
+{detect:"Customer Voice is primarily related to Customer experience",action:"Identify the exact customer pain point, assign an owner and track the corrective action to closure."},
+{detect:"VOC indicates a Product-related problem",action:"Capture the product issue with evidence, route it to Product and track the resolution/recheck."},
+{detect:"VOC indicates a Logistics / delivery problem",action:"Identify the logistics root cause, coordinate with Logistics/Operations and track resolution against the applicable SLA."},
+{detect:"VOC indicates an Agent / handling issue",action:"Review the call, identify the handling gap and provide targeted coaching with a follow-up quality check."}
+],
+"Scenarios":[
+{detect:"Query is the primary contact reason",action:"Answer using the approved SOP, identify any knowledge gap and route unresolved cases to the correct owner."},
+{detect:"Complaint is the primary contact reason",action:"Acknowledge the complaint, document the root cause, provide the approved resolution path and track closure."},
+{detect:"Request is the primary contact reason",action:"Validate the request, follow the applicable SOP and complete or route it within the expected TAT."},
+{detect:"Sale Done is detected",action:"Validate the sale outcome, ensure required steps are completed and record the result accurately for downstream operations."}
+],
+"CQ Score %":[
+{detect:"Overall quality score is below the acceptable target",action:"Conduct a 1:1 coaching session, review failed parameters and create a targeted training plan."},
+{detect:"Repeated failure on the same quality parameter",action:"Identify the recurring behaviour, provide parameter-specific coaching and perform a follow-up quality review."},
+{detect:"Critical quality parameter is missed",action:"Escalate the critical failure to QA/Team Lead, document the issue and initiate corrective action."}
+]
+};
+
+function getDetectionScenarios(item){
+    const name=String(item?.SubActivity||"").trim();
+    if(scenarioLibrary[name]) return scenarioLibrary[name];
+    const raw=item?.DetectionScenarios||item?.DetectionScenariosJson||item?.DetectionScenariosJSON;
+    if(raw){
+        try{
+            const parsed=typeof raw==="string"?JSON.parse(raw):raw;
+            if(Array.isArray(parsed)) return parsed;
+        }catch(e){}
+    }
+    return [{
+        detect:item.WhatItDetects||"The activity indicates a relevant operational or customer-risk signal.",
+        action:item.RecommendedAction||"Review the exact call evidence, document the finding, follow the approved SOP and escalate to the responsible team when required."
+    }];
+}
+
+function selectProcess(p){
+    currentProcess=p;currentPhase='closed';activitySearchQuery='';$('activitySearch').value='';
+    const total=allData.filter(x=>x.Process===p).length;
+    $('breadcrumbProcess').textContent=p;$('detailProcessTitle').innerHTML=`<i class="fas ${iconFor(p)}"></i>${esc(p)}`;$('detailProcessSub').textContent=`${total} activities · ${getActivities(p,'closed').length} closed · ${getActivities(p,'open').length} open`;
+    if(String(p).toLowerCase().includes('neemans')){
+        $('processNote').classList.remove('hidden');
+        $('processNote').innerHTML=`<i class="fas fa-phone-slash"></i><div><strong>Phone Number Note</strong><br>The phone number is not showing correctly in Call Master. The number shown is the bot number, not the actual customer phone number.</div>`;
+    }else{
+        $('processNote').classList.add('hidden');
+        $('processNote').innerHTML='';
+    }
+    processView.classList.add('hidden');$('homeHero').classList.add('hidden');$('metrics').classList.add('hidden');detailView.style.display='block';
+    $('backBtn').style.display='inline-flex';
+    renderPhases();renderInsightBoard();window.scrollTo({top:0,behavior:'smooth'})
+}
+function goBack(){
+    detailView.style.display='none';$('homeHero').classList.remove('hidden');$('metrics').classList.remove('hidden');processView.classList.remove('hidden');$('processNote').classList.add('hidden');$('backBtn').style.display='none';window.scrollTo({top:0,behavior:'smooth'})
+}
+function loadData(){
+    loading.classList.remove('hidden');processView.classList.add('hidden');detailView.style.display='none';
+    if(typeof google!=='undefined'&&google.script&&google.script.run){
+        google.script.run.withSuccessHandler(data=>{
+            activityTrendData=data||{};
+        }).withFailureHandler(()=>{activityTrendData={}}).getActivityTrendSeries();
+        google.script.run.withSuccessHandler(data=>{
+            allData=data||[];loading.classList.add('hidden');processView.classList.remove('hidden');updateMetrics();renderProcesses();renderSpecialProcesses()
+        }).withFailureHandler(err=>{
+            loading.innerHTML=`<div class="error-box"><i class="fas fa-triangle-exclamation"></i><div>${esc(err?.message||'Failed to load data')}</div><button class="retry" onclick="location.reload()">Retry</button></div>`
+        }).getSheetData()
+    }else{
+        setTimeout(()=>{allData=getSampleData();loading.classList.add('hidden');processView.classList.remove('hidden');updateMetrics();renderProcesses();renderSpecialProcesses()},400)
+    }
+}
+
+function getSampleData() {
+                return [
+                    { Process: "Bellavita", LOB: "Inbound", Activity: "AI Quality Inbound – Existing Insights",
+                        SubActivity: "CQ Score %",
+                        WhatItDetects: "Overall quality score and parameter-level CQ performance below the acceptable target.",
+                        RecommendedAction: "Conduct 1:1 coaching for low-scoring agents; review failed parameters and create a targeted training plan.",
+                        TAT: "24 hours", Priority: "High", ResponsibleTeam: "QA Team + Team Lead",
+                        OwnerShip: "Tausif", Status: "Close", Remark: "Existing AI Quality KPI", Phase: "Phase 1",
+                        MileStone: "MilStone 1" },
+                    { Process: "Bellavita", LOB: "Inbound", Activity: "AI Quality Inbound – Existing Insights",
+                        SubActivity: "Social Media & Consumer Court Threat",
+                        WhatItDetects: "Customer threats involving social media exposure, negative reviews, consumer court or legal escalation.",
+                        RecommendedAction: "Acknowledge concern, document the exact statement, provide an approved resolution path and escalate to the appropriate senior/CX/legal team.",
+                        TAT: "1–2 hours", Priority: "High/Critical",
+                        ResponsibleTeam: "Customer Experience + Compliance/Legal", OwnerShip: "Tausif", Status: "Close",
+                        Remark: "Existing AI Quality KPI", Phase: "Phase 1", MileStone: "MilStone 1" },
+                    { Process: "Bellavita", LOB: "Inbound", Activity: "AI Quality Inbound – Existing Insights",
+                        SubActivity: "Potential Scam Leads",
+                        WhatItDetects: "Calls containing scam/fraud indicators or suspicious customer/agent activity.",
+                        RecommendedAction: "Review transcript and recording immediately, classify risk, log the case and escalate high-risk/confirmed cases.",
+                        TAT: "4 hours", Priority: "Critical", ResponsibleTeam: "Fraud Investigation + Compliance",
+                        OwnerShip: "Tausif", Status: "Close", Remark: "Existing AI Quality KPI", Phase: "Phase 1",
+                        MileStone: "MilStone 1" },
+                    { Process: "Bellavita", LOB: "Inbound", Activity: "AI Quality Inbound – Existing Insights",
+                        SubActivity: "CLAP Analysis",
+                        WhatItDetects: "Customer Voice signals across Customer, Agent, Product and Logistics branches.",
+                        RecommendedAction: "Identify the dominant negative VOC branch, perform root-cause analysis, assign an action owner and track closure/recheck.",
+                        TAT: "48 hours", Priority: "High",
+                        ResponsibleTeam: "CX + Product + Logistics + Operations", OwnerShip: "Tausif", Status: "Close",
+                        Remark: "Existing AI Quality KPI", Phase: "Phase 1", MileStone: "MilStone 1" },
+                    { Process: "Bellavita", LOB: "Inbound", Activity: "AI Quality Inbound – Existing Insights",
+                        SubActivity: "Fraud Call Analysis",
+                        WhatItDetects: "Calls with suspected fraud, scam language, suspicious intent or data-security indicators.",
+                        RecommendedAction: "Review flagged sentence with recording, classify fraud type, preserve evidence and escalate per the fraud/security matrix.",
+                        TAT: "2–4 hours", Priority: "Critical", ResponsibleTeam: "Fraud Team + Security + Compliance",
+                        OwnerShip: "Tausif", Status: "Close", Remark: "Existing AI Quality KPI", Phase: "Phase 1",
+                        MileStone: "MilStone 1" },
+                    { Process: "Bellavita", LOB: "Inbound", Activity: "AI Quality Inbound – Existing Insights",
+                        SubActivity: "Logistics",
+                        WhatItDetects: "Delivery/logistics pain points such as delay, missing/damaged/wrong product and delivery dissatisfaction.",
+                        RecommendedAction: "Identify logistics root cause, coordinate with logistics/operations and track resolution against applicable SLA.",
+                        TAT: "48 hours", Priority: "High", ResponsibleTeam: "Logistics + Operations",
+                        OwnerShip: "Tausif", Status: "Close", Remark: "Existing AI Quality KPI", Phase: "Phase 1",
+                        MileStone: "MilStone 1" },
+                    { Process: "Bellavita", LOB: "Inbound", Activity: "AI Quality Inbound – Existing Insights",
+                        SubActivity: "Scenarios",
+                        WhatItDetects: "Contact-reason distribution such as Query, Complaint, Request and Sale Done.",
+                        RecommendedAction: "Review highest-volume or highest-risk scenarios, identify handling gaps and prioritize coaching/SOP review using existing scenario analysis.",
+                        TAT: "48 hours", Priority: "High", ResponsibleTeam: "QA + Operations", OwnerShip: "Tausif",
+                        Status: "Close", Remark: "Existing AI Quality KPI", Phase: "Phase 1", MileStone: "MilStone 1" },
+                    { Process: "Bellavita", LOB: "Inbound", Activity: "AI Quality Inbound – Existing Insights",
+                        SubActivity: "Logistics",
+                        WhatItDetects: "Delivery/logistics pain points such as delay, missing/damaged/wrong product and delivery dissatisfaction.",
+                        RecommendedAction: "Identify logistics root cause, coordinate with logistics/operations and track resolution against applicable SLA.",
+                        TAT: "48 hours", Priority: "High", ResponsibleTeam: "Logistics + Operations", OwnerShip: "Tausif",
+                        Status: "Open", Remark: "Rollout in progress", Phase: "Phase 2", MileStone: "MilStone 2", TaskEndDate: "2026-08-10" },
+                    { Process: "GNC", LOB: "Inbound", Activity: "AI Quality Inbound – Existing Insights",
+                        SubActivity: "Logistics",
+                        WhatItDetects: "Delivery/logistics pain points such as delay, missing/damaged/wrong product and delivery dissatisfaction.",
+                        RecommendedAction: "Identify logistics root cause, coordinate with logistics/operations and track resolution against applicable SLA.",
+                        TAT: "48 hours", Priority: "High", ResponsibleTeam: "Logistics + Operations", OwnerShip: "Tausif",
+                        Status: "Open", Remark: "Rollout in progress", Phase: "Phase 2", MileStone: "MilStone 2", TaskEndDate: "2026-08-17" },
+                    { Process: "Bellavita", LOB: "Inbound", Activity: "AI Quality Inbound – Existing Insights",
+                        SubActivity: "Repeat Call Analysis",
+                        WhatItDetects: "Customers calling back repeatedly for the same unresolved issue.",
+                        RecommendedAction: "Analyze repeat reasons by agent/scenario, identify avoidable repeats, improve resolution guidance and monitor recurrence.",
+                        TAT: "48 hours", Priority: "Medium", ResponsibleTeam: "QA + Operations", OwnerShip: "Tausif",
+                        Status: "Open", Remark: "Awaiting rollout", Phase: "Phase 2", MileStone: "MilStone 2" }
+                ];
+            }
+
+$('activitySearch').addEventListener('input',e=>{activitySearchQuery=e.target.value;renderInsightBoard()});
+$('processSearch').addEventListener('input',e=>renderProcesses(e.target.value));
+$('headerSearch').addEventListener('input',e=>{$('processSearch').value=e.target.value;renderProcesses(e.target.value)});
+$('refreshBtn').addEventListener('click',loadData);
+$('backBtn').addEventListener('click',goBack);
+$('breadcrumbHome').addEventListener('click',goBack);
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('headerSearch').focus()}});
+loadData();
+})();
+</script>
+</body>
+</html>

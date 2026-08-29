@@ -15,6 +15,7 @@ function parseDateRange(req: Request): svc.QualityFilters {
     endDate:   (req.query.endDate   as string) || defaultEnd,
     clientId:  req.query.clientId as string | undefined,
     agentIds,
+    campaignId: (req.query.campaignId as string | undefined)?.trim() || undefined,
   };
 }
 
@@ -133,7 +134,19 @@ export async function getRawCallData(req: Request, res: Response) {
     const mobileNo = (req.query.mobileNo as string | undefined)?.trim() || undefined;
     const cursor = req.query.cursor ? Number(req.query.cursor) : undefined;
     const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
-    const data = await svc.getRawCallData(filters, mobileNo, cursor, limit);
+    const data = await svc.getRawCallData(filters, mobileNo, cursor, limit, filters.campaignId);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getRawDataCampaigns(req: Request, res: Response) {
+  try {
+    const clientId = (req.query.clientId as string | undefined)?.trim();
+    if (!clientId) { res.json({ data: [] }); return; }
+    const data = await svc.getRawDataCampaigns(clientId);
     res.json({ data });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';

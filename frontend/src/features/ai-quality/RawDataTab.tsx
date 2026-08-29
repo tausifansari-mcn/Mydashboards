@@ -50,7 +50,7 @@ const WIDE_PAGE_SIZE = 50; // wide mode renders every CallDetails column, so a s
 // of the fixed Date/Agent/Mobile set, with horizontal scroll controls since the table runs wide.
 export default function RawDataTab({
   clientId, apiPath, hasRecording, hasTranscript, transcriptApiPath, transcriptParam, wideColumns,
-  recordingColumn = 'FileName', freezeTranscript,
+  recordingColumn = 'FileName', freezeTranscript, campaignId,
 }: {
   clientId: string;
   apiPath: string;
@@ -61,6 +61,7 @@ export default function RawDataTab({
   wideColumns?: boolean;
   recordingColumn?: string;
   freezeTranscript?: boolean;
+  campaignId?: string;
 }) {
   const defaultWeek = currentWeekRange();
   const [fromDate, setFromDate] = useState(defaultWeek.from);
@@ -89,6 +90,7 @@ export default function RawDataTab({
       limit: pageSize,
     };
     if (mobileNo) params.mobileNo = mobileNo;
+    if (campaignId) params.campaignId = campaignId;
     if (afterCursor) params.cursor = afterCursor;
     api.get<{ data: { columns?: string[]; rows: (NarrowRow | Record<string, unknown>)[]; nextCursor: number | null } }>(apiPath, { params })
       .then(r => {
@@ -100,7 +102,7 @@ export default function RawDataTab({
       })
       .catch(() => { if (reset) { setRows([]); setCursor(null); setHasMore(false); } })
       .finally(() => (reset ? setLoading : setLoadingMore)(false));
-  }, [clientId, apiPath, fromDate, toDate, mobileNo, pageSize]);
+  }, [clientId, apiPath, fromDate, toDate, mobileNo, campaignId, pageSize]);
 
   useEffect(() => { fetchRows(true, null); }, [fetchRows]);
 

@@ -694,7 +694,7 @@ export async function getTopPerformers(filters: InboundQualityFilters): Promise<
       COUNT(*)                                AS audit_count,
       ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)     AS avg_score
     FROM db_audit.call_quality_assessment q
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
       AND q.User IS NOT NULL
@@ -1664,7 +1664,7 @@ export async function getClapKeywordDrill(
               COALESCE(NULLIF(TRIM(q.scenario),''),'Unknown') AS scenario,
               COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS scenario1
        FROM db_audit.call_quality_assessment q
-       LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+       LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
        WHERE ${where} AND ${CLAP_CASE_INBOUND} = ? AND q.scenario = ? AND COALESCE(NULLIF(TRIM(q.scenario1),''),'—') = ?
        ORDER BY q.CallDate DESC
        LIMIT 200`,
@@ -2591,7 +2591,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
         SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS fatal_pct
       FROM db_audit.call_quality_assessment q
-      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+      LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
         AND q.User IS NOT NULL AND TRIM(q.User) != '' ${clientFilter}
       GROUP BY q.User, am.AgentName ORDER BY fatal_count DESC, fatal_pct DESC LIMIT 5
@@ -2659,7 +2659,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
         ROUND(SUM(CASE WHEN q.quality_percentage>=90 AND q.quality_percentage<98 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS good_pct,
         ROUND(SUM(CASE WHEN q.quality_percentage>=98  THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS excellent_pct
       FROM db_audit.call_quality_assessment q
-      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+      LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
         AND q.User IS NOT NULL AND TRIM(q.User) != '' ${clientFilter}
       GROUP BY q.User, am.AgentName ORDER BY fatal_count DESC, fatal_pct DESC
@@ -2962,7 +2962,7 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
       ${_RESOLUTION} AS resolution,
       ${_CLOSING}    AS closing
     FROM db_audit.call_quality_assessment q
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     LEFT JOIN shivamgiri.AgentsMaster am2 ON am2.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -3051,7 +3051,7 @@ export async function getAgentGuidance(filters: InboundQualityFilters): Promise<
         ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS cq_score,
         ${paramSelect}
       FROM db_audit.call_quality_assessment q
-      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+      LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL
         AND q.User IS NOT NULL AND TRIM(q.User) != ''
@@ -3578,7 +3578,7 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters): 
       SUM(CASE WHEN q.quality_percentage >= 60 AND q.quality_percentage < 80 THEN 1 ELSE 0 END)   AS mq_count,
       SUM(CASE WHEN q.quality_percentage >  0  AND q.quality_percentage < 60 THEN 1 ELSE 0 END)   AS bq_count
     FROM db_audit.call_quality_assessment q
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? ${extra}
     GROUP BY q.User, am.AgentName
     ORDER BY cq_score DESC
@@ -4551,7 +4551,7 @@ export async function getClapVocQuotes(
            COALESCE(q.Transcribe_Text, '') AS transcript,
            COALESCE(q.call_recording, '') AS call_recording
     FROM db_audit.call_quality_assessment q
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
       AND q.${column} IS NOT NULL AND TRIM(q.${column}) != ''
     ORDER BY q.CallDate DESC
@@ -4597,7 +4597,7 @@ function fetchRawProductVocRows(
            COALESCE(q.Transcribe_Text, '') AS transcript,
            COALESCE(q.call_recording, '') AS call_recording
     FROM db_audit.call_quality_assessment q
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
       AND q.${column} IS NOT NULL AND TRIM(q.${column}) != ''
     ORDER BY q.CallDate DESC
@@ -4868,7 +4868,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         COUNT(*) AS calls,
         ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS avgScore
       FROM db_audit.call_quality_assessment q
-      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+      LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
         AND q.User IS NOT NULL AND TRIM(q.User) != ''
       GROUP BY q.User, am.AgentName
@@ -4884,7 +4884,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         COUNT(*) AS calls,
         ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS avgScore
       FROM db_audit.call_quality_assessment q
-      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+      LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
         AND q.User IS NOT NULL AND TRIM(q.User) != ''
       GROUP BY q.User, am.AgentName
@@ -4980,7 +4980,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
           ELSE 'Catch-all (Unrecognized Scenario)'
         END AS rule
       FROM db_audit.call_quality_assessment q
-      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+      LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${cf}
         AND (${CLAP_CASE_INBOUND}) = 'Agent'
       ORDER BY q.CallDate DESC

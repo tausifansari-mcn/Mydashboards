@@ -6,7 +6,7 @@ import { querySource } from '../lib/sourceDb';
   const rows = await querySource<{ MasId: string; Lob: string }>(`
     SELECT DISTINCT am.MasId, COALESCE(am.Lob, 'Unknown') AS Lob
     FROM db_external.CallDetails cd
-    JOIN Shivamgiri.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
     WHERE cd.CallDate >= '2026-08-01' AND cd.CallDate < '2026-09-01'
       AND cd.client_id = 375
       AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
@@ -20,7 +20,7 @@ import { querySource } from '../lib/sourceDb';
     const noMaster = await querySource<{ agentId: string; cnt: number }>(`
       SELECT cd.AgentName AS agentId, COUNT(*) AS cnt
       FROM db_external.CallDetails cd
-      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+      LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
       WHERE cd.CallDate >= '2026-08-01' AND cd.CallDate < '2026-09-01'
         AND cd.client_id = 375
         AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''

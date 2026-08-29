@@ -14,7 +14,7 @@ async function test() {
     const [rows] = await pool.execute(
       'SELECT COALESCE(am.AgentName, q.User) AS user, COUNT(*) AS audit_count, ROUND(AVG(q.quality_percentage), 1) AS avg_score ' +
       'FROM db_audit.call_quality_assessment q ' +
-      'LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci ' +
+      'LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci ' +
       'WHERE q.CallDate BETWEEN ? AND ? ' +
       'AND q.quality_percentage IS NOT NULL ' +
       'AND q.User IS NOT NULL ' +

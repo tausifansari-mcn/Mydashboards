@@ -8,6 +8,7 @@ export interface QualityFilters {
   endDate: string;
   clientId?: string;
   agentIds?: string[];
+  campaignId?: string;
 }
 
 export interface ClientSummary {
@@ -170,6 +171,16 @@ function agentClause(filters: QualityFilters): { sql: string; params: string[] }
   return { sql: '', params: [] };
 }
 
+// Feeds the campaign dropdown next to the Date Range picker (e.g. Lawyer Panel's
+// "regional" / "non_regional" split) — only meaningful for clients that run more than one
+// campaign, a no-op otherwise.
+function campaignClause(filters: QualityFilters): { sql: string; params: string[] } {
+  if (filters.campaignId) {
+    return { sql: ' AND cd.campaign_id = ?', params: [filters.campaignId] };
+  }
+  return { sql: '', params: [] };
+}
+
 export async function getClients(filters: QualityFilters): Promise<ClientSummary[]> {
   const { startDate, endDate } = filters;
   return querySource<ClientSummary>(`
@@ -217,24 +228,44 @@ export async function initOutboundDashboardCacheTables(): Promise<void> {
         sale_done                TINYINT(1) NOT NULL DEFAULT 0,
         objection_subcategory    VARCHAR(120) NULL,
         feedback                 VARCHAR(20) NULL,
-        agent_id                 VARCHAR(20) NULL,
+        agent_id                 VARCHAR(150) NULL,
+        campaign_id              VARCHAR(20) NULL,
         computed_at              DATETIME DEFAULT NOW(),
         INDEX idx_client_date (client_id, call_date),
         INDEX idx_agent_id (agent_id)
       )
     `);
+    // Add campaign_id column if it doesn't exist (migration for existing tables) — feeds the
+    // Dashboard tab's campaign filter (e.g. Lawyer Panel's "regional" / "non_regional" split).
+    const [existingCampaignCol] = await pool.execute<import('mysql2').RowDataPacket[]>(
+      `SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = 'db_masmis' AND table_name = 'outbound_dashboard_cache' AND COLUMN_NAME = 'campaign_id'`
+    );
+    if (existingCampaignCol.length === 0) {
+      await pool.execute(`
+        ALTER TABLE db_masmis.outbound_dashboard_cache
+        ADD COLUMN campaign_id VARCHAR(20) NULL AFTER agent_id
+      `).catch(() => {});
+    }
     // Add agent_id column if it doesn't exist (migration for existing tables). This server
     // rejects `IF NOT EXISTS` on ADD COLUMN / CREATE INDEX with a parse error (ER_PARSE_ERROR),
     // so check information_schema instead of relying on that clause — the old version silently
     // swallowed the parse error via .catch(), meaning the column was NEVER actually added and
     // every batch insert failed with "Unknown column 'agent_id'".
     const [existingCols] = await pool.execute<import('mysql2').RowDataPacket[]>(
-      `SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = 'db_masmis' AND table_name = 'outbound_dashboard_cache' AND COLUMN_NAME = 'agent_id'`
+      `SELECT COLUMN_NAME, CHARACTER_MAXIMUM_LENGTH FROM information_schema.columns WHERE table_schema = 'db_masmis' AND table_name = 'outbound_dashboard_cache' AND COLUMN_NAME = 'agent_id'`
     );
     if (existingCols.length === 0) {
       await pool.execute(`
         ALTER TABLE db_masmis.outbound_dashboard_cache
-        ADD COLUMN agent_id VARCHAR(20) NULL AFTER feedback
+        ADD COLUMN agent_id VARCHAR(150) NULL AFTER feedback
+      `).catch(() => {});
+    } else if (Number(existingCols[0].CHARACTER_MAXIMUM_LENGTH) < 150) {
+      // Some raw AgentName values (e.g. "Sneha saini MCN-Extension(Extension-...)") run 50+
+      // chars — a narrow column here silently fails the ENTIRE batch insert (not just that row),
+      // which stalls the cache cursor for every client behind it in id order, not just this one.
+      await pool.execute(`
+        ALTER TABLE db_masmis.outbound_dashboard_cache
+        MODIFY COLUMN agent_id VARCHAR(150) NULL
       `).catch(() => {});
     }
     const [existingIdx] = await pool.execute<import('mysql2').RowDataPacket[]>(
@@ -277,7 +308,7 @@ async function processOutboundDashboardBatch(batchSize = 1000): Promise<number> 
   if (nextId <= 0) return 0;
 
   type Row = {
-    id: number; client_id: number; CallDate: string; AgentName: string | null;
+    id: number; client_id: number; CallDate: string; AgentName: string | null; campaign_id: string | null;
     mobile_valid: number; has_objection_category: number;
     rejected_status_a: string; rejected_status_b: string;
     sale_done: number; objection_subcategory: string | null; feedback: string | null;
@@ -285,7 +316,7 @@ async function processOutboundDashboardBatch(batchSize = 1000): Promise<number> 
 
   const rows = await querySource<Row>(`
     SELECT
-      cd.id, cd.client_id, cd.CallDate, cd.AgentName,
+      cd.id, cd.client_id, cd.CallDate, cd.AgentName, cd.campaign_id,
       CASE WHEN cd.MobileNo IS NOT NULL AND cd.MobileNo != '' THEN 1 ELSE 0 END AS mobile_valid,
       CASE WHEN cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory != '' THEN 1 ELSE 0 END AS has_objection_category,
       CASE
@@ -316,12 +347,13 @@ async function processOutboundDashboardBatch(batchSize = 1000): Promise<number> 
   const cols = [
     'call_id', 'client_id', 'call_date', 'mobile_valid', 'has_objection_category',
     'rejected_status_a', 'rejected_status_b', 'sale_done', 'objection_subcategory', 'feedback', 'agent_id',
+    'campaign_id',
   ];
   const placeholders = rows.map(() => `(${cols.map(() => '?').join(',')},NOW())`).join(',');
   const flat = rows.flatMap(r => [
     r.id, r.client_id, r.CallDate, r.mobile_valid, r.has_objection_category,
     r.rejected_status_a, r.rejected_status_b, r.sale_done, r.objection_subcategory, r.feedback,
-    r.AgentName ?? null,
+    r.AgentName ?? null, r.campaign_id ?? null,
   ]);
   const updateCols = cols.filter(c => c !== 'call_id').map(c => `${c} = VALUES(${c})`).join(', ');
 
@@ -363,7 +395,9 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
   const { sql: af, params: afParams } = agentClause(filters);
-  const params = [startDate, endDate, ...cfParams, ...afParams];
+  const campF = filters.campaignId ? ' AND cd.campaign_id = ?' : '';
+  const campParams = filters.campaignId ? [filters.campaignId] : [];
+  const params = [startDate, endDate, ...cfParams, ...afParams, ...campParams];
 
   // All 12 reads come from the pre-classified db_masmis cache (see initOutboundDashboardCacheTables /
   // processOutboundDashboardBatch above) instead of scanning CallDetails live — cut this endpoint
@@ -375,7 +409,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       ),
       valid AS (
         SELECT * FROM base WHERE has_objection_category = 1
@@ -392,7 +426,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     }>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       ),
       valid AS (
         SELECT * FROM base WHERE has_objection_category = 1
@@ -412,7 +446,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<{ total_opp: number; mo_count: number }>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       )
       SELECT
         (SELECT COUNT(*) FROM base WHERE rejected_status_a NOT IN ('Opening Rejected','Offering Rejected','Context Rejected')) AS total_opp,
@@ -424,7 +458,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       )
       SELECT
         CASE
@@ -449,7 +483,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       ),
       opp AS (
         SELECT * FROM base
@@ -478,7 +512,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       ),
       mo AS (
         SELECT * FROM base
@@ -507,7 +541,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<{ category: string; insight: string; cnt: number }>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       )
       SELECT
         CASE
@@ -562,7 +596,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<{ ned_category: string; ned_qs: string; ned_status: string; cnt: number }>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       )
       SELECT
         CASE
@@ -621,7 +655,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       )
       SELECT
         CASE
@@ -676,7 +710,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
         ) AS csat_score
       FROM db_masmis.outbound_dashboard_cache cd
       WHERE cd.feedback IN ('Positive','Negative','Neutral')
-        AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
     `, params),
 
     queryMasmis<{
@@ -699,7 +733,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
         ) AS nps_score
       FROM db_masmis.outbound_dashboard_cache cd
       WHERE cd.feedback IN ('Positive','Negative','Neutral')
-        AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       GROUP BY 1
       ORDER BY 1
     `, params),
@@ -711,7 +745,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
       FROM db_masmis.outbound_dashboard_cache cd
       WHERE cd.mobile_valid = 1
         AND cd.has_objection_category = 1
-        AND cd.call_date BETWEEN ? AND ? ${cf}${af}
+        AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
       GROUP BY 1
       ORDER BY 1
     `, params),
@@ -824,7 +858,8 @@ export interface SaleDoneCallRow {
 export async function getSaleDoneCalls(filters: QualityFilters): Promise<SaleDoneCallRow[]> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
-  const params = [startDate, endDate, ...cfParams];
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const params = [startDate, endDate, ...cfParams, ...campParams];
 
   const rows = await querySource<{ id: number; CallDate: string; AgentName: string | null; MobileNo: string | null; FileName: string | null }>(`
     SELECT cd.id, cd.CallDate, cd.AgentName, cd.MobileNo, cd.FileName
@@ -832,7 +867,7 @@ export async function getSaleDoneCalls(filters: QualityFilters): Promise<SaleDon
     WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
       AND cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory != ''
       AND COALESCE(cd.SaleDone, 0) = 1
-      AND cd.CallDate BETWEEN ? AND ? ${cf}
+      AND cd.CallDate BETWEEN ? AND ? ${cf}${campF}${campF}
     ORDER BY cd.CallDate DESC
     LIMIT 500
   `, params);
@@ -963,10 +998,12 @@ export async function getMagicalStageCallEndCalls(
 // pagination so "Load More" stays cheap regardless of how far back the user goes.
 export async function getRawCallData(
   filters: QualityFilters, mobileNo: string | undefined, cursor: number | undefined, limit: number,
+  campaignId?: string,
 ): Promise<{ columns: string[]; rows: Record<string, unknown>[]; nextCursor: number | null }> {
   const { startDate, endDate, clientId } = filters;
   const cf = clientId ? ' AND cd.client_id = ?' : '';
   const mf = mobileNo ? ' AND cd.MobileNo LIKE ?' : '';
+  const campF = campaignId ? ' AND cd.campaign_id = ?' : '';
   const cursorClause = cursor ? ' AND cd.id < ?' : '';
   // A mobile-number search intentionally ignores the date range — the caller may be looking for a
   // call from before or after whatever window happens to be selected, so search all-time instead.
@@ -976,6 +1013,7 @@ export async function getRawCallData(
     ...dateParams,
     ...(clientId ? [Number(clientId)] : []),
     ...(mobileNo ? [`%${mobileNo}%`] : []),
+    ...(campaignId ? [campaignId] : []),
     ...(cursor ? [cursor] : []),
   ];
 
@@ -986,7 +1024,7 @@ export async function getRawCallData(
   const rows = await querySource<Record<string, unknown>>(`
     SELECT ${CALL_DETAILS_EXPORT_COLUMNS.map(c => exportSelectExpr(c, 'cd')).join(', ')}
     FROM db_external.CallDetails cd ${mobileNo ? '' : 'FORCE INDEX (Index_3)'}
-    WHERE 1=1 ${dateClause} ${cf} ${mf} ${cursorClause}
+    WHERE 1=1 ${dateClause} ${cf} ${mf} ${campF} ${cursorClause}
     ORDER BY cd.id DESC
     LIMIT ${limit}
   `, params);
@@ -996,6 +1034,17 @@ export async function getRawCallData(
     rows,
     nextCursor: rows.length === limit ? Number(rows[rows.length - 1].id) : null,
   };
+}
+
+// Distinct campaign_id values for a client — feeds the Raw Data tab's campaign filter dropdown,
+// which only appears once a client actually runs more than one campaign (e.g. Lawyer Panel's
+// "regional" / "non_regional" split).
+export async function getRawDataCampaigns(clientId: string): Promise<string[]> {
+  const rows = await querySource<{ campaign_id: string }>(
+    `SELECT DISTINCT campaign_id FROM db_external.CallDetails WHERE client_id = ? AND campaign_id IS NOT NULL AND campaign_id != '' ORDER BY campaign_id`,
+    [Number(clientId)],
+  );
+  return rows.map(r => r.campaign_id);
 }
 
 // ─── Fraud Call Detection (Outbound) ──────────────────────────────────────────
@@ -1042,7 +1091,8 @@ export interface FraudCallSummary {
 export async function getOutboundFraudCalls(filters: QualityFilters): Promise<FraudCallSummary> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
-  const params: (string | number)[] = [startDate, endDate, ...cfParams];
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const params: (string | number)[] = [startDate, endDate, ...cfParams, ...campParams];
 
   const [rows, agentRows] = await Promise.all([
     querySource<{
@@ -1062,7 +1112,7 @@ export async function getOutboundFraudCalls(filters: QualityFilters): Promise<Fr
       FROM db_external.CallDetails cd
       WHERE cd.CallDate BETWEEN ? AND ?
         AND ${OUTBOUND_FRAUD_SENTENCE_CHECK}
-        ${cf}
+        ${cf}${campF}
       ORDER BY cd.CallDate DESC
       LIMIT 300
     `, params),
@@ -1079,7 +1129,7 @@ export async function getOutboundFraudCalls(filters: QualityFilters): Promise<Fr
       FROM db_external.CallDetails cd
       WHERE cd.CallDate BETWEEN ? AND ?
         AND ${OUTBOUND_FRAUD_SENTENCE_CHECK}
-        ${cf}
+        ${cf}${campF}
       GROUP BY cd.AgentName, cd.client_id
       ORDER BY flagged DESC, total DESC
       LIMIT 100
@@ -1123,7 +1173,8 @@ export async function getOutboundFraudCalls(filters: QualityFilters): Promise<Fr
 export async function getDetailAnalysis(filters: QualityFilters): Promise<DetailAnalysisResponse> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
-  const params = [startDate, endDate, ...cfParams];
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const params = [startDate, endDate, ...cfParams, ...campParams];
 
   const REJ_STATUS_EXPR = `CASE
     WHEN cd.AfterListeningOfferRejected = 1 THEN 'Post Offer Rejected'
@@ -1150,7 +1201,7 @@ export async function getDetailAnalysis(filters: QualityFilters): Promise<Detail
       WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
         AND cd.OpeningPitchCategory IS NOT NULL
         AND cd.OpeningPitchCategory != ''
-        AND cd.CallDate BETWEEN ? AND ? ${cf}
+        AND cd.CallDate BETWEEN ? AND ? ${cf}${campF}
     )
     SELECT
       opening_category,
@@ -1233,7 +1284,7 @@ export async function getDetailAnalysis(filters: QualityFilters): Promise<Detail
         AND cd.ContactSettingCategory IS NOT NULL
         AND cd.ContactSettingCategory != ''
         AND cd.ContactSettingCategory != 'None'
-        AND cd.CallDate BETWEEN ? AND ? ${cf}
+        AND cd.CallDate BETWEEN ? AND ? ${cf}${campF}
     )
     SELECT
       contact_group,
@@ -1263,7 +1314,7 @@ export async function getDetailAnalysis(filters: QualityFilters): Promise<Detail
         AND cd.DiscountType IS NOT NULL
         AND cd.DiscountType != ''
         AND cd.DiscountType != 'None'
-        AND cd.CallDate BETWEEN ? AND ? ${cf}
+        AND cd.CallDate BETWEEN ? AND ? ${cf}${campF}
     )
     SELECT
       DiscountType                                                          AS discount_type,
@@ -1331,7 +1382,8 @@ export interface ObjectionAnalysisResponse {
 export async function getObjectionAnalysis(filters: QualityFilters): Promise<ObjectionAnalysisResponse> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
-  const baseParams = [startDate, endDate, ...cfParams];
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const baseParams = [startDate, endDate, ...cfParams, ...campParams];
 
   const BASE_FILTER = `
     AND cd.MobileNo IS NOT NULL AND cd.MobileNo != '' AND cd.MobileNo != '0'
@@ -1373,7 +1425,7 @@ export async function getObjectionAnalysis(filters: QualityFilters): Promise<Obj
       SUM(CASE WHEN COALESCE(cd.SaleDone, 0) = 1 THEN 1 ELSE 0 END)             AS successful_rebuttal,
       SUM(CASE WHEN COALESCE(cd.SaleDone, 0) = 1 THEN 1 ELSE 0 END)             AS sale_count
     FROM db_external.CallDetails cd
-    WHERE cd.CallDate BETWEEN ? AND ? ${cf}
+    WHERE cd.CallDate BETWEEN ? AND ? ${cf}${campF}
       ${BASE_FILTER}
     GROUP BY 1
     ORDER BY objection_count DESC
@@ -1393,7 +1445,7 @@ export async function getObjectionAnalysis(filters: QualityFilters): Promise<Obj
       SUM(CASE WHEN COALESCE(cd.SaleDone, 0) = 1 THEN 1 ELSE 0 END)             AS successful_rebuttal,
       SUM(CASE WHEN COALESCE(cd.SaleDone, 0) = 1 THEN 1 ELSE 0 END)             AS sale_count
     FROM db_external.CallDetails cd
-    WHERE cd.CallDate BETWEEN ? AND ? ${cf}
+    WHERE cd.CallDate BETWEEN ? AND ? ${cf}${campF}
       ${BASE_FILTER}
     GROUP BY 1
     ORDER BY objection_count DESC
@@ -1437,7 +1489,8 @@ export interface ClientKPISummary {
 export async function getAgentNPSCSAT(filters: QualityFilters): Promise<AgentNPSRow[]> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
-  const params = [startDate, endDate, ...cfParams];
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const params = [startDate, endDate, ...cfParams, ...campParams];
 
   const rows = await querySource<{
     agent: string; agentId: string; calls: number;
@@ -1465,9 +1518,9 @@ export async function getAgentNPSCSAT(filters: QualityFilters): Promise<AgentNPS
         1
       ) AS nps
     FROM db_external.CallDetails cd
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
     WHERE cd.Feedback IN ('Positive','Negative','Neutral')
-      AND cd.CallDate BETWEEN ? AND ? ${cf}
+      AND cd.CallDate BETWEEN ? AND ? ${cf}${campF}
       AND cd.AgentName IS NOT NULL AND cd.AgentName != ''
     GROUP BY cd.AgentName, am.AgentName
     HAVING calls >= 1
@@ -1565,7 +1618,8 @@ export async function getClientsSummary(filters: QualityFilters): Promise<Client
 export async function getAgentNPS(filters: QualityFilters): Promise<AgentNPSDetailRow[]> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
-  const params = [startDate, endDate, ...cfParams];
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const params = [startDate, endDate, ...cfParams, ...campParams];
 
   const rows = await querySource<{
     agent_id:   string;
@@ -1592,10 +1646,10 @@ export async function getAgentNPS(filters: QualityFilters): Promise<AgentNPSDeta
         2
       )                                                                                AS nps_score
     FROM db_external.CallDetails cd
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
     WHERE cd.Feedback IN ('Positive','Negative','Neutral')
       AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
-      AND cd.CallDate BETWEEN ? AND ? ${cf}
+      AND cd.CallDate BETWEEN ? AND ? ${cf}${campF}
     GROUP BY cd.AgentName, am.AgentName
     ORDER BY nps_score DESC
   `, params);
@@ -1797,19 +1851,20 @@ export async function getClapAnalysis(filters: QualityFilters): Promise<ClapAnal
 export async function getOutboundMissingAgents(filters: QualityFilters): Promise<OutboundMissingAgentRow[]> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
-  const params: (string | number)[] = [startDate, endDate, ...cfParams];
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const params: (string | number)[] = [startDate, endDate, ...cfParams, ...campParams];
 
   const rows = await querySource<{ agentId: string; total_count: number }>(`
     SELECT
       cd.AgentName       AS agentId,
       COUNT(*)           AS total_count
     FROM db_external.CallDetails cd
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
     WHERE cd.Feedback IN ('Positive','Negative','Neutral')
       AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
       AND cd.CallDate BETWEEN ? AND ?
       AND am.MasId IS NULL
-      ${cf}
+      ${cf}${campF}
     GROUP BY cd.AgentName
     ORDER BY total_count DESC
   `, params);
@@ -1822,7 +1877,7 @@ export async function getOutboundMissingAgents(filters: QualityFilters): Promise
 
 export async function insertAgentMaster(agent: { masId: string; agentName: string; lob: string }): Promise<void> {
   await getSourcePool().execute(
-    `INSERT INTO Shivamgiri.AgentMaster (MasId, AgentName, Lob)
+    `INSERT INTO db_masmis.AgentMaster (MasId, AgentName, Lob)
      VALUES (?, ?, ?)
      ON DUPLICATE KEY UPDATE AgentName = VALUES(AgentName), Lob = VALUES(Lob)`,
     [agent.masId, agent.agentName, agent.lob],
@@ -1879,7 +1934,7 @@ export async function getLOBOptions(filters: QualityFilters): Promise<LOBAgent[]
   const rows = await querySource<{ MasId: string; Lob: string }>(`
     SELECT DISTINCT am.MasId, COALESCE(am.Lob, 'Unknown') AS Lob
     FROM db_external.CallDetails cd
-    JOIN Shivamgiri.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
     WHERE cd.CallDate BETWEEN ? AND ?
       AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
       ${cf}
@@ -1927,6 +1982,11 @@ const COLUMN_BASED_CLIENTS: Record<string, string> = {
   // rows carry op_success/csp_success/offer_success/sale_done/product_offering/resolved_category
   // (1,288 calls, 540 sales, 385 category rows) — same column shape as the other retail clients.
   '487': 'Bla Bli Blu',
+  // Verified before adding: Housing Premium's CallDetails populate Opening (92/101), Offered
+  // (93/101) and ContactSettingContext (57/101) with a real, distinct real-estate-domain
+  // Category/SubCategory taxonomy (Service Requirement Issues, Pricing Concerns, Concern About
+  // Brokerage, Need Time to Decide, ...) — same column shape as the other column-based clients.
+  '419': 'Housing Premium',
 };
 
 // Reserved for excluding a specific stale/misconfigured campaign_id from a client's data, if one is

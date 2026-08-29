@@ -370,7 +370,7 @@ export async function getTopAgents(filters: CallMasterFilters, limit = 10) {
   const top = await querySource<{ agent: string; calls: number; quality: number; compliance: number; fatal_rate: number }>(`
     SELECT ${agentSelect}
     FROM db_audit.call_quality_assessment q
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? ${clientFilter.replace(/ClientId/g, 'q.ClientId')}
     GROUP BY q.User
     HAVING calls >= 3
@@ -381,7 +381,7 @@ export async function getTopAgents(filters: CallMasterFilters, limit = 10) {
   const bottom = await querySource<{ agent: string; calls: number; quality: number; compliance: number; fatal_rate: number }>(`
     SELECT ${agentSelect}
     FROM db_audit.call_quality_assessment q
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? ${clientFilter.replace(/ClientId/g, 'q.ClientId')}
     GROUP BY q.User
     HAVING calls >= 3
@@ -457,14 +457,24 @@ export const OUTBOUND_PARAMS = [
   { key: 'SensitiveWordUsed', label: 'No Sensitive Words' },
 ] as const;
 
+// A pitch parameter counts as compliant whenever the AI grader wrote ANYTHING meaningful for
+// it — a bare '1' flag or a free-text justification/transcript excerpt alike — and
+// non-compliant only when it's genuinely blank/absent (NULL / '' / 'None' / '0'). Some
+// clients' data has these columns as clean 0/1 flags; others (e.g. Housing Premium) have them
+// as full free-text pitch excerpts with no bare flag at all — this rule scores both correctly,
+// whereas a strict `=1` comparison silently zeroed out every free-text row.
+function obFlagCase(col: string): string {
+  return `(CASE WHEN ${col} IS NULL OR TRIM(${col}) = '' OR LOWER(TRIM(${col})) IN ('none','0') THEN 0 ELSE 1 END)`;
+}
+
 // Per-row outbound quality: 6 binary params + SensitiveWordUsed (passes when = 'none')
 const OB_QUALITY_EXPR = `(
-  (CASE WHEN Opening=1 OR Opening='1' THEN 1 ELSE 0 END) +
-  (CASE WHEN Offered=1 OR Offered='1' THEN 1 ELSE 0 END) +
-  (CASE WHEN ObjectionHandling=1 OR ObjectionHandling='1' THEN 1 ELSE 0 END) +
-  (CASE WHEN PrepaidPitch=1 OR PrepaidPitch='1' THEN 1 ELSE 0 END) +
-  (CASE WHEN UpsellingEfforts=1 OR UpsellingEfforts='1' THEN 1 ELSE 0 END) +
-  (CASE WHEN OfferUrgency=1 OR OfferUrgency='1' THEN 1 ELSE 0 END) +
+  ${obFlagCase('Opening')} +
+  ${obFlagCase('Offered')} +
+  ${obFlagCase('ObjectionHandling')} +
+  ${obFlagCase('PrepaidPitch')} +
+  ${obFlagCase('UpsellingEfforts')} +
+  ${obFlagCase('OfferUrgency')} +
   (CASE WHEN LOWER(COALESCE(SensitiveWordUsed,'none')) = 'none' THEN 1 ELSE 0 END)
 ) / 7.0 * 100`;
 
@@ -495,12 +505,12 @@ export async function getCXParameters(filters: CallMasterFilters) {
   // Outbound: 7 parameters (6 binary + SensitiveWordUsed)
   const [obRow] = await querySource<Record<string, number>>(`
     SELECT
-      ROUND(AVG(CASE WHEN Opening=1           OR Opening='1'           THEN 1 ELSE 0 END)*100,1) AS Opening,
-      ROUND(AVG(CASE WHEN Offered=1           OR Offered='1'           THEN 1 ELSE 0 END)*100,1) AS Offered,
-      ROUND(AVG(CASE WHEN ObjectionHandling=1 OR ObjectionHandling='1' THEN 1 ELSE 0 END)*100,1) AS ObjectionHandling,
-      ROUND(AVG(CASE WHEN PrepaidPitch=1      OR PrepaidPitch='1'      THEN 1 ELSE 0 END)*100,1) AS PrepaidPitch,
-      ROUND(AVG(CASE WHEN UpsellingEfforts=1  OR UpsellingEfforts='1'  THEN 1 ELSE 0 END)*100,1) AS UpsellingEfforts,
-      ROUND(AVG(CASE WHEN OfferUrgency=1      OR OfferUrgency='1'      THEN 1 ELSE 0 END)*100,1) AS OfferUrgency,
+      ROUND(AVG(${obFlagCase('Opening')})*100,1) AS Opening,
+      ROUND(AVG(${obFlagCase('Offered')})*100,1) AS Offered,
+      ROUND(AVG(${obFlagCase('ObjectionHandling')})*100,1) AS ObjectionHandling,
+      ROUND(AVG(${obFlagCase('PrepaidPitch')})*100,1) AS PrepaidPitch,
+      ROUND(AVG(${obFlagCase('UpsellingEfforts')})*100,1) AS UpsellingEfforts,
+      ROUND(AVG(${obFlagCase('OfferUrgency')})*100,1) AS OfferUrgency,
       ROUND(AVG(CASE WHEN LOWER(COALESCE(SensitiveWordUsed,'none')) = 'none' THEN 1 ELSE 0 END)*100,1) AS SensitiveWordUsed
     FROM db_external.CallDetails
     WHERE CallDate BETWEEN ? AND ? ${obFilter}
@@ -573,7 +583,7 @@ export async function getActiveAgentsList(filters: CallMasterFilters) {
       'Inbound' AS lob
     FROM db_audit.call_quality_assessment q
     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? ${ibCF}
     GROUP BY q.User
     ORDER BY calls DESC`;
@@ -587,7 +597,7 @@ export async function getActiveAgentsList(filters: CallMasterFilters) {
       'Outbound' AS lob
     FROM db_external.CallDetails d
     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = d.client_id
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = d.AgentName COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = d.AgentName COLLATE utf8mb4_unicode_ci
     WHERE d.CallDate BETWEEN ? AND ? ${obCF}
       AND d.AgentName IS NOT NULL AND d.AgentName != ''
     GROUP BY d.AgentName
@@ -830,7 +840,7 @@ export async function getOBAgentPerf(filters: CallMasterFilters, limit = 100) {
       ROUND(AVG(${OB_QUALITY_EXPR}), 2) AS ob_quality,
       ROUND(AVG(NULLIF(LengthSec,0)), 1) AS avg_talk_sec
     FROM db_external.CallDetails
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = AgentName COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = AgentName COLLATE utf8mb4_unicode_ci
     WHERE CallDate BETWEEN ? AND ? ${_obCf(clientIds)}
       AND AgentName IS NOT NULL AND AgentName != ''
     GROUP BY AgentName
@@ -906,12 +916,12 @@ export async function getOBQualityParams(filters: CallMasterFilters) {
   const { startDate, endDate, clientIds } = filters;
   const [row] = await querySource<Record<string, number>>(`
     SELECT
-      ROUND(AVG(CASE WHEN Opening=1           OR Opening='1'           THEN 1 ELSE 0 END)*100,1) AS Opening,
-      ROUND(AVG(CASE WHEN Offered=1           OR Offered='1'           THEN 1 ELSE 0 END)*100,1) AS Offered,
-      ROUND(AVG(CASE WHEN ObjectionHandling=1 OR ObjectionHandling='1' THEN 1 ELSE 0 END)*100,1) AS ObjectionHandling,
-      ROUND(AVG(CASE WHEN PrepaidPitch=1      OR PrepaidPitch='1'      THEN 1 ELSE 0 END)*100,1) AS PrepaidPitch,
-      ROUND(AVG(CASE WHEN UpsellingEfforts=1  OR UpsellingEfforts='1'  THEN 1 ELSE 0 END)*100,1) AS UpsellingEfforts,
-      ROUND(AVG(CASE WHEN OfferUrgency=1      OR OfferUrgency='1'      THEN 1 ELSE 0 END)*100,1) AS OfferUrgency,
+      ROUND(AVG(${obFlagCase('Opening')})*100,1) AS Opening,
+      ROUND(AVG(${obFlagCase('Offered')})*100,1) AS Offered,
+      ROUND(AVG(${obFlagCase('ObjectionHandling')})*100,1) AS ObjectionHandling,
+      ROUND(AVG(${obFlagCase('PrepaidPitch')})*100,1) AS PrepaidPitch,
+      ROUND(AVG(${obFlagCase('UpsellingEfforts')})*100,1) AS UpsellingEfforts,
+      ROUND(AVG(${obFlagCase('OfferUrgency')})*100,1) AS OfferUrgency,
       ROUND(AVG(CASE WHEN LOWER(COALESCE(SensitiveWordUsed,'none'))='none' THEN 1 ELSE 0 END)*100,1) AS SensitiveWordUsed
     FROM db_external.CallDetails
     WHERE CallDate BETWEEN ? AND ? ${_obCf(clientIds)}
@@ -955,12 +965,12 @@ const INBOUND_EXPORT_SQL: Record<string, string> = {
 };
 
 const OBQ_EXPORT_SQL = `ROUND((
-  (CASE WHEN d.Opening=1 OR d.Opening='1' THEN 1 ELSE 0 END) +
-  (CASE WHEN d.Offered=1 OR d.Offered='1' THEN 1 ELSE 0 END) +
-  (CASE WHEN d.ObjectionHandling=1 OR d.ObjectionHandling='1' THEN 1 ELSE 0 END) +
-  (CASE WHEN d.PrepaidPitch=1 OR d.PrepaidPitch='1' THEN 1 ELSE 0 END) +
-  (CASE WHEN d.UpsellingEfforts=1 OR d.UpsellingEfforts='1' THEN 1 ELSE 0 END) +
-  (CASE WHEN d.OfferUrgency=1 OR d.OfferUrgency='1' THEN 1 ELSE 0 END) +
+  ${obFlagCase('d.Opening')} +
+  ${obFlagCase('d.Offered')} +
+  ${obFlagCase('d.ObjectionHandling')} +
+  ${obFlagCase('d.PrepaidPitch')} +
+  ${obFlagCase('d.UpsellingEfforts')} +
+  ${obFlagCase('d.OfferUrgency')} +
   (CASE WHEN LOWER(COALESCE(d.SensitiveWordUsed,'none')) = 'none' THEN 1 ELSE 0 END)
 ) / 7.0 * 100, 1)`;
 
@@ -1068,7 +1078,7 @@ export async function getAgentAuditSummary(filters: CallMasterFilters) {
       SUM(CASE WHEN q.quality_percentage >= 60 AND q.quality_percentage < 80 THEN 1 ELSE 0 END) AS mq_count,
       SUM(CASE WHEN q.quality_percentage > 0  AND q.quality_percentage < 60 THEN 1 ELSE 0 END)  AS bq_count
     FROM db_audit.call_quality_assessment q
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? ${clientFilter.replace(/ClientId/g, 'q.ClientId')}
     GROUP BY q.User
     ORDER BY cq_score DESC
@@ -1115,7 +1125,7 @@ export async function getFatalAgentSummary(filters: CallMasterFilters, limit = 5
       ROUND(AVG(q.quality_percentage), 2)                                    AS avg_quality
     FROM db_audit.call_quality_assessment q
     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ? ${clientFilter}
     GROUP BY q.CallDate, q.User, q.ClientId, c.name
     ORDER BY q.CallDate DESC, q.User ASC

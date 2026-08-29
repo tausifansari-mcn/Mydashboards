@@ -436,7 +436,7 @@ export async function getAgentCXRanking(filters: CallMasterFilters) {
       ,2) AS trust_score,
       ROUND(SUM(CASE WHEN ${SALE} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS conv_pct
     FROM db_external.CallDetails d
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = d.AgentName COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = d.AgentName COLLATE utf8mb4_unicode_ci
     WHERE d.CallDate BETWEEN ? AND ?
       AND d.AgentName IS NOT NULL AND d.AgentName != ''
       ${_cf(clientIds)}
@@ -496,7 +496,7 @@ export async function getAgentNPSCSAT(filters: CallMasterFilters) {
            - SUM(CASE WHEN ${NEGATIVE} THEN 1 ELSE 0 END))*100.0/NULLIF(COUNT(*),0),1) AS nps,
       ROUND(SUM(CASE WHEN ${SALE} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1)        AS conv_pct
     FROM db_external.CallDetails d
-    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = d.AgentName COLLATE utf8mb4_unicode_ci
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = d.AgentName COLLATE utf8mb4_unicode_ci
     WHERE d.CallDate BETWEEN ? AND ?
       AND d.AgentName IS NOT NULL AND d.AgentName != ''
       ${_cf(clientIds)}

@@ -5,7 +5,7 @@ async function run() {
   const pool = getSourcePool();
 
   await pool.execute(`
-    CREATE TABLE IF NOT EXISTS Shivamgiri.AgentMaster (
+    CREATE TABLE IF NOT EXISTS db_masmis.AgentMaster (
       MasId       VARCHAR(20)  NOT NULL PRIMARY KEY,
       AgentName   VARCHAR(100) NOT NULL,
       Lob         VARCHAR(20)  NOT NULL DEFAULT '',
@@ -48,7 +48,7 @@ async function run() {
 
   for (const [masId, name, lob] of agents) {
     await pool.execute(
-      `INSERT INTO Shivamgiri.AgentMaster (MasId, AgentName, Lob)
+      `INSERT INTO db_masmis.AgentMaster (MasId, AgentName, Lob)
        VALUES (?, ?, ?)
        ON DUPLICATE KEY UPDATE AgentName = VALUES(AgentName), Lob = VALUES(Lob)`,
       [masId, name, lob],

@@ -45,6 +45,13 @@ function fmtDateTime(raw: string): string {
   return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+// Some clients' raw agent identifiers are "<Name> MCN-Extension(Extension-...)" rather than a
+// short code — this pulls just the human name out for use as the suggested display name.
+function parseAgentDisplayName(rawAgentId: string): string {
+  const cut = rawAgentId.search(/\s+MCN-/i);
+  return (cut === -1 ? rawAgentId : rawAgentId.slice(0, cut)).trim();
+}
+
 // ─── Export Button ────────────────────────────────────────────────────────────
 function ExportBtn({ onClick, title = 'Export CSV' }: { onClick: () => void; title?: string }) {
   return (
@@ -1320,6 +1327,21 @@ export default function ProcessQualityDashboard() {
 
   const agentQs = agentIdsParam ? `&agentIds=${encodeURIComponent(agentIdsParam)}` : '';
 
+  // Campaign filter — only meaningful for clients that run more than one campaign (e.g. Lawyer
+  // Panel's "regional" / "non_regional" split); the dropdown stays hidden otherwise.
+  const [campaigns, setCampaigns] = useState<string[]>([]);
+  const [selectedCampaign, setSelectedCampaign] = useState<string>('All');
+
+  useEffect(() => {
+    if (!clientId) return;
+    setSelectedCampaign('All');
+    api.get<{ data: string[] }>('/quality/raw-data/campaigns', { params: { clientId } })
+      .then(r => setCampaigns(r.data?.data ?? []))
+      .catch(() => setCampaigns([]));
+  }, [clientId]);
+
+  const campaignQs = selectedCampaign !== 'All' ? `&campaignId=${encodeURIComponent(selectedCampaign)}` : '';
+
   const [exportingProcess, setExportingProcess] = useState(false);
   const handleExportProcess = async () => {
     if (!clientId) return;
@@ -1345,21 +1367,30 @@ export default function ProcessQualityDashboard() {
     }
   };
 
+  // Lawyer Panel's Magical Script funnel isn't set up yet — hide that tab for it "for now" without
+  // touching the fixed slide-index scheme every other tab's data-loading effect keys off of.
+  const hideMagicalScript = clientId === '498';
+
   const [activeSlide, setActiveSlide] = useState(0);
   const loadedSlides = useRef<Record<number, boolean>>({});
+
+  // Land on Dashboard instead of the hidden Magical Script slide for clients it's turned off for.
+  useEffect(() => {
+    if (hideMagicalScript && activeSlide === 0) setActiveSlide(1);
+  }, [hideMagicalScript, activeSlide]);
 
   const fetchData = useCallback(() => {
     if (!clientId) return;
     setLoading(true);
     Promise.all([
-      api.get<{ data: KPIResponse }>(`/quality/kpis?startDate=${sd}&endDate=${ed}&clientId=${clientId}${agentQs}`),
+      api.get<{ data: KPIResponse }>(`/quality/kpis?startDate=${sd}&endDate=${ed}&clientId=${clientId}${agentQs}${campaignQs}`),
       api.get<{ data: { client_id: number; client_name: string; calls: number }[] }>(`/quality/clients?startDate=${sd}&endDate=${ed}`),
     ]).then(([kR, cR]) => {
       setKpi(kR.data?.data ?? null);
       const match = (cR.data?.data ?? []).find(c => String(c.client_id) === clientId);
       setClientName(match?.client_name ?? `Process #${clientId}`);
     }).catch(() => {}).finally(() => setLoading(false));
-  }, [clientId, sd, ed, agentQs]);
+  }, [clientId, sd, ed, agentQs, campaignQs]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -1392,7 +1423,7 @@ export default function ProcessQualityDashboard() {
   const openSaleDoneDrill = () => {
     if (!clientId) return;
     setSaleDoneDrill({ open: true, loading: true, title: 'Sale Done — Call Details', rows: [] });
-    api.get<{ data: SaleDoneCallRow[] }>(`/quality/sale-done-calls?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+    api.get<{ data: SaleDoneCallRow[] }>(`/quality/sale-done-calls?startDate=${sd}&endDate=${ed}&clientId=${clientId}${campaignQs}`)
       .then(r => setSaleDoneDrill({ open: true, loading: false, title: 'Sale Done — Call Details', rows: r.data?.data ?? [] }))
       .catch(() => setSaleDoneDrill({ open: true, loading: false, title: 'Sale Done — Call Details', rows: [] }));
   };
@@ -1432,7 +1463,7 @@ export default function ProcessQualityDashboard() {
   };
 
   const refetchMagicalScript = useCallback(() => {
-    if (!clientId) return;
+    if (!clientId || hideMagicalScript) return;
     setMagicalLoading(true);
     api.get<{ data: MagicalScriptData }>(`/quality/magical-script?startDate=${sd}&endDate=${ed}&clientId=${clientId}${agentQs}`)
       .then(r => setMagicalScript(r.data?.data ?? null))
@@ -1515,31 +1546,36 @@ export default function ProcessQualityDashboard() {
       .catch(() => {});
   };
 
+  // Date range or campaign filter changing invalidates every already-visited slide's cached data,
+  // so switching either one actually refreshes a tab you've already been to instead of silently
+  // keeping stale numbers on screen.
+  useEffect(() => { loadedSlides.current = {}; }, [clientId, sd, ed, campaignQs]);
+
   // Lazy load data per slide (Magical Script — now slide 0 — loads eagerly above instead)
   useEffect(() => {
     if (!clientId) return;
     if (activeSlide === 2 && !loadedSlides.current[2]) {
       loadedSlides.current[2] = true;
-      api.get<{ data: ObjectionAnalysisResponse }>(`/quality/objection-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      api.get<{ data: ObjectionAnalysisResponse }>(`/quality/objection-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}${campaignQs}`)
         .then(r => setObjectionAnalysis(r.data?.data ?? null))
         .catch(() => setObjectionAnalysis(null));
     }
     if (activeSlide === 3 && !loadedSlides.current[3]) {
       loadedSlides.current[3] = true;
-      api.get<{ data: AgentNPSRow[] }>(`/quality/agent-nps-csat?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      api.get<{ data: AgentNPSRow[] }>(`/quality/agent-nps-csat?startDate=${sd}&endDate=${ed}&clientId=${clientId}${campaignQs}`)
         .then(r => setAgentNPS(r.data?.data ?? []))
         .catch(() => setAgentNPS([]));
-      api.get<{ data: OutboundMissingAgentRow[] }>(`/quality/missing-agents?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      api.get<{ data: OutboundMissingAgentRow[] }>(`/quality/missing-agents?startDate=${sd}&endDate=${ed}&clientId=${clientId}${campaignQs}`)
         .then(r => setMissingAgents(r.data?.data ?? []))
         .catch(() => setMissingAgents([]));
     }
     if (activeSlide === 4 && !loadedSlides.current[4]) {
       loadedSlides.current[4] = true;
-      api.get<{ data: DetailAnalysisResponse }>(`/quality/detail-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+      api.get<{ data: DetailAnalysisResponse }>(`/quality/detail-analysis?startDate=${sd}&endDate=${ed}&clientId=${clientId}${campaignQs}`)
         .then(r => setDetailAnalysis(r.data?.data ?? null))
         .catch(() => setDetailAnalysis(null));
     }
-  }, [activeSlide, clientId, sd, ed]);
+  }, [activeSlide, clientId, sd, ed, campaignQs]);
 
   const fmt = (n: number) => n.toLocaleString();
   const cst = kpi?.cst;
@@ -1607,6 +1643,20 @@ export default function ProcessQualityDashboard() {
           <label className="text-[11px] text-slate-500 font-medium">To</label>
           <input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)}
             className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all" />
+          {campaigns.length > 1 && (
+            <>
+              <div className="w-px h-4 bg-slate-200 mx-0.5" />
+              <label className="text-[11px] text-slate-500 font-medium">Campaign</label>
+              <select value={selectedCampaign} onChange={e => setSelectedCampaign(e.target.value)}
+                className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all"
+                style={{ color: '#0f172a' }}>
+                <option value="All" style={{ color: '#0f172a' }}>All Campaigns</option>
+                {campaigns.map(c => (
+                  <option key={c} value={c} style={{ color: '#0f172a' }}>{c}</option>
+                ))}
+              </select>
+            </>
+          )}
           {isBellavita && lobOptions.length > 0 && (
             <>
               <div className="w-px h-4 bg-slate-200 mx-0.5" />
@@ -1668,7 +1718,7 @@ export default function ProcessQualityDashboard() {
                         <td className="py-2 pr-3 text-center text-slate-700">{ma.total_count}</td>
                         <td className="py-2 pr-3">
                           <input type="text" placeholder="Enter display name"
-                            value={addAgentForm[ma.agentId]?.name ?? ''}
+                            value={addAgentForm[ma.agentId]?.name ?? parseAgentDisplayName(ma.agentId)}
                             onChange={e => setAddAgentForm(prev => ({ ...prev, [ma.agentId]: { ...prev[ma.agentId], name: e.target.value, lob: prev[ma.agentId]?.lob ?? 'Outbound' } }))}
                             className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-amber-400" />
                         </td>
@@ -1680,18 +1730,19 @@ export default function ProcessQualityDashboard() {
                         </td>
                         <td className="py-2 text-center">
                           <button
-                            disabled={!addAgentForm[ma.agentId]?.name?.trim() || addAgentSaving[ma.agentId]}
+                            disabled={!(addAgentForm[ma.agentId]?.name ?? parseAgentDisplayName(ma.agentId)).trim() || addAgentSaving[ma.agentId]}
                             onClick={async () => {
-                              const form = addAgentForm[ma.agentId];
-                              if (!form?.name?.trim()) return;
+                              const name = (addAgentForm[ma.agentId]?.name ?? parseAgentDisplayName(ma.agentId)).trim();
+                              if (!name) return;
+                              const lob = addAgentForm[ma.agentId]?.lob?.trim() || 'Outbound';
                               setAddAgentSaving(prev => ({ ...prev, [ma.agentId]: true }));
                               try {
                                 await api.post('/quality/agent-master', {
                                   agentId: ma.agentId,
-                                  agentName: form.name.trim(),
-                                  lob: form.lob?.trim() || 'Outbound',
+                                  agentName: name,
+                                  lob,
                                 });
-                                setAgentNPS(prev => prev.map(r => r.agentId === ma.agentId ? { ...r, agentName: form.name.trim() } : r));
+                                setAgentNPS(prev => prev.map(r => r.agentId === ma.agentId ? { ...r, agentName: name } : r));
                                 setMissingAgents(prev => prev.filter(a => a.agentId !== ma.agentId));
                                 setAddAgentForm(prev => { const n = { ...prev }; delete n[ma.agentId]; return n; });
                               } catch { alert('Failed to save agent. Please try again.'); }
@@ -1712,12 +1763,21 @@ export default function ProcessQualityDashboard() {
 
         {/* ─── Pill tab navigation ── */}
         {(() => {
-          const SLIDES = ['✨ Magical Script', 'Dashboard', 'Missed Opportunity', 'NPS & CSAT', 'Detail Analysis', 'Fraud Call', ...(canViewRawData ? ['Raw Data'] : [])];
+          const ALL_SLIDES: { id: number; label: string }[] = [
+            { id: 0, label: '✨ Magical Script' },
+            { id: 1, label: 'Dashboard' },
+            { id: 2, label: 'Missed Opportunity' },
+            { id: 3, label: 'NPS & CSAT' },
+            { id: 4, label: 'Detail Analysis' },
+            { id: 5, label: 'Fraud Call' },
+            ...(canViewRawData ? [{ id: 6, label: 'Raw Data' }] : []),
+          ];
+          const SLIDES = hideMagicalScript ? ALL_SLIDES.filter(s => s.id !== 0) : ALL_SLIDES;
           return (
             <div className="pill-tabs w-fit">
-              {SLIDES.map((label, i) => (
-                <button key={i} onClick={() => setActiveSlide(i)}
-                  className={`pill-tab ${activeSlide === i ? 'pill-tab-active' : ''}`}>
+              {SLIDES.map(({ id, label }) => (
+                <button key={id} onClick={() => setActiveSlide(id)}
+                  className={`pill-tab ${activeSlide === id ? 'pill-tab-active' : ''}`}>
                   {label}
                 </button>
               ))}
@@ -3769,7 +3829,7 @@ export default function ProcessQualityDashboard() {
         )}
 
         {/* ─── Slide 0: Magical Script ───────────────────────────────────── */}
-        {activeSlide === 0 && (
+        {activeSlide === 0 && !hideMagicalScript && (
           <div className="mt-4">
             <div className="print-area">
               {magicalLoading ? (
@@ -3796,13 +3856,15 @@ export default function ProcessQualityDashboard() {
 
         {/* ─── Slide 5: Fraud Call ───────────────────────────────────────── */}
         {activeSlide === 5 && clientId && (
-          <FraudCallTab clientId={clientId} sd={sd} ed={ed} apiPath="/quality/fraud-calls" />
+          <FraudCallTab clientId={clientId} sd={sd} ed={ed} apiPath="/quality/fraud-calls"
+            campaignId={selectedCampaign !== 'All' ? selectedCampaign : undefined} />
         )}
 
         {/* ─── Slide 6: Raw Data ─────────────────────────────────────────── */}
         {activeSlide === 6 && clientId && canViewRawData && (
           <RawDataTab clientId={clientId} apiPath="/quality/raw-data" hasRecording hasTranscript wideColumns
-            transcriptApiPath="/quality/customer-interaction-insights/transcript" transcriptParam="callId" />
+            transcriptApiPath="/quality/customer-interaction-insights/transcript" transcriptParam="callId"
+            campaignId={selectedCampaign !== 'All' ? selectedCampaign : undefined} />
         )}
 
         <MagicalScriptEditorModal

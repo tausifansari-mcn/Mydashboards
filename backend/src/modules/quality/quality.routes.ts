@@ -26,6 +26,7 @@ router.get('/magical-script-category-sale-done', ctrl.getMagicalCategorySaleDone
 router.get('/magical-script-category-call-end', ctrl.getMagicalCategoryCallEndCalls);
 router.get('/magical-script-stage-call-end',     ctrl.getMagicalStageCallEndCalls);
 router.get('/raw-data',                          requireDashboardAccess('raw-data'), ctrl.getRawCallData);
+router.get('/raw-data/campaigns',                requireDashboardAccess('raw-data'), ctrl.getRawDataCampaigns);
 router.get('/detail-analysis',    ctrl.getDetailAnalysis);
 router.get('/customer-interaction-insights', ctrl.getCustomerInteractionInsights);
 router.get('/customer-interaction-insights/drill', ctrl.getOutboundInsightDrill);

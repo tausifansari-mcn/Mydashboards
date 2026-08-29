@@ -55,8 +55,8 @@ function fmtDT(raw: string): string {
   return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-export default function FraudCallTab({ clientId, sd, ed, apiPath = '/inbound-quality/fraud-calls', agentMasterPath = '/inbound-quality/agent-master' }: {
-  clientId: string; sd: string; ed: string; apiPath?: string; agentMasterPath?: string;
+export default function FraudCallTab({ clientId, sd, ed, apiPath = '/inbound-quality/fraud-calls', agentMasterPath = '/inbound-quality/agent-master', campaignId }: {
+  clientId: string; sd: string; ed: string; apiPath?: string; agentMasterPath?: string; campaignId?: string;
 }) {
   const [data,      setData]      = useState<FraudCallSummary | null>(null);
   const [loading,   setLoading]   = useState(true);
@@ -82,12 +82,12 @@ export default function FraudCallTab({ clientId, sd, ed, apiPath = '/inbound-qua
   const fetchData = useCallback(() => {
     setLoading(true);
     api.get<{ data: FraudCallSummary }>(
-      `${apiPath}?clientId=${clientId}&startDate=${sd}&endDate=${ed}`
+      `${apiPath}?clientId=${clientId}&startDate=${sd}&endDate=${ed}${campaignId ? `&campaignId=${encodeURIComponent(campaignId)}` : ''}`
     )
       .then(r => setData(r.data?.data ?? null))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, [clientId, sd, ed, apiPath]);
+  }, [clientId, sd, ed, apiPath, campaignId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => () => { window.speechSynthesis?.cancel(); }, []);
