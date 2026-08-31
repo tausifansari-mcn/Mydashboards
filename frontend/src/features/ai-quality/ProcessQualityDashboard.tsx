@@ -1298,6 +1298,11 @@ export default function ProcessQualityDashboard() {
   const [ciDrill, setCiDrill] = useState<{ title: string; category: string; leads: OutboundInsightLead[]; loading: boolean } | null>(null);
   const [ciTranscript, setCiTranscript] = useState<{ loading: boolean; data: OutboundCallTranscript | null } | null>(null);
   const [saleDoneDrill, setSaleDoneDrill] = useState<{ open: boolean; loading: boolean; title: string; rows: SaleDoneCallRow[] } | null>(null);
+  const [moCategoryDrill, setMoCategoryDrill] = useState<{
+    open: boolean; loading: boolean; category: string;
+    subCategoryBreakdown: { subCategory: string; count: number }[];
+    objectionBreakdown: { objectionCategory: string; objectionSubCategory: string; count: number }[];
+  } | null>(null);
   const [magicalScript, setMagicalScript] = useState<MagicalScriptData | null>(null);
   const [magicalLoading, setMagicalLoading] = useState(false);
   const [bellaProductModal, setBellaProductModal] = useState(false);
@@ -1426,6 +1431,20 @@ export default function ProcessQualityDashboard() {
     api.get<{ data: SaleDoneCallRow[] }>(`/quality/sale-done-calls?startDate=${sd}&endDate=${ed}&clientId=${clientId}${campaignQs}`)
       .then(r => setSaleDoneDrill({ open: true, loading: false, title: 'Sale Done — Call Details', rows: r.data?.data ?? [] }))
       .catch(() => setSaleDoneDrill({ open: true, loading: false, title: 'Sale Done — Call Details', rows: [] }));
+  };
+
+  const openMoCategoryDrill = (category: string) => {
+    if (!clientId) return;
+    setMoCategoryDrill({ open: true, loading: true, category, subCategoryBreakdown: [], objectionBreakdown: [] });
+    api.get<{ data: { category: string; subCategoryBreakdown: { subCategory: string; count: number }[]; objectionBreakdown: { objectionCategory: string; objectionSubCategory: string; count: number }[] } }>(
+      `/quality/missed-opportunity-category-detail?startDate=${sd}&endDate=${ed}&clientId=${clientId}&category=${encodeURIComponent(category)}${agentQs}${campaignQs}`
+    )
+      .then(r => setMoCategoryDrill({
+        open: true, loading: false, category,
+        subCategoryBreakdown: r.data?.data?.subCategoryBreakdown ?? [],
+        objectionBreakdown: r.data?.data?.objectionBreakdown ?? [],
+      }))
+      .catch(() => setMoCategoryDrill({ open: true, loading: false, category, subCategoryBreakdown: [], objectionBreakdown: [] }));
   };
 
   const openCategorySaleDoneDrill = (category: string, variant: 'bellavita' | 'generic') => {
@@ -2435,7 +2454,9 @@ export default function ProcessQualityDashboard() {
                       const color = OBJ_CAT_COLORS[s.name] ?? COLORS[i % COLORS.length];
                       const pct = total > 0 ? ((s.value / total) * 100).toFixed(1) : '0.0';
                       return (
-                        <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-black/20">
+                        <div key={i} onClick={() => openMoCategoryDrill(s.name)}
+                          className="flex items-center gap-3 p-3 rounded-lg bg-black/20 cursor-pointer hover:bg-black/30 transition-colors"
+                          title="Click for category drill-down">
                           <span className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: color }} />
                           <div className="flex-1 min-w-0">
                             <p className="text-[11px] font-semibold text-slate-900 truncate">{s.name}</p>
@@ -2481,7 +2502,7 @@ export default function ProcessQualityDashboard() {
                             dataKey="value" nameKey="name"
                           >
                             {opp.opportunityLoss.map((s, i) => (
-                              <Cell key={i} fill={s.name === 'Workable' ? '#22C55E' : '#EF4444'} />
+                              <Cell key={i} fill={s.name === 'Has Objection Category Logged' ? '#22C55E' : '#EF4444'} />
                             ))}
                           </Pie>
                           <Tooltip contentStyle={TT} formatter={(v: unknown) => [Number(v).toLocaleString()]} />
@@ -2491,7 +2512,7 @@ export default function ProcessQualityDashboard() {
                         {opp.opportunityLoss.map((s, i) => {
                           const total = opp.opportunityLoss.reduce((a, b) => a + b.value, 0);
                           const pct = total > 0 ? ((s.value / total) * 100).toFixed(1) : '0.0';
-                          const color = s.name === 'Workable' ? '#22C55E' : '#EF4444';
+                          const color = s.name === 'Has Objection Category Logged' ? '#22C55E' : '#EF4444';
                           return (
                             <div key={i} className="flex items-center gap-3">
                               <span className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: color }} />
@@ -2537,7 +2558,8 @@ export default function ProcessQualityDashboard() {
                         };
                         const color = catColors[row.category] ?? '#64748B';
                         return (
-                          <tr key={i} className="hover:bg-slate-50 transition-colors">
+                          <tr key={i} onClick={() => openMoCategoryDrill(row.category)}
+                            className="hover:bg-slate-50 transition-colors cursor-pointer" title="Click for category drill-down">
                             <td className="px-4 py-2.5">
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
                                 style={{ backgroundColor: `${color}20`, color }}>
@@ -3825,6 +3847,73 @@ export default function ProcessQualityDashboard() {
             <div className="mt-4 flex justify-end">
               <ExportBtn onClick={() => downloadCSV(pqDrillModal.rows, `${pqDrillModal.title.replace(/\s+/g, '-').toLowerCase()}.csv`)} />
             </div>
+          </PQDrillModal>
+        )}
+
+        {/* ── Missed Opportunity Category Drill-down Modal ─────────────────── */}
+        {moCategoryDrill?.open && (
+          <PQDrillModal title={`Missed Opportunity — ${moCategoryDrill.category}`} accent="#A78BFA" onClose={() => setMoCategoryDrill(null)}>
+            {moCategoryDrill.loading ? (
+              <p className="text-xs text-slate-500 py-10 text-center">Loading…</p>
+            ) : (
+              <div className="space-y-6">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">By Sub Category</p>
+                    <ExportBtn onClick={() => downloadCSV(moCategoryDrill.subCategoryBreakdown.map(r => ({ 'Sub Category': r.subCategory, Count: r.count })), 'mo-subcategory.csv')} />
+                  </div>
+                  <div className="overflow-auto rounded-lg border border-slate-200" style={{ maxHeight: '28vh' }}>
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-white">
+                        <tr className="border-b border-slate-200">
+                          <th className="py-2.5 px-4 text-left text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Sub Category</th>
+                          <th className="py-2.5 px-4 text-right text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Count</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {moCategoryDrill.subCategoryBreakdown.length > 0 ? moCategoryDrill.subCategoryBreakdown.map((r, i) => (
+                          <tr key={i}>
+                            <td className="py-2.5 px-4 text-slate-700">{r.subCategory}</td>
+                            <td className="py-2.5 px-4 text-right font-semibold text-slate-900 tabular-nums">{r.count.toLocaleString()}</td>
+                          </tr>
+                        )) : (
+                          <tr><td colSpan={2} className="py-8 text-center text-slate-500">No data</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">By Customer Objection Category / Sub Category</p>
+                    <ExportBtn onClick={() => downloadCSV(moCategoryDrill.objectionBreakdown.map(r => ({ 'Objection Category': r.objectionCategory, 'Objection Sub Category': r.objectionSubCategory, Count: r.count })), 'mo-objection-breakdown.csv')} />
+                  </div>
+                  <div className="overflow-auto rounded-lg border border-slate-200" style={{ maxHeight: '28vh' }}>
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-white">
+                        <tr className="border-b border-slate-200">
+                          <th className="py-2.5 px-4 text-left text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Objection Category</th>
+                          <th className="py-2.5 px-4 text-left text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Objection Sub Category</th>
+                          <th className="py-2.5 px-4 text-right text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Count</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {moCategoryDrill.objectionBreakdown.length > 0 ? moCategoryDrill.objectionBreakdown.map((r, i) => (
+                          <tr key={i}>
+                            <td className="py-2.5 px-4 text-slate-700">{r.objectionCategory}</td>
+                            <td className="py-2.5 px-4 text-slate-700">{r.objectionSubCategory}</td>
+                            <td className="py-2.5 px-4 text-right font-semibold text-slate-900 tabular-nums">{r.count.toLocaleString()}</td>
+                          </tr>
+                        )) : (
+                          <tr><td colSpan={3} className="py-8 text-center text-slate-500">No data</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
           </PQDrillModal>
         )}
 

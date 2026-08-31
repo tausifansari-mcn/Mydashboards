@@ -32,6 +32,30 @@ const CQ_PARAM_COLS = [
 ];
 const CQ_SCORE_SQL = `(${CQ_PARAM_COLS.map(c => `IF(q.${c} = 1, 1, 0)`).join(' + ')}) / ${CQ_PARAM_COLS.length}`;
 
+// ─── Fatal call definition ─────────────────────────────────────────────────────
+// A call is FATAL when ALL SIX of these compliance-critical parameters scored 0 at once (an AND
+// across all six — matching how Excel's multi-column AutoFilter compounds several "= 0" column
+// filters, which is how this definition was validated: 18 fatal calls for Bellavita in August
+// 2026, confirmed by both this AND query and the Excel filter independently). Replaces the
+// previous "quality_percentage equals 0" definition (which only caught calls whose average
+// happened to bottom out at exactly 0) everywhere a call is counted, filtered, or classified as
+// fatal.
+const FATAL_PARAM_COLS = [
+  'address_recorded_completely',
+  'correct_and_complete_information',
+  'case_escalated_correctly',
+  'customer_concern_acknowledged',
+  'proper_hold_procedure',
+  'proper_transfer_and_language',
+];
+function fatalCheckSql(alias = 'q'): string {
+  const p = alias ? `${alias}.` : '';
+  return `(${FATAL_PARAM_COLS.map(c => `${p}${c} = 0`).join(' AND ')})`;
+}
+function noFatalCheckSql(alias = 'q'): string {
+  return `NOT ${fatalCheckSql(alias)}`;
+}
+
 // ─── Negative signal categorisation CASE expression ──────────────────────────
 // First: exact matches (highest priority, first match wins in SQL CASE)
 // Then:  LIKE-based keyword fallbacks for unrecognised values
@@ -362,12 +386,12 @@ export async function getInboundClients(filters: InboundQualityFilters): Promise
       COALESCE(c.name, CONCAT('Client ', q.ClientId))                             AS client_name,
       COUNT(*)                                                                     AS audit_count,
       ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                         AS cq_score,
-      ROUND(AVG(CASE WHEN q.quality_percentage > 0 THEN ${CQ_SCORE_SQL} END) * 100, 1) AS cq_score_no_fatal,
+      ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100, 1) AS cq_score_no_fatal,
       SUM(CASE WHEN q.quality_percentage >= 98                                  THEN 1 ELSE 0 END) AS excellent,
       SUM(CASE WHEN q.quality_percentage >= 90 AND q.quality_percentage < 98    THEN 1 ELSE 0 END) AS good,
       SUM(CASE WHEN q.quality_percentage >= 85 AND q.quality_percentage < 90    THEN 1 ELSE 0 END) AS average_count,
       SUM(CASE WHEN q.quality_percentage > 0  AND q.quality_percentage < 85     THEN 1 ELSE 0 END) AS below_average,
-      SUM(CASE WHEN q.quality_percentage = 0                                    THEN 1 ELSE 0 END) AS fatal_count
+      SUM(CASE WHEN ${fatalCheckSql('q')}                                    THEN 1 ELSE 0 END) AS fatal_count
     FROM db_audit.call_quality_assessment q
     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
     WHERE q.CallDate BETWEEN ? AND ?
@@ -467,12 +491,12 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
       ${clientNameExpr}                                                             AS client_name,
       COUNT(*)                                                                     AS audit_count,
       ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                         AS cq_score,
-      ROUND(AVG(CASE WHEN q.quality_percentage > 0 THEN ${CQ_SCORE_SQL} END) * 100, 1) AS cq_score_no_fatal,
+      ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100, 1) AS cq_score_no_fatal,
       SUM(CASE WHEN q.quality_percentage >= 98                                  THEN 1 ELSE 0 END) AS excellent,
       SUM(CASE WHEN q.quality_percentage >= 90 AND q.quality_percentage < 98    THEN 1 ELSE 0 END) AS good,
       SUM(CASE WHEN q.quality_percentage >= 85 AND q.quality_percentage < 90    THEN 1 ELSE 0 END) AS average_count,
       SUM(CASE WHEN q.quality_percentage > 0  AND q.quality_percentage < 85     THEN 1 ELSE 0 END) AS below_average,
-      SUM(CASE WHEN q.quality_percentage = 0                                    THEN 1 ELSE 0 END) AS fatal_count,
+      SUM(CASE WHEN ${fatalCheckSql('q')}                                    THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
         ELSE IF(q.call_answered_within_5_seconds = 1, 1, 0) END
@@ -585,9 +609,9 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
       END                                                                         AS category,
       COUNT(*)                                                                    AS audit_count,
       ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                          AS score_pct,
-      SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END)                   AS fatal_count,
+      SUM(CASE WHEN ${fatalCheckSql()} THEN 1 ELSE 0 END)                   AS fatal_count,
       ROUND(
-        SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) * 100.0
+        SUM(CASE WHEN ${fatalCheckSql()} THEN 1 ELSE 0 END) * 100.0
         / NULLIF(COUNT(*), 0), 1
       )                                                                           AS fatal_pct
     FROM db_audit.call_quality_assessment q
@@ -2576,20 +2600,20 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
       SELECT
         COUNT(*) AS audit_count,
         ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS cq_score,
-        SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END) AS fatal_count,
-        ROUND(SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS fatal_pct,
-        SUM(CASE WHEN TRIM(q.scenario)='Query'     AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS query_fatal,
-        SUM(CASE WHEN TRIM(q.scenario)='Complaint' AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS complaint_fatal,
-        SUM(CASE WHEN TRIM(q.scenario)='Request'   AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS request_fatal,
-        SUM(CASE WHEN TRIM(q.scenario)='Sale Done' AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS sale_done_fatal
+        SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
+        ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS fatal_pct,
+        SUM(CASE WHEN TRIM(q.scenario)='Query'     AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS query_fatal,
+        SUM(CASE WHEN TRIM(q.scenario)='Complaint' AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS complaint_fatal,
+        SUM(CASE WHEN TRIM(q.scenario)='Request'   AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS request_fatal,
+        SUM(CASE WHEN TRIM(q.scenario)='Sale Done' AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS sale_done_fatal
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${clientFilter}
     `, params),
 
     querySource<{ agent_name: string; audit_count: number; fatal_count: number; fatal_pct: number | null }>(`
       SELECT COALESCE(am.AgentName, q.User) AS agent_name, COUNT(*) AS audit_count,
-        SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
-        ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS fatal_pct
+        SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
+        ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS fatal_pct
       FROM db_audit.call_quality_assessment q
       LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
@@ -2604,10 +2628,10 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
       SELECT
         DATE_FORMAT(q.CallDate,'%Y-%m-%d') AS call_date,
         COUNT(*) AS total_count,
-        SUM(CASE WHEN q.quality_percentage=0 AND q.scenario IS NOT NULL AND TRIM(q.scenario)!='' THEN 1 ELSE 0 END) AS total_fatal,
-        SUM(CASE WHEN TRIM(q.scenario)='Query'     AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS query_fatal,
-        SUM(CASE WHEN TRIM(q.scenario)='Complaint' AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS complaint_fatal,
-        SUM(CASE WHEN TRIM(q.scenario)='Request'   AND q.quality_percentage=0 THEN 1 ELSE 0 END) AS request_fatal
+        SUM(CASE WHEN ${fatalCheckSql('q')} AND q.scenario IS NOT NULL AND TRIM(q.scenario)!='' THEN 1 ELSE 0 END) AS total_fatal,
+        SUM(CASE WHEN TRIM(q.scenario)='Query'     AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS query_fatal,
+        SUM(CASE WHEN TRIM(q.scenario)='Complaint' AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS complaint_fatal,
+        SUM(CASE WHEN TRIM(q.scenario)='Request'   AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS request_fatal
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL
         AND q.scenario IS NOT NULL AND TRIM(q.scenario) != ''
@@ -2629,15 +2653,15 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
           WHEN DAYOFMONTH(q.CallDate) BETWEEN 15 AND 21 THEN 'Week 3'
           ELSE 'Week 4'
         END AS week_label,
-        ROUND(SUM(CASE WHEN TRIM(q.scenario)='Query'     AND q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/
+        ROUND(SUM(CASE WHEN TRIM(q.scenario)='Query'     AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/
               NULLIF(SUM(CASE WHEN TRIM(q.scenario)='Query'     THEN 1 ELSE 0 END),0),0) AS query_fatal_pct,
-        ROUND(SUM(CASE WHEN TRIM(q.scenario)='Complaint' AND q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/
+        ROUND(SUM(CASE WHEN TRIM(q.scenario)='Complaint' AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/
               NULLIF(SUM(CASE WHEN TRIM(q.scenario)='Complaint' THEN 1 ELSE 0 END),0),0) AS complaint_fatal_pct,
-        ROUND(SUM(CASE WHEN TRIM(q.scenario)='Request'   AND q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/
+        ROUND(SUM(CASE WHEN TRIM(q.scenario)='Request'   AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/
               NULLIF(SUM(CASE WHEN TRIM(q.scenario)='Request'   THEN 1 ELSE 0 END),0),0) AS request_fatal_pct,
-        ROUND(SUM(CASE WHEN TRIM(q.scenario)='Sale Done' AND q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/
+        ROUND(SUM(CASE WHEN TRIM(q.scenario)='Sale Done' AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/
               NULLIF(SUM(CASE WHEN TRIM(q.scenario)='Sale Done' THEN 1 ELSE 0 END),0),0) AS sale_done_fatal_pct,
-        SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS total_fatal
+        SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS total_fatal
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${clientFilter}
       GROUP BY week_label ORDER BY week_label ASC
@@ -2652,8 +2676,8 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
       SELECT
         COALESCE(am.AgentName, q.User) AS agent_name, COUNT(*) AS audit_count,
         ROUND(AVG(${CQ_SCORE_SQL}) * 100,1) AS cq_score,
-        SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
-        ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
+        SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
+        ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
         ROUND(SUM(CASE WHEN q.quality_percentage>0 AND q.quality_percentage<85  THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS below_avg_pct,
         ROUND(SUM(CASE WHEN q.quality_percentage>=85 AND q.quality_percentage<90 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS avg_pct,
         ROUND(SUM(CASE WHEN q.quality_percentage>=90 AND q.quality_percentage<98 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS good_pct,
@@ -2766,8 +2790,8 @@ export async function getDetailAnalysis(filters: InboundQualityFilters): Promise
     }>(`
       SELECT COUNT(*) AS audit_count,
         ROUND(AVG(${CQ_SCORE_SQL}) * 100,1) AS cq_score,
-        SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
-        ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
+        SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
+        ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
         SUM(CASE WHEN TRIM(q.scenario)='Query'     THEN 1 ELSE 0 END) AS query_count,
         SUM(CASE WHEN TRIM(q.scenario)='Complaint' THEN 1 ELSE 0 END) AS complaint_count,
         SUM(CASE WHEN TRIM(q.scenario)='Request'   THEN 1 ELSE 0 END) AS request_count,
@@ -2954,8 +2978,8 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
       IFNULL(NULLIF(TRIM(q.Campaign),''),'-')      AS tq_mq_bq,
       COUNT(*)                                     AS audit_count,
       ROUND(AVG(${CQ_SCORE_SQL}) * 100,1)           AS cq_score,
-      SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
-      ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
+      SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
+      ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
       ${_OPENING}    AS opening_skill,
       ${_SOFT}       AS soft_skill,
       ${_HOLD}       AS hold_procedure,
@@ -3414,8 +3438,8 @@ export async function getWeekWiseQuality(filters: InboundQualityFilters & { scen
       END                                              AS week_label,
       COUNT(*)                                         AS audit_count,
       ROUND(AVG(${CQ_SCORE_SQL}) * 100,1)               AS cq_score,
-      SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
-      ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
+      SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
+      ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
       ${_OPENING}    AS opening_skill,
       ${_SOFT}       AS soft_skill,
       ${_HOLD}       AS hold_procedure,
@@ -3461,8 +3485,8 @@ export async function getDayWiseQuality(filters: InboundQualityFilters & { scena
       DATE_FORMAT(q.CallDate,'%Y-%m-%d')           AS call_date,
       COUNT(*)                                     AS audit_count,
       ROUND(AVG(${CQ_SCORE_SQL}) * 100,1)           AS cq_score,
-      SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
-      ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
+      SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
+      ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
       ${_OPENING}    AS opening_skill,
       ${_SOFT}       AS soft_skill,
       ${_HOLD}       AS hold_procedure,
@@ -3523,8 +3547,8 @@ export async function getBandDetail(
     : band === 'good'        ? 'q.quality_percentage >= 90 AND q.quality_percentage < 98'
     : band === 'average'     ? 'q.quality_percentage >= 85 AND q.quality_percentage < 90'
     : band === 'below_average' ? 'q.quality_percentage > 0 AND q.quality_percentage < 85'
-    : band === 'fatal'       ? 'q.quality_percentage = 0'
-    : band === 'no_fatal'    ? 'q.quality_percentage > 0'
+    : band === 'fatal'       ? fatalCheckSql('q')
+    : band === 'no_fatal'    ? noFatalCheckSql('q')
     : 'q.quality_percentage IS NOT NULL';
 
   let extra = '';
@@ -3572,8 +3596,8 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters): 
       COALESCE(am.AgentName, q.User)                                        AS agent,
       COUNT(*)                                                                                     AS audit_count,
       ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                                                 AS cq_score,
-      SUM(CASE WHEN q.quality_percentage = 0  THEN 1 ELSE 0 END)                                 AS fatal_count,
-      ROUND(SUM(CASE WHEN q.quality_percentage = 0 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0), 1) AS fatal_pct,
+      SUM(CASE WHEN ${fatalCheckSql('q')}  THEN 1 ELSE 0 END)                                 AS fatal_count,
+      ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0), 1) AS fatal_pct,
       SUM(CASE WHEN q.quality_percentage >= 80 THEN 1 ELSE 0 END)                                AS tq_count,
       SUM(CASE WHEN q.quality_percentage >= 60 AND q.quality_percentage < 80 THEN 1 ELSE 0 END)   AS mq_count,
       SUM(CASE WHEN q.quality_percentage >  0  AND q.quality_percentage < 60 THEN 1 ELSE 0 END)   AS bq_count
@@ -4166,7 +4190,7 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
       COALESCE(q.proper_call_closure,                0) AS proper_call_closure
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage = 0
+      AND ${fatalCheckSql('q')}
       AND q.quality_percentage IS NOT NULL
       ${clientFilter}
     ORDER BY q.CallDate DESC

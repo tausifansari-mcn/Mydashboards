@@ -66,6 +66,19 @@ export async function getMagicalCategorySaleDoneCalls(req: Request, res: Respons
   }
 }
 
+export async function getMissedOpportunityCategoryDetail(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const category = String(req.query.category ?? '');
+    if (!category) { res.status(400).json({ message: 'category is required' }); return; }
+    const data = await svc.getMissedOpportunityCategoryDetail(filters, category);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
 export async function getFraudCalls(req: Request, res: Response) {
   try {
     const filters = parseDateRange(req);

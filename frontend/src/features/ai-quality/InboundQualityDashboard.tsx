@@ -603,11 +603,28 @@ function FatalCallsModal({
             <AlertTriangle size={16} className="text-red-100" />
           </div>
           <div className="flex-1">
-            <p className="text-sm font-bold text-white">Fatal Calls — Quality Score = 0</p>
+            <p className="text-sm font-bold text-white">Fatal Calls</p>
             <p className="text-[10px] text-red-200 mt-0.5">
               {loading ? 'Loading…' : `${calls.length} fatal call${calls.length !== 1 ? 's' : ''} in selected period · Click Lead ID to view transcript`}
             </p>
           </div>
+          {!loading && calls.length > 0 && (
+            <button
+              onClick={() => downloadCSV(calls.map((c, i) => ({
+                '#': i + 1,
+                'MAS ID': c.agent_id,
+                Agent: resolveAgent(c.agent_id),
+                'Lead ID': c.lead_id,
+                Date: c.call_date,
+                Scenario: c.scenario,
+                'Sub-Scenario': c.scenario1,
+                'Failed Parameters': c.failed_params.join('; '),
+              })), 'fatal-calls.csv')}
+              title="Export fatal calls"
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold text-red-100 hover:text-white border border-red-200/40 hover:border-white/60 transition-colors shrink-0">
+              <Download size={11} /> CSV
+            </button>
+          )}
           <button onClick={onClose} className="text-red-200 hover:text-white p-1"><X size={18} /></button>
         </div>
 

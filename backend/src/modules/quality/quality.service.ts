@@ -53,6 +53,23 @@ export interface MOCategoryRow {
   pct: number;
 }
 
+export interface MOCategorySubRow {
+  subCategory: string;
+  count: number;
+}
+
+export interface MOCategoryObjectionRow {
+  objectionCategory: string;
+  objectionSubCategory: string;
+  count: number;
+}
+
+export interface MOCategoryDetail {
+  category: string;
+  subCategoryBreakdown: MOCategorySubRow[];
+  objectionBreakdown: MOCategoryObjectionRow[];
+}
+
 export interface NEDRow {
   nedCategory: string;
   nedQS: string;
@@ -405,7 +422,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
   // 'Other', defaults to 'Opening Rejected'); rejected_status_b is the 5-branch one (adds
   // OpeningRejected/OfferedPitchContext, defaults to 'Other') — the two coexisted in the original
   // live queries for different sub-features and are cached separately to keep every number identical.
-  const [rejectedBreakdown, row, oppRow, oppLossPie, oppCatPie, moBreaksPie, moCategoryRaw, nedRaw, objectionCategoryPie, npsRaw, npsDaysRaw, auditCountRaw] = await Promise.all([
+  const [rejectedBreakdown, row, oppRow, oppCatPie, moBreaksPie, nedRaw, categoryBreakdownRaw, npsRaw, npsDaysRaw, auditCountRaw] = await Promise.all([
     queryMasmis<PieSlice>(`
       WITH base AS (
         SELECT * FROM db_masmis.outbound_dashboard_cache cd
@@ -453,31 +470,6 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
         (SELECT COUNT(*) FROM base WHERE rejected_status_a NOT IN ('Opening Rejected','Offering Rejected','Context Rejected')
           AND has_objection_category = 1
           AND sale_done = 1) AS mo_count
-    `, params),
-
-    queryMasmis<PieSlice>(`
-      WITH base AS (
-        SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
-      )
-      SELECT
-        CASE
-          WHEN objection_subcategory IN (
-            'Liked the product but wants a better deal',
-            'Wants to buy later',
-            'Perfume Longevity Issue',
-            'Perfume too strong',
-            'Damaged Product Received',
-            'Wrong Product Received',
-            'Doesn''t trust online payments'
-          ) THEN 'Workable'
-          ELSE 'Non Workable'
-        END AS name,
-        COUNT(*) AS value
-      FROM base
-      WHERE sale_done = 0
-        AND rejected_status_b NOT IN ('Opening Rejected', 'Offering Rejected')
-      GROUP BY 1
     `, params),
 
     queryMasmis<PieSlice>(`
@@ -536,61 +528,6 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
       FROM mo
       GROUP BY name
       HAVING name != ''
-    `, params),
-
-    queryMasmis<{ category: string; insight: string; cnt: number }>(`
-      WITH base AS (
-        SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
-      )
-      SELECT
-        CASE
-          WHEN objection_subcategory = 'Already has the same product'                        THEN 'No Need'
-          WHEN objection_subcategory = 'Already has enough perfumes'                          THEN 'No Need'
-          WHEN objection_subcategory = 'Overstock / No Need for More'                        THEN 'No Need'
-          WHEN objection_subcategory = 'Already Owns Enough'                                 THEN 'No Need'
-          WHEN objection_subcategory = 'Already has too many perfumes'                        THEN 'No Need'
-          WHEN objection_subcategory = 'Already has another preferred brand'                  THEN 'Brand Preference'
-          WHEN objection_subcategory = 'Liked the product but wants a better deal'            THEN 'Price Sensitivity'
-          WHEN objection_subcategory = 'Wants to buy later'                                  THEN 'Budget Constraint'
-          WHEN objection_subcategory = 'Not Interested in Perfumes'                          THEN 'Product Disinterest'
-          WHEN objection_subcategory = 'Happy with the product but not interested in buying more' THEN 'No Need'
-          WHEN objection_subcategory = 'Didn''t like one of the perfumes'                    THEN 'Negative Experience'
-          WHEN objection_subcategory = 'Disappointed with perfume quality'                   THEN 'Negative Experience'
-          WHEN objection_subcategory = 'Perfume Longevity Issue'                             THEN 'Negative Experience'
-          WHEN objection_subcategory = 'Perfume too strong'                                  THEN 'Negative Experience'
-          WHEN objection_subcategory = 'Damaged Product Received'                            THEN 'Logistic Concern'
-          WHEN objection_subcategory = 'Wrong Product Received'                              THEN 'Logistic Concern'
-          WHEN objection_subcategory = 'Doesn''t trust online payments'                      THEN 'Trust Concerns'
-          ELSE ''
-        END AS category,
-        CASE
-          WHEN objection_subcategory = 'Already has the same product'                        THEN 'Customer already has same product; no need to buy.'
-          WHEN objection_subcategory = 'Already has enough perfumes'                          THEN 'Fully stocked; low chance of purchase.'
-          WHEN objection_subcategory = 'Overstock / No Need for More'                        THEN 'No immediate need; possible future purchase.'
-          WHEN objection_subcategory = 'Already Owns Enough'                                 THEN 'No need for additional purchases now.'
-          WHEN objection_subcategory = 'Already has too many perfumes'                        THEN 'Similar to overstocked; minimal conversion potential.'
-          WHEN objection_subcategory = 'Already has another preferred brand'                  THEN 'Prefers another brand; difficult to convert.'
-          WHEN objection_subcategory = 'Liked the product but wants a better deal'            THEN 'Possible to convert with discounts or offers.'
-          WHEN objection_subcategory = 'Wants to buy later'                                  THEN 'Future potential lead; needs follow-up.'
-          WHEN objection_subcategory = 'Not Interested in Perfumes'                          THEN 'No interest at all; unlikely to convert.'
-          WHEN objection_subcategory = 'Happy with the product but not interested in buying more' THEN 'No further purchase intent; hard to upsell.'
-          WHEN objection_subcategory = 'Didn''t like one of the perfumes'                    THEN 'A bad experience with one variant; can recommend others.'
-          WHEN objection_subcategory = 'Disappointed with perfume quality'                   THEN 'Concerns about quality; provide product assurance.'
-          WHEN objection_subcategory = 'Perfume Longevity Issue'                             THEN 'Customer finds longevity lacking; suggest long-lasting alternatives.'
-          WHEN objection_subcategory = 'Perfume too strong'                                  THEN 'Scent preference issue; suggest milder alternatives.'
-          WHEN objection_subcategory = 'Damaged Product Received'                            THEN 'A serious issue; needs strong resolution to regain trust.'
-          WHEN objection_subcategory = 'Wrong Product Received'                              THEN 'Fulfillment error; needs rectification and trust-building.'
-          WHEN objection_subcategory = 'Doesn''t trust online payments'                      THEN 'Major barrier; provide secure payment options and reassurance.'
-          ELSE ''
-        END AS insight,
-        COUNT(*) AS cnt
-      FROM base
-      WHERE sale_done = 0
-        AND rejected_status_b NOT IN ('Opening Rejected', 'Offering Rejected')
-      GROUP BY 1, 2
-      HAVING category != ''
-      ORDER BY cnt DESC
     `, params),
 
     queryMasmis<{ ned_category: string; ned_qs: string; ned_status: string; cnt: number }>(`
@@ -652,38 +589,22 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
       ORDER BY cnt DESC
     `, params),
 
-    queryMasmis<PieSlice>(`
-      WITH base AS (
-        SELECT * FROM db_masmis.outbound_dashboard_cache cd
-        WHERE cd.mobile_valid = 1 AND cd.call_date BETWEEN ? AND ? ${cf}${af}${campF}
-      )
+    // Live against CallDetails (not the outbound_dashboard_cache) — Category/SubCategory/
+    // CustomerObjectionCategory/CustomerObjectionSubCategory aren't cached columns, and adding
+    // them means a schema migration + full backfill. A single grouped aggregate is cheap;
+    // it's the per-call-row scans the cache was built to replace, not this.
+    querySource<{ category: string; sub_category: string | null; objection_category: string | null; cnt: number }>(`
       SELECT
-        CASE
-          WHEN objection_subcategory IS NULL
-               OR objection_subcategory = ''
-               OR objection_subcategory IN (
-                 'Already has the same product','Already has enough perfumes',
-                 'Overstock / No Need for More','Already Owns Enough',
-                 'Already has too many perfumes',
-                 'Happy with the product but not interested in buying more'
-               ) THEN 'No Need'
-          WHEN objection_subcategory = 'Already has another preferred brand'          THEN 'Brand Preference'
-          WHEN objection_subcategory = 'Liked the product but wants a better deal'   THEN 'Price Sensitivity'
-          WHEN objection_subcategory = 'Wants to buy later'                          THEN 'Budget Constraint'
-          WHEN objection_subcategory = 'Not Interested in Perfumes'                  THEN 'Product Disinterest'
-          WHEN objection_subcategory IN (
-            'Didn''t like one of the perfumes','Disappointed with perfume quality',
-            'Perfume Longevity Issue','Perfume too strong'
-          ) THEN 'Negative Experience'
-          WHEN objection_subcategory IN ('Damaged Product Received','Wrong Product Received') THEN 'Logistic Concern'
-          WHEN objection_subcategory = 'Doesn''t trust online payments'              THEN 'Trust Concerns'
-          ELSE 'No Need'
-        END AS name,
-        COUNT(*) AS value
-      FROM base
-      WHERE rejected_status_b NOT IN ('Opening Rejected', 'Offering Rejected')
-      GROUP BY 1
-      ORDER BY value DESC
+        cd.Category AS category,
+        cd.SubCategory AS sub_category,
+        cd.CustomerObjectionCategory AS objection_category,
+        COUNT(*) AS cnt
+      FROM db_external.CallDetails cd
+      WHERE cd.CallDate BETWEEN ? AND ? ${cf}${af}${campF}
+        AND cd.MobileNo IS NOT NULL AND cd.MobileNo != '' AND cd.MobileNo != '0'
+        AND COALESCE(cd.SaleDone, 0) = 0
+        AND cd.Category IS NOT NULL AND cd.Category NOT IN ('', 'None')
+      GROUP BY cd.Category, cd.SubCategory, cd.CustomerObjectionCategory
     `, params),
 
     queryMasmis<{
@@ -763,13 +684,47 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
   const porCnt = r?.por_cnt ?? 0;
   const totalOpp = Number(oppRow[0]?.total_opp ?? 0);
   const moCount = Number(oppRow[0]?.mo_count ?? 0);
-  const moTotal = moCategoryRaw.reduce((s, r) => s + Number(r.cnt), 0);
-  const moCategoryTable: MOCategoryRow[] = moCategoryRaw.map(r => ({
-    category: r.category,
-    insight: r.insight,
-    count: Number(r.cnt),
-    pct: moTotal > 0 ? Number(((Number(r.cnt) / moTotal) * 100).toFixed(1)) : 0,
-  }));
+  // objectionCategoryPie, moCategoryTable and opportunityLoss are all derived from the same
+  // categoryBreakdownRaw grouped rows (Category x SubCategory x CustomerObjectionCategory) — one
+  // pie, one table, one split, no per-client hardcoding.
+  const categoryMap = new Map<string, { total: number; subs: Map<string, number>; hasObjectionCategory: number }>();
+  for (const cr of categoryBreakdownRaw) {
+    const cat = cr.category;
+    if (!categoryMap.has(cat)) categoryMap.set(cat, { total: 0, subs: new Map(), hasObjectionCategory: 0 });
+    const entry = categoryMap.get(cat)!;
+    const cnt = Number(cr.cnt);
+    entry.total += cnt;
+    const sub = cr.sub_category?.trim();
+    if (sub && sub !== 'None') entry.subs.set(sub, (entry.subs.get(sub) ?? 0) + cnt);
+    const objCat = cr.objection_category?.trim();
+    if (objCat && objCat !== 'None') entry.hasObjectionCategory += cnt;
+  }
+
+  const objectionCategoryPie: PieSlice[] = Array.from(categoryMap.entries())
+    .map(([name, v]) => ({ name, value: v.total }))
+    .sort((a, b) => b.value - a.value);
+
+  const moTotal = objectionCategoryPie.reduce((s, r) => s + r.value, 0);
+  const moCategoryTable: MOCategoryRow[] = objectionCategoryPie.map(s => {
+    const entry = categoryMap.get(s.name)!;
+    let topSub = '';
+    let topCnt = -1;
+    for (const [sub, cnt] of entry.subs) {
+      if (cnt > topCnt) { topCnt = cnt; topSub = sub; }
+    }
+    return {
+      category: s.name,
+      insight: topSub ? `Most common: ${topSub}` : 'No sub-category logged',
+      count: s.value,
+      pct: moTotal > 0 ? Number(((s.value / moTotal) * 100).toFixed(1)) : 0,
+    };
+  });
+
+  const hasObjectionCategoryTotal = Array.from(categoryMap.values()).reduce((s, v) => s + v.hasObjectionCategory, 0);
+  const opportunityLoss: PieSlice[] = [
+    { name: 'Has Objection Category Logged', value: hasObjectionCategoryTotal },
+    { name: 'Not Logged', value: moTotal - hasObjectionCategoryTotal },
+  ];
   const nedTotal = nedRaw.reduce((s, r) => s + Number(r.cnt), 0);
   const nedTable: NEDRow[] = nedRaw.map(r => ({
     nedCategory: r.ned_category,
@@ -834,7 +789,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
     opportunity: {
       totalOpportunities: totalOpp,
       moCount,
-      opportunityLoss: oppLossPie,
+      opportunityLoss,
       opportunityCategory: oppCatPie,
       moBreaks: moBreaksPie,
       moCategoryTable,
@@ -879,6 +834,56 @@ export async function getSaleDoneCalls(filters: QualityFilters): Promise<SaleDon
     mobileNo:  r.MobileNo ?? '',
     fileName:  r.FileName ?? '',
   }));
+}
+
+// Drill-down behind clicking a category in the Objection Category pie / MO BreakDown table —
+// same base population as the objectionCategoryPie/moCategoryTable grouping above, narrowed to
+// one Category, split out by SubCategory and separately by CustomerObjectionCategory/SubCategory.
+export async function getMissedOpportunityCategoryDetail(
+  filters: QualityFilters, category: string,
+): Promise<MOCategoryDetail> {
+  const { startDate, endDate } = filters;
+  const { sql: cf, params: cfParams } = clientClause(filters);
+  const { sql: af, params: afParams } = agentClause(filters);
+  const { sql: campF, params: campParams } = campaignClause(filters);
+
+  const baseWhere = `
+    cd.CallDate BETWEEN ? AND ? ${cf}${af}${campF}
+    AND cd.Category = ?
+    AND cd.MobileNo IS NOT NULL AND cd.MobileNo != '' AND cd.MobileNo != '0'
+    AND COALESCE(cd.SaleDone, 0) = 0
+  `;
+  const params = [startDate, endDate, ...cfParams, ...afParams, ...campParams, category];
+
+  const [subRows, objRows] = await Promise.all([
+    querySource<{ sub_category: string | null; cnt: number }>(`
+      SELECT cd.SubCategory AS sub_category, COUNT(*) AS cnt
+      FROM db_external.CallDetails cd
+      WHERE ${baseWhere}
+      GROUP BY cd.SubCategory
+      ORDER BY cnt DESC
+    `, params),
+    querySource<{ objection_category: string | null; objection_sub_category: string | null; cnt: number }>(`
+      SELECT cd.CustomerObjectionCategory AS objection_category, cd.CustomerObjectionSubCategory AS objection_sub_category, COUNT(*) AS cnt
+      FROM db_external.CallDetails cd
+      WHERE ${baseWhere}
+      GROUP BY cd.CustomerObjectionCategory, cd.CustomerObjectionSubCategory
+      ORDER BY cnt DESC
+    `, params),
+  ]);
+
+  return {
+    category,
+    subCategoryBreakdown: subRows.map(r => ({
+      subCategory: r.sub_category?.trim() || 'Not specified',
+      count: Number(r.cnt),
+    })),
+    objectionBreakdown: objRows.map(r => ({
+      objectionCategory: r.objection_category?.trim() || 'Not specified',
+      objectionSubCategory: r.objection_sub_category?.trim() || 'Not specified',
+      count: Number(r.cnt),
+    })),
+  };
 }
 
 // Drill-down behind a Magical Script category branch's "Sale Done" pill. Column-based clients
@@ -1987,6 +1992,14 @@ const COLUMN_BASED_CLIENTS: Record<string, string> = {
   // Category/SubCategory taxonomy (Service Requirement Issues, Pricing Concerns, Concern About
   // Brokerage, Need Time to Decide, ...) — same column shape as the other column-based clients.
   '419': 'Housing Premium',
+  // Verified before adding: Housing Owner's CallDetails populate Offered (411/412),
+  // ContactSettingContext (373/412) and Category/SubCategory with a real, distinct real-estate
+  // taxonomy (Pricing & Discounts, "not planning to sell/rent right now", "need time to think",
+  // budget constraints, ...) — CSP/Offer/Category all follow the same shape as the other
+  // column-based clients. Opening is the one exception: it's blank/'None' for all 412 rows (this
+  // client's grading pipeline never populates it), so op_success comes back NULL for every call
+  // and the OP funnel tile will show no data — a real upstream data gap, not a bug here.
+  '496': 'Housing Owner',
 };
 
 // Reserved for excluding a specific stale/misconfigured campaign_id from a client's data, if one is
@@ -2331,10 +2344,18 @@ export interface BellavitaMagicalScriptData {
   cachedThrough: string | null;
 }
 
+// Clients whose grading pipeline never populates Opening — op_success is NULL for every single
+// call (verified: Housing Owner, 0/412 rows). The funnel's CSP/Offer stages are normally gated
+// behind "passed Opening" (op_success = 1), which would then never be true and cascade the whole
+// funnel to zero even though CSP/Offer/Category data is real and populated. For these clients
+// only, CSP becomes the funnel's effective first stage instead of being gated behind OP.
+const NO_OPENING_DATA_CLIENTS = new Set(['496']);
+
 async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<BellavitaMagicalScriptData> {
   const { startDate, endDate } = filters;
   const dialdeskClientId = Number(filters.clientId);
   const isBellavita = filters.clientId === BELLAVITA_CLIENT_ID;
+  const skipOpGate = filters.clientId ? NO_OPENING_DATA_CLIENTS.has(filters.clientId) : false;
   const baseParams = [startDate, endDate];
   const pct = (n: number, d: number) => d > 0 ? Math.round((n / d) * 1000) / 10 : 0;
 
@@ -2372,10 +2393,10 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(CASE WHEN csp_variant = 'before' THEN 1 ELSE 0 END) AS feedback_before,
         SUM(CASE WHEN csp_variant = 'same' THEN 1 ELSE 0 END) AS feedback_same
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND op_success = 1${campaignClause}
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${skipOpGate ? '' : ' AND op_success = 1'}${campaignClause}
     `, params),
 
-    // Offer: population = calls that passed CSP.
+    // Offer: population = calls that passed CSP (and OP, unless this client has no OP data).
     queryMasmis<{ total: number; call_end: number; success: number; sale_contrib: number }>(`
       SELECT
         COUNT(*) AS total,
@@ -2383,7 +2404,7 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(offer_success) AS success,
         SUM(CASE WHEN offer_success = 1 AND sale_done = 1 THEN 1 ELSE 0 END) AS sale_contrib
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND op_success = 1 AND csp_success = 1${campaignClause}
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${skipOpGate ? '' : ' AND op_success = 1'} AND csp_success = 1${campaignClause}
     `, params),
 
     queryMasmis<{ product: string; n: number }>(`
