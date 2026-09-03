@@ -3291,6 +3291,17 @@ const CALL_DETAILS_EXPORT_COLUMNS = [
 // that call divides by 6, not 7) — per explicit instruction ("if blank then not consider").
 const HOUSING_OWNER_CLIENT_ID = 496;
 
+// A call where the agent never even logged Opening/Offered (or has no MobileNo) isn't a scored
+// call at all — counting it as a 0-on-every-parameter failure is what was dragging the overall
+// average down to ~32% while individual agents' real calls were scoring ~60-70%. Per explicit
+// instruction: if MobileNo, Opening, or Offered is blank, exclude the call entirely (not just
+// zero it out) from every Housing Owner CQ query — the numerator, denominator, and call count.
+const HOUSING_OWNER_VALID_CALL_CLAUSE = `
+  AND cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
+  AND cd.Opening IS NOT NULL AND TRIM(cd.Opening) != ''
+  AND cd.Offered IS NOT NULL AND TRIM(cd.Offered) != ''
+`;
+
 function housingOwnerCQExpr(alias = 'cd'): string {
   const p = alias ? `${alias}.` : '';
   const flagSum = ['Opening', 'Offered', 'PrepaidPitch', 'OfferUrgency', 'Product', 'SoftSkill']
@@ -3314,6 +3325,27 @@ export interface HousingOwnerCQScoreResult {
   byAgent: HousingOwnerAgentCQRow[];
 }
 
+export interface HousingOwnerCQParamSummary {
+  opening: number;
+  offered: number;
+  objectionHandling: number;
+  prepaidPitch: number;
+  offerUrgency: number;
+  product: number;
+  softSkill: number;
+}
+export interface HousingOwnerAgentParamRow extends HousingOwnerCQParamSummary {
+  agentId: string;
+  agentName: string;
+  callCount: number;
+  overallScore: number;
+}
+export interface HousingOwnerCQDetailsResult {
+  totalCalls: number;
+  paramPassRate: HousingOwnerCQParamSummary; // % of calls scoring 1 on each parameter, across all agents
+  byAgent: HousingOwnerAgentParamRow[];
+}
+
 export async function getHousingOwnerCQScore(filters: QualityFilters): Promise<HousingOwnerCQScoreResult> {
   const { startDate, endDate } = filters;
   const { sql: campF, params: campParams } = campaignClause(filters);
@@ -3324,8 +3356,8 @@ export async function getHousingOwnerCQScore(filters: QualityFilters): Promise<H
     SELECT ROUND(AVG(${perCallScore}) * 100, 1) AS avg_score, COUNT(*) AS total_calls
     FROM db_external.CallDetails cd
     WHERE cd.client_id = ${HOUSING_OWNER_CLIENT_ID}
-      AND cd.CallDate BETWEEN ? AND ?
-      AND cd.MobileNo IS NOT NULL AND cd.MobileNo != '' ${campF}
+      AND cd.CallDate BETWEEN ? AND ? ${campF}
+      ${HOUSING_OWNER_VALID_CALL_CLAUSE}
   `, params);
 
   const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; avg_score: number | null }>(`
@@ -3337,8 +3369,8 @@ export async function getHousingOwnerCQScore(filters: QualityFilters): Promise<H
     FROM db_external.CallDetails cd
     LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
     WHERE cd.client_id = ${HOUSING_OWNER_CLIENT_ID}
-      AND cd.CallDate BETWEEN ? AND ?
-      AND cd.MobileNo IS NOT NULL AND cd.MobileNo != '' ${campF}
+      AND cd.CallDate BETWEEN ? AND ? ${campF}
+      ${HOUSING_OWNER_VALID_CALL_CLAUSE}
       AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
     GROUP BY cd.AgentName, am.AgentName
     ORDER BY avg_score DESC
@@ -3352,6 +3384,78 @@ export async function getHousingOwnerCQScore(filters: QualityFilters): Promise<H
       agentName: String(r.agent_name ?? r.agent_id),
       callCount: Number(r.call_count),
       avgScore: Number(r.avg_score ?? 0),
+    })),
+  };
+}
+
+// Agent-wise parameter breakdown behind the "CQ Score Details" page — per agent, the pass rate
+// on each of the 7 parameters plus their overall CQ%, so a 69% vs 32% question can be answered
+// by looking at which parameters and which agents are actually driving the number.
+const HOUSING_OWNER_FLAG_COLS = ['Opening', 'Offered', 'PrepaidPitch', 'OfferUrgency', 'Product', 'SoftSkill'] as const;
+
+export async function getHousingOwnerCQScoreDetails(filters: QualityFilters): Promise<HousingOwnerCQDetailsResult> {
+  const { startDate, endDate } = filters;
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const baseWhere = `
+    cd.client_id = ${HOUSING_OWNER_CLIENT_ID}
+    AND cd.CallDate BETWEEN ? AND ? ${campF}
+    ${HOUSING_OWNER_VALID_CALL_CLAUSE}
+  `;
+  const params = [startDate, endDate, ...campParams];
+
+  const ohBlank = `(cd.ObjectionHandling IS NULL OR TRIM(cd.ObjectionHandling) = '')`;
+  const ohNone = `LOWER(TRIM(cd.ObjectionHandling)) IN ('none','na','n/a','null')`;
+  const ohRateExpr = `ROUND(AVG(CASE WHEN ${ohBlank} THEN NULL WHEN ${ohNone} THEN 0 ELSE 1 END) * 100, 1)`;
+  const perCallScore = housingOwnerCQExpr('cd');
+
+  const [summaryRow] = await querySource<{ total_calls: number } & Record<string, number>>(`
+    SELECT
+      COUNT(*) AS total_calls,
+      ${HOUSING_OWNER_FLAG_COLS.map(c => `ROUND(AVG(IF(cd.${c}=1,1,0)) * 100, 1) AS ${c.toLowerCase()}_rate`).join(',\n      ')},
+      ${ohRateExpr} AS objection_handling_rate
+    FROM db_external.CallDetails cd
+    WHERE ${baseWhere}
+  `, params);
+
+  const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; overall_score: number | null } & Record<string, number>>(`
+    SELECT
+      cd.AgentName AS agent_id,
+      COALESCE(am.AgentName, cd.AgentName) AS agent_name,
+      COUNT(*) AS call_count,
+      ${HOUSING_OWNER_FLAG_COLS.map(c => `ROUND(AVG(IF(cd.${c}=1,1,0)) * 100, 1) AS ${c.toLowerCase()}_rate`).join(',\n      ')},
+      ${ohRateExpr} AS objection_handling_rate,
+      ROUND(AVG(${perCallScore}) * 100, 1) AS overall_score
+    FROM db_external.CallDetails cd
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE ${baseWhere}
+      AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
+    GROUP BY cd.AgentName, am.AgentName
+    ORDER BY overall_score DESC
+  `, params);
+
+  return {
+    totalCalls: Number(summaryRow?.total_calls ?? 0),
+    paramPassRate: {
+      opening: Number(summaryRow?.opening_rate ?? 0),
+      offered: Number(summaryRow?.offered_rate ?? 0),
+      objectionHandling: Number(summaryRow?.objection_handling_rate ?? 0),
+      prepaidPitch: Number(summaryRow?.prepaidpitch_rate ?? 0),
+      offerUrgency: Number(summaryRow?.offerurgency_rate ?? 0),
+      product: Number(summaryRow?.product_rate ?? 0),
+      softSkill: Number(summaryRow?.softskill_rate ?? 0),
+    },
+    byAgent: agentRows.map(r => ({
+      agentId: String(r.agent_id),
+      agentName: String(r.agent_name ?? r.agent_id),
+      callCount: Number(r.call_count),
+      opening: Number(r.opening_rate ?? 0),
+      offered: Number(r.offered_rate ?? 0),
+      objectionHandling: Number(r.objection_handling_rate ?? 0),
+      prepaidPitch: Number(r.prepaidpitch_rate ?? 0),
+      offerUrgency: Number(r.offerurgency_rate ?? 0),
+      product: Number(r.product_rate ?? 0),
+      softSkill: Number(r.softskill_rate ?? 0),
+      overallScore: Number(r.overall_score ?? 0),
     })),
   };
 }

@@ -13,6 +13,7 @@ import {
   BarChart3, ChevronLeft, ChevronDown, PhoneCall, PhoneOff,
   Target, TrendingUp, Users, XCircle, AlertTriangle, ThumbsDown, Info, Download, X, Pencil,
   ShieldAlert, AlertOctagon, Trash2, Plus, Save, Loader2,
+  ListChecks,
 } from 'lucide-react';
 import api from '@/lib/axios';
 import RawDataTab from './RawDataTab';
@@ -1361,6 +1362,17 @@ export default function ProcessQualityDashboard() {
       .catch(() => setHousingOwnerCQ(null));
   }, [isHousingOwner, clientId, sd, ed, campaignQs]);
 
+  // "CQ Score Details" slide — agent-wise parameter breakdown, loaded lazily only when that tab
+  // is opened.
+  type HousingOwnerParamRates = { opening: number; offered: number; objectionHandling: number; prepaidPitch: number; offerUrgency: number; product: number; softSkill: number };
+  const [housingOwnerCQDetails, setHousingOwnerCQDetails] = useState<{
+    totalCalls: number;
+    paramPassRate: HousingOwnerParamRates;
+    byAgent: (HousingOwnerParamRates & { agentId: string; agentName: string; callCount: number; overallScore: number })[];
+  } | null>(null);
+  const [housingOwnerCQDetailsLoading, setHousingOwnerCQDetailsLoading] = useState(false);
+  const [cqAgentSearch, setCqAgentSearch] = useState('');
+
   const [exportingProcess, setExportingProcess] = useState(false);
   const handleExportProcess = async () => {
     if (!clientId) return;
@@ -1392,6 +1404,15 @@ export default function ProcessQualityDashboard() {
 
   const [activeSlide, setActiveSlide] = useState(0);
   const loadedSlides = useRef<Record<number, boolean>>({});
+
+  useEffect(() => {
+    if (!isHousingOwner || !clientId || activeSlide !== 7) return;
+    setHousingOwnerCQDetailsLoading(true);
+    api.get<{ data: typeof housingOwnerCQDetails }>(`/quality/housing-owner-cq-score/details?startDate=${sd}&endDate=${ed}${campaignQs}`)
+      .then(r => setHousingOwnerCQDetails(r.data?.data ?? null))
+      .catch(() => setHousingOwnerCQDetails(null))
+      .finally(() => setHousingOwnerCQDetailsLoading(false));
+  }, [isHousingOwner, clientId, activeSlide, sd, ed, campaignQs]);
 
   // Land on Dashboard instead of the hidden Magical Script slide for clients it's turned off for.
   useEffect(() => {
@@ -1803,6 +1824,7 @@ export default function ProcessQualityDashboard() {
             { id: 3, label: 'NPS & CSAT' },
             { id: 4, label: 'Detail Analysis' },
             { id: 5, label: 'Fraud Call' },
+            ...(isHousingOwner ? [{ id: 7, label: 'CQ Score Details' }] : []),
             ...(canViewRawData ? [{ id: 6, label: 'Raw Data' }] : []),
           ];
           const SLIDES = hideMagicalScript ? ALL_SLIDES.filter(s => s.id !== 0) : ALL_SLIDES;
@@ -1824,68 +1846,6 @@ export default function ProcessQualityDashboard() {
 
         {/* ─── Slide 1: Dashboard ────────────────────────────────────────── */}
         {activeSlide === 1 && (<>
-
-        {/* ─── Housing Owner CQ Score (client-specific formula) ──────────── */}
-        {isHousingOwner && housingOwnerCQ && (
-          <div className="rounded-2xl border border-blue-200 bg-white overflow-hidden shadow-sm">
-            <div className="px-5 py-3 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#1565C0,#0D47A1)' }}>
-              <Target size={14} className="text-white" />
-              <span className="text-[11px] font-bold uppercase tracking-widest text-white">CQ Score</span>
-              <span className="ml-auto text-[9px] text-white/75 font-semibold">
-                (Opening + Offered + ObjectionHandling + PrepaidPitch + OfferUrgency + Product + SoftSkill) ÷ 7
-              </span>
-            </div>
-            <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
-              {/* Overall score */}
-              <div className="lg:w-60 shrink-0 p-6 flex flex-col items-center justify-center gap-1 bg-gradient-to-b from-blue-50/60 to-white">
-                <svg width="128" height="128" viewBox="0 0 128 128" className="mb-1">
-                  <circle cx="64" cy="64" r="54" fill="none" stroke="#eef2f1" strokeWidth="12" />
-                  <circle cx="64" cy="64" r="54" fill="none"
-                    stroke={housingOwnerCQ.overallScore >= 85 ? '#22b990' : housingOwnerCQ.overallScore >= 60 ? '#eea12b' : '#e8607d'}
-                    strokeWidth="12" strokeLinecap="round"
-                    strokeDasharray={`${(housingOwnerCQ.overallScore / 100) * 339.3} 339.3`}
-                    transform="rotate(-90 64 64)" />
-                  <text x="64" y="58" textAnchor="middle" fontSize="26" fontWeight="800" fill="#15212d">{housingOwnerCQ.overallScore}%</text>
-                  <text x="64" y="78" textAnchor="middle" fontSize="9" fontWeight="700" fill="#71808c">OVERALL</text>
-                </svg>
-                <p className="text-[10px] text-slate-500 font-semibold">{housingOwnerCQ.totalCalls.toLocaleString()} call{housingOwnerCQ.totalCalls === 1 ? '' : 's'} in this period</p>
-              </div>
-
-              {/* Agent-wise breakdown */}
-              <div className="flex-1 p-5 min-w-0">
-                <div className="flex items-center gap-2 mb-3">
-                  <Users size={12} className="text-blue-500" />
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Agent-wise CQ Score</span>
-                  <span className="ml-auto text-[9px] text-slate-400 font-semibold">{housingOwnerCQ.byAgent.length} agents</span>
-                </div>
-                {housingOwnerCQ.byAgent.length === 0 ? (
-                  <p className="text-xs text-slate-400 py-6 text-center">No agent-level data for this period.</p>
-                ) : (
-                  <div className="max-h-96 overflow-y-auto pr-1 flex flex-col gap-2">
-                    {housingOwnerCQ.byAgent.map((a, i) => {
-                      const color = a.avgScore >= 85 ? '#22b990' : a.avgScore >= 60 ? '#eea12b' : '#e8607d';
-                      return (
-                        <div key={a.agentId} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-50 hover:bg-blue-50/60 transition-colors">
-                          <span className="text-[10px] font-black text-slate-300 w-5 text-right shrink-0">{i + 1}</span>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-2 mb-1">
-                              <span className="text-[11.5px] font-bold text-slate-800 truncate">{a.agentName}</span>
-                              <span className="text-[11px] font-black shrink-0" style={{ color }}>{a.avgScore}%</span>
-                            </div>
-                            <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
-                              <div className="h-full rounded-full" style={{ width: `${Math.min(100, a.avgScore)}%`, background: color }} />
-                            </div>
-                          </div>
-                          <span className="text-[9.5px] font-semibold text-slate-400 shrink-0 w-16 text-right">{a.callCount} call{a.callCount === 1 ? '' : 's'}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* ─── CST / CRT side by side ────────────────────────────────────── */}
         {(cst || crt) && (
@@ -4024,6 +3984,193 @@ export default function ProcessQualityDashboard() {
           <FraudCallTab clientId={clientId} sd={sd} ed={ed} apiPath="/quality/fraud-calls"
             campaignId={selectedCampaign !== 'All' ? selectedCampaign : undefined} />
         )}
+
+        {/* ─── Slide 7: CQ Score Details (Housing Owner only) ─────────────── */}
+        {activeSlide === 7 && isHousingOwner && clientId && (() => {
+          const PARAM_LABELS: { key: keyof NonNullable<typeof housingOwnerCQDetails>['paramPassRate']; label: string }[] = [
+            { key: 'opening', label: 'Opening' },
+            { key: 'offered', label: 'Offered' },
+            { key: 'objectionHandling', label: 'Objection Handling' },
+            { key: 'prepaidPitch', label: 'Prepaid Pitch' },
+            { key: 'offerUrgency', label: 'Offer Urgency' },
+            { key: 'product', label: 'Product' },
+            { key: 'softSkill', label: 'Soft Skill' },
+          ];
+          const filteredCqAgents = (housingOwnerCQDetails?.byAgent ?? []).filter(a =>
+            a.agentName.toLowerCase().includes(cqAgentSearch.trim().toLowerCase()));
+          // Heatmap: red (0%) → amber (50%) → green (100%), used both as a soft cell background
+          // and as the bold text color, so low parameters jump out across the whole row at a glance.
+          const heatColor = (pct: number) => {
+            const stops = pct <= 50
+              ? { from: [232, 96, 125], to: [238, 161, 43], t: pct / 50 }
+              : { from: [238, 161, 43], to: [34, 185, 144], t: (pct - 50) / 50 };
+            const [r1, g1, b1] = stops.from, [r2, g2, b2] = stops.to;
+            const r = Math.round(r1 + (r2 - r1) * stops.t);
+            const g = Math.round(g1 + (g2 - g1) * stops.t);
+            const b = Math.round(b1 + (b2 - b1) * stops.t);
+            return { text: `rgb(${r},${g},${b})`, bg: `rgba(${r},${g},${b},0.14)` };
+          };
+          // The parameter(s) tied for an agent's lowest pass rate — what's actually pulling their
+          // score down, surfaced right next to the number instead of making someone eyeball 7 columns.
+          const weakestParams = (a: (typeof filteredCqAgents)[number]) => {
+            const min = Math.min(...PARAM_LABELS.map(p => a[p.key]));
+            return { min, labels: PARAM_LABELS.filter(p => a[p.key] === min).map(p => p.label) };
+          };
+          return (
+            <div className="flex flex-col gap-4">
+              {/* CQ Score Overview — overall score + per-parameter breakdown, side by side */}
+              <div className="rounded-2xl border border-blue-200 bg-white overflow-hidden shadow-sm">
+                <div className="px-5 py-3 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#1565C0,#0D47A1)' }}>
+                  <Target size={14} className="text-white" />
+                  <span className="text-[11px] font-bold uppercase tracking-widest text-white">CQ Score Overview</span>
+                  <span className="ml-auto text-[9px] text-white/75 font-semibold">
+                    (Opening + Offered + ObjectionHandling + PrepaidPitch + OfferUrgency + Product + SoftSkill) ÷ 7
+                  </span>
+                </div>
+                <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
+                  {/* Overall score */}
+                  <div className="lg:w-60 shrink-0 p-6 flex flex-col items-center justify-center gap-1 bg-gradient-to-b from-blue-50/60 to-white">
+                    <svg width="128" height="128" viewBox="0 0 128 128" className="mb-1">
+                      <circle cx="64" cy="64" r="54" fill="none" stroke="#eef2f1" strokeWidth="12" />
+                      <circle cx="64" cy="64" r="54" fill="none"
+                        stroke={(housingOwnerCQ?.overallScore ?? 0) >= 85 ? '#22b990' : (housingOwnerCQ?.overallScore ?? 0) >= 60 ? '#eea12b' : '#e8607d'}
+                        strokeWidth="12" strokeLinecap="round"
+                        strokeDasharray={`${((housingOwnerCQ?.overallScore ?? 0) / 100) * 339.3} 339.3`}
+                        transform="rotate(-90 64 64)" />
+                      <text x="64" y="58" textAnchor="middle" fontSize="26" fontWeight="800" fill="#15212d">{housingOwnerCQ?.overallScore ?? 0}%</text>
+                      <text x="64" y="78" textAnchor="middle" fontSize="9" fontWeight="700" fill="#71808c">OVERALL</text>
+                    </svg>
+                    <p className="text-[10px] text-slate-500 font-semibold">
+                      {(housingOwnerCQDetails?.totalCalls ?? 0).toLocaleString()} call{(housingOwnerCQDetails?.totalCalls ?? 0) === 1 ? '' : 's'} in this period
+                    </p>
+                  </div>
+
+                  {/* Per-parameter pass rate, as bars — easier to scan/compare than bare numbers */}
+                  <div className="flex-1 p-5 min-w-0">
+                    <div className="flex items-center gap-2 mb-4">
+                      <ListChecks size={12} className="text-blue-500" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Parameter-wise Pass Rate</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+                      {PARAM_LABELS.map(({ key, label }) => {
+                        const pct = housingOwnerCQDetails?.paramPassRate[key] ?? 0;
+                        const color = pct >= 85 ? '#22b990' : pct >= 60 ? '#eea12b' : '#e8607d';
+                        return (
+                          <div key={key}>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-[11px] font-semibold text-slate-700">{label}</span>
+                              <span className="text-[11px] font-black" style={{ color }}>{pct}%</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: `${Math.min(100, pct)}%`, background: color }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Agent-wise Parameters Score */}
+              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200">
+                  <span className="text-[11px] font-bold uppercase tracking-widest text-slate-600">Agent-wise Parameters Score</span>
+                  <div className="relative ml-2">
+                    <input value={cqAgentSearch} onChange={e => setCqAgentSearch(e.target.value)}
+                      placeholder="Filter by agent name…"
+                      className="bg-slate-50 border border-slate-300 rounded-lg pl-3 pr-3 py-1.5 text-xs text-slate-900 font-medium w-52 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all" />
+                  </div>
+                  <span className="text-[9px] text-slate-400 font-semibold">{filteredCqAgents.length} agents</span>
+                  <ExportBtn onClick={() => downloadCSV(
+                    filteredCqAgents.map(a => {
+                      const weak = weakestParams(a);
+                      return {
+                        Agent: a.agentName, Calls: a.callCount,
+                        Opening: `${a.opening}%`, Offered: `${a.offered}%`, 'Objection Handling': `${a.objectionHandling}%`,
+                        'Prepaid Pitch': `${a.prepaidPitch}%`, 'Offer Urgency': `${a.offerUrgency}%`, Product: `${a.product}%`, 'Soft Skill': `${a.softSkill}%`,
+                        'Overall CQ %': `${a.overallScore}%`,
+                        'Weakest Area': weak.min < 100 ? `${weak.labels.join(', ')} (${weak.min}%)` : '',
+                      };
+                    }),
+                    'housing-owner-agent-wise-parameters-score.csv',
+                  )} />
+                </div>
+                <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
+                  <table className="w-full text-[11px] whitespace-nowrap border-separate border-spacing-0">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider">
+                        <th className="px-3 py-3 text-left bg-slate-50 border-b border-slate-200">Agent</th>
+                        <th className="px-3 py-3 text-right bg-slate-50 border-b border-slate-200">Calls</th>
+                        {PARAM_LABELS.map(({ key, label }) => (
+                          <th key={key} className="px-3 py-3 text-center bg-slate-50 border-b border-slate-200">{label}</th>
+                        ))}
+                        <th className="px-3 py-3 text-center bg-blue-50 border-b border-l border-slate-200 text-blue-700">Overall CQ %</th>
+                        <th className="px-3 py-3 text-left bg-slate-50 border-b border-l border-slate-200">Weakest Area</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {housingOwnerCQDetailsLoading ? (
+                        <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-400 border-b border-slate-100">
+                          <Loader2 size={16} className="inline animate-spin mr-2" /> Loading...
+                        </td></tr>
+                      ) : filteredCqAgents.length === 0 ? (
+                        <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-400 border-b border-slate-100">No agents match this period/filter.</td></tr>
+                      ) : filteredCqAgents.map((a, i) => {
+                        const overallC = heatColor(a.overallScore);
+                        const weak = weakestParams(a);
+                        // Only call out a genuine gap — a 71-84% "weak" spot next to a 92% overall
+                        // score isn't the same signal as a 30% one, so the messaging (and how loud
+                        // it looks) scales with severity instead of flagging every non-100% cell.
+                        const weakTier = weak.min >= 85 ? 'none' : weak.min >= 60 ? 'mild' : 'severe';
+                        return (
+                          <tr key={a.agentId} className={i % 2 === 1 ? 'bg-slate-50/50' : undefined}>
+                            <td className="px-3 py-2.5 font-semibold text-slate-800 border-b border-slate-100">
+                              <span className="inline-flex items-center gap-2">
+                                <span className="text-[9px] font-black text-slate-300 w-4 text-right shrink-0">{i + 1}</span>
+                                {a.agentName}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5 text-right text-slate-500 tabular-nums border-b border-slate-100">{a.callCount}</td>
+                            {PARAM_LABELS.map(({ key }) => {
+                              const pct = a[key];
+                              const c = heatColor(pct);
+                              return (
+                                <td key={key} className="px-2 py-2 text-center border-b border-slate-100">
+                                  <span className="inline-block min-w-[46px] px-1.5 py-0.5 rounded-md text-[10.5px] font-bold tabular-nums"
+                                    style={{ color: c.text, backgroundColor: c.bg }}>
+                                    {pct}%
+                                  </span>
+                                </td>
+                              );
+                            })}
+                            <td className="px-3 py-2.5 text-center border-b border-l border-slate-100 bg-blue-50/30">
+                              <span className="inline-block min-w-[52px] px-2 py-1 rounded-md text-xs font-black tabular-nums"
+                                style={{ color: overallC.text, backgroundColor: overallC.bg }}>
+                                {a.overallScore}%
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5 border-b border-l border-slate-100">
+                              {weakTier === 'none' ? (
+                                <span className="text-[10px] text-emerald-500 font-semibold">✓ Consistent</span>
+                              ) : (
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                  weakTier === 'severe' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
+                                }`}>
+                                  {weakTier === 'severe' ? '⚠ ' : ''}{weak.labels.join(', ')} ({weak.min}%)
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ─── Slide 6: Raw Data ─────────────────────────────────────────── */}
         {activeSlide === 6 && clientId && canViewRawData && (
