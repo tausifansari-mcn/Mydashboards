@@ -23,6 +23,7 @@ router.post('/case-actions',      ctrl.upsertCaseActionCtrl);
 router.get('/kpis',               ctrl.getKPIs);
 router.get('/sale-done-calls',    ctrl.getSaleDoneCalls);
 router.get('/missed-opportunity-category-detail', ctrl.getMissedOpportunityCategoryDetail);
+router.get('/housing-owner-cq-score', ctrl.getHousingOwnerCQScore);
 router.get('/magical-script-category-sale-done', ctrl.getMagicalCategorySaleDoneCalls);
 router.get('/magical-script-category-call-end', ctrl.getMagicalCategoryCallEndCalls);
 router.get('/magical-script-stage-call-end',     ctrl.getMagicalStageCallEndCalls);

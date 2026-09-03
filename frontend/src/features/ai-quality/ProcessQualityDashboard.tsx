@@ -1347,6 +1347,20 @@ export default function ProcessQualityDashboard() {
 
   const campaignQs = selectedCampaign !== 'All' ? `&campaignId=${encodeURIComponent(selectedCampaign)}` : '';
 
+  // Housing Owner-specific CQ Score: (Opening+Offered+ObjectionHandling+PrepaidPitch+
+  // OfferUrgency+Product+SoftSkill)/7 — Product/SoftSkill only exist for this client.
+  const isHousingOwner = clientId === '496';
+  const [housingOwnerCQ, setHousingOwnerCQ] = useState<{
+    overallScore: number; totalCalls: number;
+    byAgent: { agentId: string; agentName: string; callCount: number; avgScore: number }[];
+  } | null>(null);
+  useEffect(() => {
+    if (!isHousingOwner || !clientId) { setHousingOwnerCQ(null); return; }
+    api.get<{ data: typeof housingOwnerCQ }>(`/quality/housing-owner-cq-score?startDate=${sd}&endDate=${ed}${campaignQs}`)
+      .then(r => setHousingOwnerCQ(r.data?.data ?? null))
+      .catch(() => setHousingOwnerCQ(null));
+  }, [isHousingOwner, clientId, sd, ed, campaignQs]);
+
   const [exportingProcess, setExportingProcess] = useState(false);
   const handleExportProcess = async () => {
     if (!clientId) return;
@@ -1810,6 +1824,68 @@ export default function ProcessQualityDashboard() {
 
         {/* ─── Slide 1: Dashboard ────────────────────────────────────────── */}
         {activeSlide === 1 && (<>
+
+        {/* ─── Housing Owner CQ Score (client-specific formula) ──────────── */}
+        {isHousingOwner && housingOwnerCQ && (
+          <div className="rounded-2xl border border-blue-200 bg-white overflow-hidden shadow-sm">
+            <div className="px-5 py-3 flex items-center gap-2" style={{ background: 'linear-gradient(135deg,#1565C0,#0D47A1)' }}>
+              <Target size={14} className="text-white" />
+              <span className="text-[11px] font-bold uppercase tracking-widest text-white">CQ Score</span>
+              <span className="ml-auto text-[9px] text-white/75 font-semibold">
+                (Opening + Offered + ObjectionHandling + PrepaidPitch + OfferUrgency + Product + SoftSkill) ÷ 7
+              </span>
+            </div>
+            <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
+              {/* Overall score */}
+              <div className="lg:w-60 shrink-0 p-6 flex flex-col items-center justify-center gap-1 bg-gradient-to-b from-blue-50/60 to-white">
+                <svg width="128" height="128" viewBox="0 0 128 128" className="mb-1">
+                  <circle cx="64" cy="64" r="54" fill="none" stroke="#eef2f1" strokeWidth="12" />
+                  <circle cx="64" cy="64" r="54" fill="none"
+                    stroke={housingOwnerCQ.overallScore >= 85 ? '#22b990' : housingOwnerCQ.overallScore >= 60 ? '#eea12b' : '#e8607d'}
+                    strokeWidth="12" strokeLinecap="round"
+                    strokeDasharray={`${(housingOwnerCQ.overallScore / 100) * 339.3} 339.3`}
+                    transform="rotate(-90 64 64)" />
+                  <text x="64" y="58" textAnchor="middle" fontSize="26" fontWeight="800" fill="#15212d">{housingOwnerCQ.overallScore}%</text>
+                  <text x="64" y="78" textAnchor="middle" fontSize="9" fontWeight="700" fill="#71808c">OVERALL</text>
+                </svg>
+                <p className="text-[10px] text-slate-500 font-semibold">{housingOwnerCQ.totalCalls.toLocaleString()} call{housingOwnerCQ.totalCalls === 1 ? '' : 's'} in this period</p>
+              </div>
+
+              {/* Agent-wise breakdown */}
+              <div className="flex-1 p-5 min-w-0">
+                <div className="flex items-center gap-2 mb-3">
+                  <Users size={12} className="text-blue-500" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Agent-wise CQ Score</span>
+                  <span className="ml-auto text-[9px] text-slate-400 font-semibold">{housingOwnerCQ.byAgent.length} agents</span>
+                </div>
+                {housingOwnerCQ.byAgent.length === 0 ? (
+                  <p className="text-xs text-slate-400 py-6 text-center">No agent-level data for this period.</p>
+                ) : (
+                  <div className="max-h-96 overflow-y-auto pr-1 flex flex-col gap-2">
+                    {housingOwnerCQ.byAgent.map((a, i) => {
+                      const color = a.avgScore >= 85 ? '#22b990' : a.avgScore >= 60 ? '#eea12b' : '#e8607d';
+                      return (
+                        <div key={a.agentId} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-50 hover:bg-blue-50/60 transition-colors">
+                          <span className="text-[10px] font-black text-slate-300 w-5 text-right shrink-0">{i + 1}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span className="text-[11.5px] font-bold text-slate-800 truncate">{a.agentName}</span>
+                              <span className="text-[11px] font-black shrink-0" style={{ color }}>{a.avgScore}%</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: `${Math.min(100, a.avgScore)}%`, background: color }} />
+                            </div>
+                          </div>
+                          <span className="text-[9.5px] font-semibold text-slate-400 shrink-0 w-16 text-right">{a.callCount} call{a.callCount === 1 ? '' : 's'}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ─── CST / CRT side by side ────────────────────────────────────── */}
         {(cst || crt) && (

@@ -1,0 +1,62 @@
+BUILD TRACKER — SETUP
+======================
+
+Two new files in this folder:
+  - build-tracker.html      the page itself (standalone, no server code needed — data is embedded
+                             directly in the file, same "frozen snapshot" approach as index.html)
+  - Build-Tracker.xlsx      the same data as an editable spreadsheet, so you can review/edit it
+                             without touching code
+
+Nothing in Code.gs needs to change for build-tracker.html to work — it doesn't call
+google.script.run at all. You have two ways to actually see it as a page:
+
+OPTION A — Add it as a second page in this SAME Apps Script project (recommended)
+-----------------------------------------------------------------------------
+1. Open your Apps Script project (script.google.com) — the same one that already has
+   index.html and Code.gs.
+2. Click the "+" next to Files > HTML, name the new file "build-tracker" (Apps Script adds the
+   .html extension itself) and paste in the full contents of build-tracker.html.
+3. In Code.gs, replace your existing doGet() with this (it now serves either page based on a
+   "?page=" URL parameter, defaulting to the existing dashboard so nothing about your current
+   deployment changes):
+
+     function doGet(e) {
+       const page = (e && e.parameter && e.parameter.page === 'tracker') ? 'build-tracker' : 'index';
+       return HtmlService.createTemplateFromFile(page)
+         .evaluate()
+         .setTitle(page === 'build-tracker' ? 'Build Tracker' : 'Process LOB Dashboard')
+         .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+         .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+     }
+
+4. Save, then Deploy > Manage deployments > edit your deployment > New version > Deploy.
+5. Your existing dashboard URL keeps working exactly as before. Add "?page=tracker" to the end
+   of that same URL to open the Build Tracker.
+
+OPTION B — Deploy it as its own separate, independent web app
+-----------------------------------------------------------------------------
+1. script.google.com > New project.
+2. Rename the default Code.gs's included HTML file (or add a new one) to "build-tracker" and
+   paste in build-tracker.html's contents.
+3. In Code.gs for this new project:
+
+     function doGet() {
+       return HtmlService.createTemplateFromFile('build-tracker')
+         .evaluate()
+         .setTitle('Build Tracker')
+         .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+     }
+
+4. Deploy > New deployment > Web app > Execute as yourself, Who has access: your choice > Deploy.
+   This gives the Build Tracker its own separate URL, fully independent of the existing dashboard.
+
+REFRESHING THE DATA
+-----------------------------------------------------------------------------
+The activity list lives in two places that should be kept in sync manually (same convention as
+the main dashboard's per-process data — no live database connection, by design):
+  1. Build-Tracker.xlsx — edit rows here first, it's the easiest place to review/update.
+  2. build-tracker.html — find the `const rows = [...]` array near the top of the <script> tag
+     and copy the updated rows in, one array per row in the same column order: Process, Module,
+     Activity, Status, % Complete, Action Taken, Blockage / Remaining Work, Last Updated.
+     Status must be exactly one of: Created, Partially Created, Not Started, Blocked, Not
+     Applicable (these exact strings drive the badge colors and summary counts).

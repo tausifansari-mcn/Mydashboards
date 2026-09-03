@@ -385,7 +385,7 @@ export async function getInboundClients(filters: InboundQualityFilters): Promise
       q.ClientId                                                                   AS client_id,
       COALESCE(c.name, CONCAT('Client ', q.ClientId))                             AS client_name,
       COUNT(*)                                                                     AS audit_count,
-      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                         AS cq_score,
+      ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100, 1)                                         AS cq_score,
       ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100, 1) AS cq_score_no_fatal,
       SUM(CASE WHEN q.quality_percentage >= 98                                  THEN 1 ELSE 0 END) AS excellent,
       SUM(CASE WHEN q.quality_percentage >= 90 AND q.quality_percentage < 98    THEN 1 ELSE 0 END) AS good,
@@ -490,7 +490,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
       ${clientIdExpr}                                                               AS client_id,
       ${clientNameExpr}                                                             AS client_name,
       COUNT(*)                                                                     AS audit_count,
-      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                         AS cq_score,
+      ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100, 1)                                         AS cq_score,
       ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100, 1) AS cq_score_no_fatal,
       SUM(CASE WHEN q.quality_percentage >= 98                                  THEN 1 ELSE 0 END) AS excellent,
       SUM(CASE WHEN q.quality_percentage >= 90 AND q.quality_percentage < 98    THEN 1 ELSE 0 END) AS good,
@@ -2599,7 +2599,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
     }>(`
       SELECT
         COUNT(*) AS audit_count,
-        ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS cq_score,
+        ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100, 1) AS cq_score,
         SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS fatal_pct,
         SUM(CASE WHEN TRIM(q.scenario)='Query'     AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS query_fatal,
@@ -2675,7 +2675,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
     }>(`
       SELECT
         COALESCE(am.AgentName, q.User) AS agent_name, COUNT(*) AS audit_count,
-        ROUND(AVG(${CQ_SCORE_SQL}) * 100,1) AS cq_score,
+        ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100,1) AS cq_score,
         SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
         ROUND(SUM(CASE WHEN q.quality_percentage>0 AND q.quality_percentage<85  THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS below_avg_pct,
@@ -2789,7 +2789,7 @@ export async function getDetailAnalysis(filters: InboundQualityFilters): Promise
       query_count: number; complaint_count: number; request_count: number; sale_done_count: number;
     }>(`
       SELECT COUNT(*) AS audit_count,
-        ROUND(AVG(${CQ_SCORE_SQL}) * 100,1) AS cq_score,
+        ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100,1) AS cq_score,
         SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
         SUM(CASE WHEN TRIM(q.scenario)='Query'     THEN 1 ELSE 0 END) AS query_count,
@@ -2977,7 +2977,7 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
       COALESCE(am2.AgentName, am.AgentName, q.User) AS agent_name,
       IFNULL(NULLIF(TRIM(q.Campaign),''),'-')      AS tq_mq_bq,
       COUNT(*)                                     AS audit_count,
-      ROUND(AVG(${CQ_SCORE_SQL}) * 100,1)           AS cq_score,
+      ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100,1)           AS cq_score,
       SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
       ${_OPENING}    AS opening_skill,
@@ -3072,7 +3072,7 @@ export async function getAgentGuidance(filters: InboundQualityFilters): Promise<
         q.User AS agent_id,
         COALESCE(am.AgentName, q.User) AS agent_name,
         COUNT(*) AS audit_count,
-        ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS cq_score,
+        ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100, 1) AS cq_score,
         ${paramSelect}
       FROM db_audit.call_quality_assessment q
       LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
@@ -3437,7 +3437,7 @@ export async function getWeekWiseQuality(filters: InboundQualityFilters & { scen
         ELSE 'Week 4'
       END                                              AS week_label,
       COUNT(*)                                         AS audit_count,
-      ROUND(AVG(${CQ_SCORE_SQL}) * 100,1)               AS cq_score,
+      ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100,1)               AS cq_score,
       SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
       ${_OPENING}    AS opening_skill,
@@ -3484,7 +3484,7 @@ export async function getDayWiseQuality(filters: InboundQualityFilters & { scena
     SELECT
       DATE_FORMAT(q.CallDate,'%Y-%m-%d')           AS call_date,
       COUNT(*)                                     AS audit_count,
-      ROUND(AVG(${CQ_SCORE_SQL}) * 100,1)           AS cq_score,
+      ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100,1)           AS cq_score,
       SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS fatal_pct,
       ${_OPENING}    AS opening_skill,
@@ -3595,7 +3595,7 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters): 
     SELECT
       COALESCE(am.AgentName, q.User)                                        AS agent,
       COUNT(*)                                                                                     AS audit_count,
-      ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1)                                                                 AS cq_score,
+      ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100, 1)                                                                 AS cq_score,
       SUM(CASE WHEN ${fatalCheckSql('q')}  THEN 1 ELSE 0 END)                                 AS fatal_count,
       ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0), 1) AS fatal_pct,
       SUM(CASE WHEN q.quality_percentage >= 80 THEN 1 ELSE 0 END)                                AS tq_count,

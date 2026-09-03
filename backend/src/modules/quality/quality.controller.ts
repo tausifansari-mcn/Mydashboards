@@ -79,6 +79,17 @@ export async function getMissedOpportunityCategoryDetail(req: Request, res: Resp
   }
 }
 
+export async function getHousingOwnerCQScore(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getHousingOwnerCQScore(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
 export async function getFraudCalls(req: Request, res: Response) {
   try {
     const filters = parseDateRange(req);

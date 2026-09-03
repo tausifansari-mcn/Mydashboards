@@ -3276,7 +3276,85 @@ const CALL_DETAILS_EXPORT_COLUMNS = [
   'Order_Summary', 'Further_Assistance', 'Call_Closing', 'Product_Description_Guideline', 'Alternative_Suggestion',
   'Reason_for_Not_Placing_Order', 'Pricing_and_Discount_Structure',
   'fraud_and_data_security_compliance', 'fraud_detected_sentence',
+  'Fatal', 'Product', 'SoftSkill',
 ];
+
+// ─── Housing Owner CQ Score (client-specific — Opening/Offered/PrepaidPitch/OfferUrgency/
+// Product/SoftSkill/ObjectionHandling) ─────────────────────────────────────────
+// Housing Owner (496) is the only client with Product/SoftSkill populated, so this formula is
+// specific to it rather than folded into the generic OUTBOUND_PARAMS scoring:
+//   (Opening + Offered + ObjectionHandling + PrepaidPitch + OfferUrgency + Product + SoftSkill) / 7
+// Opening/Offered/PrepaidPitch/OfferUrgency/Product/SoftSkill are 0/1 flags (blank/NULL counts
+// as 0, same convention used everywhere else in this file). ObjectionHandling is free text for
+// this client, not a flag: a real sentence scores 1, an explicit "None" scores 0, and a
+// genuinely blank value is excluded from both the numerator and denominator for that call (so
+// that call divides by 6, not 7) — per explicit instruction ("if blank then not consider").
+const HOUSING_OWNER_CLIENT_ID = 496;
+
+function housingOwnerCQExpr(alias = 'cd'): string {
+  const p = alias ? `${alias}.` : '';
+  const flagSum = ['Opening', 'Offered', 'PrepaidPitch', 'OfferUrgency', 'Product', 'SoftSkill']
+    .map(c => `IF(${p}${c}=1,1,0)`).join(' + ');
+  const ohBlank = `(${p}ObjectionHandling IS NULL OR TRIM(${p}ObjectionHandling) = '')`;
+  const ohNone = `LOWER(TRIM(${p}ObjectionHandling)) IN ('none','na','n/a','null')`;
+  const ohScore = `CASE WHEN ${ohBlank} THEN 0 WHEN ${ohNone} THEN 0 ELSE 1 END`;
+  const ohCounted = `CASE WHEN ${ohBlank} THEN 0 ELSE 1 END`;
+  return `((${flagSum} + ${ohScore}) / (6 + ${ohCounted}))`;
+}
+
+export interface HousingOwnerAgentCQRow {
+  agentId: string;
+  agentName: string;
+  callCount: number;
+  avgScore: number;
+}
+export interface HousingOwnerCQScoreResult {
+  overallScore: number;
+  totalCalls: number;
+  byAgent: HousingOwnerAgentCQRow[];
+}
+
+export async function getHousingOwnerCQScore(filters: QualityFilters): Promise<HousingOwnerCQScoreResult> {
+  const { startDate, endDate } = filters;
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const perCallScore = housingOwnerCQExpr('cd');
+  const params = [startDate, endDate, ...campParams];
+
+  const [overallRow] = await querySource<{ avg_score: number | null; total_calls: number }>(`
+    SELECT ROUND(AVG(${perCallScore}) * 100, 1) AS avg_score, COUNT(*) AS total_calls
+    FROM db_external.CallDetails cd
+    WHERE cd.client_id = ${HOUSING_OWNER_CLIENT_ID}
+      AND cd.CallDate BETWEEN ? AND ?
+      AND cd.MobileNo IS NOT NULL AND cd.MobileNo != '' ${campF}
+  `, params);
+
+  const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; avg_score: number | null }>(`
+    SELECT
+      cd.AgentName AS agent_id,
+      COALESCE(am.AgentName, cd.AgentName) AS agent_name,
+      COUNT(*) AS call_count,
+      ROUND(AVG(${perCallScore}) * 100, 1) AS avg_score
+    FROM db_external.CallDetails cd
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE cd.client_id = ${HOUSING_OWNER_CLIENT_ID}
+      AND cd.CallDate BETWEEN ? AND ?
+      AND cd.MobileNo IS NOT NULL AND cd.MobileNo != '' ${campF}
+      AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
+    GROUP BY cd.AgentName, am.AgentName
+    ORDER BY avg_score DESC
+  `, params);
+
+  return {
+    overallScore: Number(overallRow?.avg_score ?? 0),
+    totalCalls: Number(overallRow?.total_calls ?? 0),
+    byAgent: agentRows.map(r => ({
+      agentId: String(r.agent_id),
+      agentName: String(r.agent_name ?? r.agent_id),
+      callCount: Number(r.call_count),
+      avgScore: Number(r.avg_score ?? 0),
+    })),
+  };
+}
 
 // CallDate needs an explicit SQL-side format (dd-mm-yyyy hh:mm:ss) rather than the raw DATETIME —
 // letting mysql2/CSV serialize a Date object directly produces a locale/timezone-dependent string.

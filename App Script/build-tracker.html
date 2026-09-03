@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Call Master Analytics · Build Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<style>
+:root{
+    --green:#1565C0;
+    --green-dark:#0D47A1;
+    --mint:#dbe9fb;
+    --mint-2:#eef5fd;
+    --ink:#15212d;
+    --text:#25323d;
+    --muted:#71808c;
+    --line:#e5ebe9;
+    --surface:#fff;
+    --amber:#eea12b;
+    --amber-soft:#fff6e8;
+    --red:#e8607d;
+    --red-soft:#fff0f4;
+    --slate:#8b9996;
+    --slate-soft:#f4f6f5;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Inter,system-ui,sans-serif;background:#f6f8fb;color:var(--text);min-height:100vh}
+.topbar{background:#fff;border-bottom:1px solid var(--line);padding:14px 26px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:10}
+.brand-mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--green),var(--green-dark));display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;flex:none}
+.brand-title{font-size:15px;font-weight:800;color:var(--ink)}
+.brand-sub{font-size:10px;color:var(--muted);font-weight:600;margin-top:1px}
+.container{max-width:1320px;margin:0 auto;padding:24px 26px 60px}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+.page-head h1{font-size:20px;font-weight:800;color:var(--ink)}
+.page-head p{font-size:11px;color:var(--muted);font-weight:600;margin-top:4px}
+.refresh-note{font-size:10px;color:var(--muted);font-weight:700;background:#fff;border:1px solid var(--line);border-radius:8px;padding:7px 11px;display:flex;align-items:center;gap:6px}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:22px}
+.stat-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.stat-card .label{font-size:9px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.stat-card .value{font-size:22px;font-weight:800;color:var(--ink);margin-top:6px}
+.stat-card.accent-green .value{color:#169a73}
+.stat-card.accent-amber .value{color:#c17c0e}
+.stat-card.accent-red .value{color:#c1425c}
+.stat-card.accent-blue .value{color:var(--green)}
+.overall-bar-wrap{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:22px}
+.overall-bar-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
+.overall-bar-head span:first-child{font-size:11px;font-weight:800;color:var(--ink);text-transform:uppercase;letter-spacing:.03em}
+.overall-bar-head span:last-child{font-size:13px;font-weight:800;color:var(--green)}
+.overall-track{height:10px;border-radius:99px;background:var(--slate-soft);overflow:hidden}
+.overall-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--green),var(--green-dark));transition:width .5s ease}
+.filter-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.filter-row select,.filter-row input{font-family:inherit;font-size:11px;font-weight:600;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)}
+.filter-row input{min-width:220px}
+.filter-row input:focus,.filter-row select:focus{outline:none;border-color:var(--green)}
+.result-count{font-size:10px;color:var(--muted);font-weight:700;margin-left:auto}
+.table-wrap{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+thead th{background:linear-gradient(90deg,var(--green),var(--green-dark));color:#fff;text-align:left;padding:11px 14px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+tbody tr{border-top:1px solid var(--line)}
+tbody tr:hover{background:var(--mint-2)}
+td{padding:11px 14px;vertical-align:top}
+.process-cell{font-weight:800;color:var(--ink);white-space:nowrap}
+.module-pill{display:inline-block;font-size:8.5px;font-weight:700;color:var(--muted);background:var(--slate-soft);border-radius:5px;padding:2px 6px;margin-top:4px}
+.activity-cell{font-weight:700;color:var(--text);max-width:230px}
+.status-badge{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:800;border-radius:999px;padding:4px 9px;white-space:nowrap}
+.status-badge.created{color:#169a73;background:#e7f8f1;border:1px solid #c3ecdc}
+.status-badge.partial{color:#c17c0e;background:var(--amber-soft);border:1px solid #f5dfad}
+.status-badge.notstarted{color:var(--muted);background:var(--slate-soft);border:1px solid var(--line)}
+.status-badge.blocked{color:#c1425c;background:var(--red-soft);border:1px solid #f6c9d4}
+.pct-cell{min-width:100px}
+.pct-track{height:6px;border-radius:99px;background:var(--slate-soft);overflow:hidden;margin-bottom:4px}
+.pct-fill{height:100%;border-radius:99px}
+.pct-label{font-size:10px;font-weight:800;color:var(--ink)}
+.action-cell{color:var(--text);max-width:280px;font-size:11px;line-height:1.45}
+.blockage-cell{max-width:280px;font-size:11px;line-height:1.45;color:#a4364f}
+.blockage-cell.none{color:var(--slate);font-style:italic}
+.date-cell{white-space:nowrap;color:var(--muted);font-size:10.5px;font-weight:600}
+.empty-state{padding:60px 20px;text-align:center;color:var(--muted)}
+.empty-state i{font-size:26px;margin-bottom:10px;display:block;color:var(--line)}
+footer{text-align:center;padding:26px;font-size:10px;color:var(--muted);font-weight:600}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="brand-mark"><i class="fas fa-bolt"></i></div>
+    <div>
+        <div class="brand-title">Call Master Analytics</div>
+        <div class="brand-sub">Build Tracker</div>
+    </div>
+</div>
+
+<div class="container">
+    <div class="page-head">
+        <div>
+            <h1>Process Build Tracker</h1>
+            <p>What's been built per process, what's still in progress, and what's blocking completion.</p>
+        </div>
+        <div class="refresh-note"><i class="fas fa-circle-info"></i> Frozen snapshot, updated manually — see Build-Tracker.xlsx to edit and refresh.</div>
+    </div>
+
+    <div class="summary-grid" id="summaryGrid"></div>
+
+    <div class="overall-bar-wrap">
+        <div class="overall-bar-head">
+            <span>Overall Completion</span>
+            <span id="overallPct">0%</span>
+        </div>
+        <div class="overall-track"><div class="overall-fill" id="overallFill" style="width:0%"></div></div>
+    </div>
+
+    <div class="filter-row">
+        <select id="processFilter"><option value="">All Processes</option></select>
+        <select id="statusFilter">
+            <option value="">All Statuses</option>
+            <option value="Created">Created</option>
+            <option value="Partially Created">Partially Created</option>
+            <option value="Not Started">Not Started</option>
+            <option value="Blocked">Blocked</option>
+        </select>
+        <input type="search" id="searchInput" placeholder="Search activity, action, blockage...">
+        <span class="result-count" id="resultCount"></span>
+    </div>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Process</th>
+                    <th>Activity</th>
+                    <th>Status</th>
+                    <th>% Complete</th>
+                    <th>Action Taken</th>
+                    <th>Blockage / Remaining Work</th>
+                    <th>Updated</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<footer>© 2026 Call Master Analytics · Build Tracker</footer>
+
+<script>
+// Frozen snapshot — mirrors Build-Tracker.xlsx (same folder). To refresh: edit the .xlsx,
+// then copy the rows back into this array (one manual sync, matching how the main dashboard's
+// activity data is refreshed — no live connection, per that same standing preference).
+const rows = [
+  ['Bellavita','Inbound AI Quality','Social Media & Consumer Court Threat Detection','Created',100,'Live per-day detection deployed','','2026-08-26'],
+  ['Bellavita','Inbound AI Quality','Potential Scam Leads Detection','Created',100,'Live per-day detection deployed','','2026-08-26'],
+  ['Bellavita','Inbound AI Quality','Fraud Call Analysis','Created',100,'Live per-day detection deployed','','2026-08-26'],
+  ['Bellavita','Inbound AI Quality','CLAP Analysis (Logistic/Agent/Product Pos-Neg)','Created',100,'3-line chart + branch pos/neg bars built','','2026-08-27'],
+  ['Bellavita','Inbound AI Quality','Scenarios (multi-line, per-scenario picker)','Created',100,'Multi-line default view + single-scenario dropdown built','','2026-08-27'],
+  ['Bellavita','Inbound AI Quality','Repeat Call Analysis','Created',100,'Live per-day detection deployed','','2026-08-26'],
+  ['Bellavita','Inbound AI Quality','CQ Score % (excl. fatal calls)','Created',100,'Fatal calls (AND of 6 params) now excluded from overall score','','2026-08-31'],
+  ['Bellavita','Inbound AI Quality','Fatal Call Detection (AND of 6 params)','Created',100,'Validated 1:1 against manual Excel filter (18 vs 17, gap = 1 ungraded call)','','2026-08-31'],
+  ['Bellavita','Inbound AI Quality','Fatal Calls CSV Download','Created',100,'Export button added to Fatal Calls modal','','2026-08-31'],
+  ['Bellavita','Outbound AI Quality','Magical Script — OP','Created',100,'Hardcoded verbatim business script (pre-existing)','','2026-08-20'],
+  ['Bellavita','Outbound AI Quality','Magical Script — CSP','Created',100,'Hardcoded variant scripts (pre-existing)','','2026-08-20'],
+  ['Bellavita','Outbound AI Quality','Magical Script — Offer / Category scripts','Created',100,'Category-specific scripts configured (pre-existing)','','2026-08-20'],
+  ['Bellavita','Outbound AI Quality','Missed Opportunity — Category Distribution','Created',100,'Rebuilt on real Category/SubCategory columns (was hardcoded perfume text)','','2026-08-31'],
+  ['Bellavita','Outbound AI Quality','Missed Opportunity — Category Drill-down','Created',100,'SubCategory + CustomerObjectionCategory/SubCategory modal added','','2026-08-31'],
+  ['Bellavita','Outbound AI Quality','Campaign Filter (page-level)','Not Applicable',0,'Single-campaign client — dropdown auto-hides','','2026-08-29'],
+
+  ['GNC','Inbound AI Quality','Social Threat / Scam / Fraud / CLAP / Scenarios / Repeat Call','Created',100,'Same detection set as Bellavita, live','','2026-08-27'],
+  ['GNC','Inbound AI Quality','CQ Score % (excl. fatal calls)','Created',100,'Fatal exclusion applied generically, no per-client work needed','','2026-08-31'],
+  ['GNC','Outbound AI Quality','Magical Script — OP/CSP/Offer','Created',100,'Configured via admin Edit Scripts UI','','2026-08-20'],
+  ['GNC','Outbound AI Quality','Missed Opportunity — Category Distribution','Created',100,'Auto-inherits generic rebuild, no client-specific work needed','','2026-08-31'],
+
+  ["Neeman's",'Inbound AI Quality','Social Threat / Scam / Fraud / CLAP / Scenarios / Repeat Call','Created',100,'Same detection set as Bellavita, live','','2026-08-27'],
+  ["Neeman's",'Inbound AI Quality','CQ Score % (excl. fatal calls)','Created',100,'Fatal exclusion applied generically','','2026-08-31'],
+  ["Neeman's",'Outbound AI Quality','Magical Script — OP/CSP/Offer','Created',100,'Configured via admin Edit Scripts UI','','2026-08-20'],
+
+  ['Viega','Inbound AI Quality','Social Threat / Scam / Fraud / CLAP / Scenarios / Repeat Call','Created',100,'Real per-day data live (Fraud/Logistics genuinely zero — confirmed, not a bug)','','2026-08-27'],
+  ['Viega','Outbound AI Quality','Magical Script (OP/CSP/Offer)','Not Started',0,'','Not yet added to COLUMN_BASED_CLIENTS — needs raw-data verification (Opening/Offered/ContactSettingContext populated?) before enabling','2026-08-31'],
+
+  ['Exicom','Inbound AI Quality','Social Threat / Scam / Fraud / CLAP / Scenarios / Repeat Call','Created',100,'Real per-day data live (Social/Scam/Fraud genuinely zero for this client)','','2026-08-27'],
+  ['Exicom','Outbound AI Quality','Magical Script (OP/CSP/Offer)','Not Started',0,'','Not yet added to COLUMN_BASED_CLIENTS — needs raw-data verification first','2026-08-31'],
+
+  ['Clovia','Inbound AI Quality','Social Threat / Scam / Fraud / CLAP / Scenarios / Repeat Call','Created',100,'Real per-day data live, verified against manual check','','2026-08-26'],
+  ['Clovia','Outbound AI Quality','Magical Script (OP/CSP/Offer)','Not Started',0,'','Not yet added to COLUMN_BASED_CLIENTS — needs raw-data verification first','2026-08-31'],
+
+  ['Dalmia','Inbound AI Quality','Social Threat / Scam / Fraud / CLAP / Scenarios / Repeat Call','Created',100,'Real per-day data live','','2026-08-27'],
+  ['Dalmia','Outbound AI Quality','Magical Script (OP/CSP/Offer)','Not Started',0,'','Not yet added to COLUMN_BASED_CLIENTS — needs raw-data verification first','2026-08-31'],
+
+  ['Du Digital BD','Inbound AI Quality','Social Threat / Scam / Fraud / CLAP / Scenarios / Repeat Call','Created',100,'Real per-day data live (Social/Fraud/Logistics genuinely zero for this client)','','2026-08-27'],
+  ['Du Digital BD','Outbound AI Quality','Magical Script (OP/CSP/Offer)','Not Started',0,'','Not yet added to COLUMN_BASED_CLIENTS — needs raw-data verification first','2026-08-31'],
+
+  ['Housing Premium','Outbound AI Quality','CX Parameter Scoring Fix (Opening/Objection/Prepaid)','Created',100,'Switched to "non-blank & non-none & non-zero" scoring — was 0% on all 3, now real (90.4/65.1/79.5%)','','2026-08-29'],
+  ['Housing Premium','Outbound AI Quality','Dashboard Tab (CST/CRT cache)','Created',100,'Fixed agent_id column width (VARCHAR 20→150) that was silently stalling the cache job','','2026-08-29'],
+  ['Housing Premium','Outbound AI Quality','Magical Script — OP','Created',100,'Business script text added to shivamgiri.md_magical_scripts','','2026-08-29'],
+  ['Housing Premium','Outbound AI Quality','Magical Script — CSP','Created',100,'Business script text added','','2026-08-29'],
+  ['Housing Premium','Outbound AI Quality','Magical Script — Offer / Objection scripts','Not Started',0,'','No business copy provided yet for Offer stage or objection-category rebuttals — send text to add','2026-08-31'],
+  ['Housing Premium','Outbound AI Quality','Column-based Funnel (Bellavita-style)','Created',100,'Added to COLUMN_BASED_CLIENTS after verifying Opening/Offered/Category data shape','','2026-08-29'],
+
+  ['Housing Owner','Outbound AI Quality','Column-based Funnel (Bellavita-style)','Partially Created',75,'Added to COLUMN_BASED_CLIENTS; CSP/Offer/Category stages fully working with real data','Opening column is 0/412 populated for this client (upstream data-pipeline gap, not fixable from portal) — OP funnel tile will always show no data. Added an OP-gate bypass so CSP/Offer are not blocked by this.','2026-08-31'],
+  ['Housing Owner','Outbound AI Quality','Magical Script — OP','Created',100,'Business script text added (OP funnel metric itself has no underlying data, see blockage above)','','2026-08-31'],
+  ['Housing Owner','Outbound AI Quality','Magical Script — CSP (4 variants)','Created',100,'All 4 variant scripts added as one labeled block','','2026-08-31'],
+  ['Housing Owner','Outbound AI Quality','Magical Script — Offer scripts','Not Started',0,'','No business copy provided yet for the Offer stage','2026-08-31'],
+
+  ['Lawyer Panel','Outbound AI Quality','Rename (was "Lawyer Panel Feedback")','Created',100,'md_clients name updated','','2026-08-29'],
+  ['Lawyer Panel','Outbound AI Quality','Campaign Filter (regional/non_regional)','Created',100,'Page-level dropdown next to Date Range, applies to every tab','','2026-08-29'],
+  ['Lawyer Panel','Outbound AI Quality','Magical Script','Blocked',0,'','Explicitly hidden per your instruction ("remove Magical script for now") — not a technical blocker','2026-08-29'],
+  ['Lawyer Panel','Inbound AI Quality','Inbound Audit Data Visibility','Created',100,'Renamed from "Lawyer Panel Feedback" to "Lawyer Panel" — data exists 2026-05-20 to 06-30 only','Falls outside "this month" default filter — pick that date range manually to see it','2026-06-29'],
+
+  ['All Outbound Processes','Outbound AI Quality','Campaign Filter — backend + Dashboard cache','Created',100,'Added campaign_id to outbound_dashboard_cache (migration + backfill) and threaded campaignId through every KPI/tab query','','2026-08-29'],
+  ['All Outbound Processes','Outbound AI Quality','Raw Data Tab — Campaign Filter','Created',100,'/quality/raw-data/campaigns endpoint + dropdown, auto-hides for single-campaign clients','','2026-08-29'],
+  ['All Outbound Processes','Outbound AI Quality','Missed Opportunity — Generic Category Rebuild','Created',100,'Replaced Bellavita-only hardcoded perfume taxonomy with live Category/SubCategory grouping','','2026-08-31'],
+  ['All Inbound Processes','Inbound AI Quality','Fatal Call Redefinition (AND of 6 params)','Created',100,'Replaced quality_percentage=0 definition; validated exact match against Excel (18 vs 17)','','2026-08-31'],
+  ['All Inbound Processes','Inbound AI Quality','CQ Score — Exclude Fatal Calls','Created',100,'cq_score now identical formula to cq_score_no_fatal across 10 query sites','','2026-08-31'],
+  ['All Inbound Processes','Inbound AI Quality','Housing Premium/Owner Agent Name Auto-Suggest','Created',100,'Long MCN-Extension agent IDs now auto-suggest just the human name when adding a missing agent','','2026-08-28'],
+
+  ['App Script — Call Master Analytics','Standalone Dashboard','Blue Theme (Mydashboards match)','Created',100,'Green palette swapped to blue, semantic status colors kept','','2026-08-26'],
+  ['App Script — Call Master Analytics','Standalone Dashboard','Real Per-Process Data (8 processes)','Created',100,"Bellavita/GNC/Neeman's/Viega/Exicom/Clovia/Dalmia/Du Digital BD — real DB snapshot, refreshed manually",'','2026-08-27'],
+  ['App Script — Call Master Analytics','Standalone Dashboard','Scenario Picker + Multi-line Chart','Created',100,'Dropdown isolates one scenario type; default view shows all scenarios as separate lines','','2026-08-27'],
+  ['App Script — Call Master Analytics','Standalone Dashboard','CLAP Branch Pos/Neg (Logistic/Agent/Product)','Created',100,'3-line chart + toggle + proportional bars','','2026-08-27'],
+  ['App Script — Call Master Analytics','Standalone Dashboard','Process Card Closed/Open Counts','Created',100,'Replaced fake progress-bar % with real closed/open counts','','2026-08-27'],
+  ['App Script — Call Master Analytics','Standalone Dashboard','Snapshot Refresh (manual)','Blocked',0,'','Live connection deliberately rejected by you — data is a frozen snapshot; needs a manual re-run of the same SQL + paste to refresh','2026-08-27'],
+];
+
+const STATUS_META = {
+  'Created':            { cls: 'created',    icon: 'fa-circle-check',       color: '#22b990' },
+  'Partially Created':  { cls: 'partial',     icon: 'fa-hourglass-half',     color: '#eea12b' },
+  'Not Started':        { cls: 'notstarted',  icon: 'fa-circle-dashed',      color: '#8b9996' },
+  'Blocked':            { cls: 'blocked',     icon: 'fa-triangle-exclamation', color: '#e8607d' },
+  'Not Applicable':     { cls: 'notstarted',  icon: 'fa-minus',              color: '#8b9996' },
+};
+
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function pctColor(pct){
+  if (pct >= 100) return '#22b990';
+  if (pct >= 40) return '#eea12b';
+  if (pct > 0) return '#e8607d';
+  return '#c9d2d8';
+}
+
+let activeStatus = '';
+let activeProcess = '';
+let activeSearch = '';
+
+function populateProcessFilter(){
+  const processes = [...new Set(rows.map(r => r[0]))];
+  const sel = document.getElementById('processFilter');
+  processes.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p; opt.textContent = p;
+    sel.appendChild(opt);
+  });
+}
+
+function renderSummary(){
+  const total = rows.length;
+  const created = rows.filter(r => r[3] === 'Created').length;
+  const partial = rows.filter(r => r[3] === 'Partially Created').length;
+  const notStarted = rows.filter(r => r[3] === 'Not Started').length;
+  const blocked = rows.filter(r => r[3] === 'Blocked').length;
+  const avgPct = Math.round(rows.reduce((s, r) => s + Number(r[4] || 0), 0) / total);
+
+  const cards = [
+    { label: 'Total Activities', value: total, accent: '' },
+    { label: 'Created', value: created, accent: 'accent-green' },
+    { label: 'Partially Created', value: partial, accent: 'accent-amber' },
+    { label: 'Not Started', value: notStarted, accent: '' },
+    { label: 'Blocked', value: blocked, accent: 'accent-red' },
+    { label: 'Overall %', value: avgPct + '%', accent: 'accent-blue' },
+  ];
+  document.getElementById('summaryGrid').innerHTML = cards.map(c => `
+    <div class="stat-card ${c.accent}">
+      <div class="label">${c.label}</div>
+      <div class="value">${c.value}</div>
+    </div>`).join('');
+
+  document.getElementById('overallPct').textContent = avgPct + '%';
+  document.getElementById('overallFill').style.width = avgPct + '%';
+}
+
+function renderTable(){
+  const q = activeSearch.trim().toLowerCase();
+  const filtered = rows.filter(r => {
+    if (activeProcess && r[0] !== activeProcess) return false;
+    if (activeStatus && r[3] !== activeStatus) return false;
+    if (q && !(r[0] + ' ' + r[2] + ' ' + r[5] + ' ' + r[6]).toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  document.getElementById('resultCount').textContent = `${filtered.length} of ${rows.length} activities`;
+
+  const body = document.getElementById('tableBody');
+  if (!filtered.length){
+    body.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i class="fas fa-magnifying-glass"></i>No activity matches this filter.</div></td></tr>`;
+    return;
+  }
+
+  body.innerHTML = filtered.map(r => {
+    const [process, module_, activity, status, pct, action, blockage, updated] = r;
+    const meta = STATUS_META[status] || STATUS_META['Not Started'];
+    return `
+      <tr>
+        <td class="process-cell">${esc(process)}<div class="module-pill">${esc(module_)}</div></td>
+        <td class="activity-cell">${esc(activity)}</td>
+        <td><span class="status-badge ${meta.cls}"><i class="fas ${meta.icon}"></i>${esc(status)}</span></td>
+        <td class="pct-cell">
+          <div class="pct-track"><div class="pct-fill" style="width:${pct}%;background:${pctColor(pct)}"></div></div>
+          <span class="pct-label">${pct}%</span>
+        </td>
+        <td class="action-cell">${action ? esc(action) : '<span style="color:var(--slate);font-style:italic">—</span>'}</td>
+        <td class="blockage-cell ${blockage ? '' : 'none'}">${blockage ? esc(blockage) : 'None'}</td>
+        <td class="date-cell">${esc(updated)}</td>
+      </tr>`;
+  }).join('');
+}
+
+document.getElementById('processFilter').addEventListener('change', e => { activeProcess = e.target.value; renderTable(); });
+document.getElementById('statusFilter').addEventListener('change', e => { activeStatus = e.target.value; renderTable(); });
+document.getElementById('searchInput').addEventListener('input', e => { activeSearch = e.target.value; renderTable(); });
+
+populateProcessFilter();
+renderSummary();
+renderTable();
+</script>
+</body>
+</html>
