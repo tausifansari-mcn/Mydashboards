@@ -8,7 +8,13 @@ import { getProjectTrend, getProjectKeyByQaClientId } from '../inbound/inbound.s
 // The stored quality_percentage (total_score/max_score) is unreliable, so every CQ-style score in
 // this module is recomputed as the average of the 19 call-quality parameters: per call,
 // score = (# satisfied params) / 19, blank params are simply not counted as satisfied; then the
-// per-call scores are averaged. express_empathy is a newer parameter and is excluded from the 19.
+// per-call scores are averaged. express_empathy has been removed as a scored parameter throughout
+// this module (was never part of the 19, but has been dropped from every other sub-score/export
+// it used to appear in too — see the Soft Skill, TNI, Quality Parameters and export sections) —
+// EXCEPT for Clovia (ClientId 468), whose audit data populates express_empathy on 100% of calls
+// (unlike other clients, where it's largely unpopulated), so per explicit instruction it counts as
+// a 20th parameter there: score = (# satisfied of 20) / 20, gated per-row on ClientId so mixed-
+// client aggregates (which most of these queries are) still score every other client on 19.
 const CQ_PARAM_COLS = [
   'call_answered_within_5_seconds',
   'customer_concern_acknowledged',
@@ -30,7 +36,22 @@ const CQ_PARAM_COLS = [
   'further_assistance_offered',
   'proper_call_closure',
 ];
-const CQ_SCORE_SQL = `(${CQ_PARAM_COLS.map(c => `IF(q.${c} = 1, 1, 0)`).join(' + ')}) / ${CQ_PARAM_COLS.length}`;
+const CLOVIA_CLIENT_ID = '468';
+const CQ_PARAM_COLS_CLOVIA = [...CQ_PARAM_COLS, 'express_empathy'];
+const cqFlagSum = (cols: string[]) => cols.map(c => `IF(q.${c} = 1, 1, 0)`).join(' + ');
+const CQ_SCORE_SQL = `(CASE WHEN q.ClientId = '${CLOVIA_CLIENT_ID}'
+  THEN (${cqFlagSum(CQ_PARAM_COLS_CLOVIA)}) / ${CQ_PARAM_COLS_CLOVIA.length}
+  ELSE (${cqFlagSum(CQ_PARAM_COLS)}) / ${CQ_PARAM_COLS.length}
+END)`;
+
+// Clovia (ClientId 468) uses its own team's terminology for this parameter in every parameter
+// list/label it appears in — display label only, the underlying column and scoring are unchanged.
+const CLOVIA_LABEL_OVERRIDES: Record<string, string> = {
+  call_answered_within_5_seconds: 'Standard Call Opening',
+};
+function clientLabel(col: string, isClovia: boolean, fallback: string): string {
+  return isClovia ? (CLOVIA_LABEL_OVERRIDES[col] ?? fallback) : fallback;
+}
 
 // ─── Fatal call definition ─────────────────────────────────────────────────────
 // A call is FATAL when ALL SIX of these compliance-critical parameters scored 0 at once (an AND
@@ -504,16 +525,15 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
         ELSE (
-          IF(q.professionalism_maintained         = 1, 0.10, 0) +
-          IF(q.assurance_or_appreciation_provided = 1, 0.10, 0) +
-          IF(q.pronunciation_and_clarity          = 1, 0.10, 0) +
-          IF(q.enthusiasm_and_no_fumbling         = 1, 0.10, 0) +
-          IF(q.active_listening                   = 1, 0.10, 0) +
-          IF(q.politeness_and_no_sarcasm          = 1, 0.10, 0) +
-          IF(q.proper_grammar                     = 1, 0.10, 0) +
-          IF(q.accurate_issue_probing             = 1, 0.10, 0) +
-          IF(q.customer_concern_acknowledged      = 1, 0.10, 0) +
-          IF(q.express_empathy                    = 1, 0.10, 0)
+          IF(q.professionalism_maintained         = 1, 0.111111111111111, 0) +
+          IF(q.assurance_or_appreciation_provided = 1, 0.111111111111111, 0) +
+          IF(q.pronunciation_and_clarity          = 1, 0.111111111111111, 0) +
+          IF(q.enthusiasm_and_no_fumbling         = 1, 0.111111111111111, 0) +
+          IF(q.active_listening                   = 1, 0.111111111111111, 0) +
+          IF(q.politeness_and_no_sarcasm          = 1, 0.111111111111111, 0) +
+          IF(q.proper_grammar                     = 1, 0.111111111111111, 0) +
+          IF(q.accurate_issue_probing             = 1, 0.111111111111111, 0) +
+          IF(q.customer_concern_acknowledged      = 1, 0.111111111111111, 0)
         ) END
       ) * 100, 1) AS soft_skill,
       ROUND(AVG(
@@ -1299,6 +1319,7 @@ const SCORE_LABEL: Record<string, string> = {
 
 export async function getScoreComponentDetail(filters: InboundQualityFilters): Promise<ScoreComponentData> {
   const { startDate, endDate, clientId } = filters;
+  const isClovia = clientId === CLOVIA_CLIENT_ID;
   const clientFilter = clientId ? 'AND q.ClientId = ?' : '';
   const params: (string | number)[] = clientId
     ? [startDate, endDate, clientId]
@@ -1317,7 +1338,6 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.politeness_and_no_sarcasm,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS politeness_and_no_sarcasm,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_grammar,0)                     = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_grammar,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.accurate_issue_probing,0)             = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS accurate_issue_probing,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.express_empathy,0)                    = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS express_empathy,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_hold_procedure,0)              = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_hold_procedure,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_transfer_and_language,0)       = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_transfer_and_language,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.dead_air_under_10_seconds,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS dead_air_under_10_seconds,
@@ -1327,6 +1347,7 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.upselling_or_offers_suggested,0)      = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS upselling_or_offers_suggested,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.further_assistance_offered,0)         = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS further_assistance_offered,
       ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_call_closure,0)                = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_call_closure
+      ${isClovia ? ", ROUND(100.0 * SUM(CASE WHEN COALESCE(q.express_empathy,0) = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS express_empathy" : ''}
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -1337,7 +1358,7 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
   if (!rows.length) return empty;
 
   const r = rows[0];
-  const p = (col: string): ScoreParamDetail => ({ column: col, label: SCORE_LABEL[col] ?? col, pct: Number(r[col] ?? 0) });
+  const p = (col: string): ScoreParamDetail => ({ column: col, label: clientLabel(col, isClovia, SCORE_LABEL[col] ?? col), pct: Number(r[col] ?? 0) });
 
   return {
     total:          Number(r.total ?? 0),
@@ -1354,7 +1375,7 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
       p('proper_grammar'),
       p('accurate_issue_probing'),
       p('customer_concern_acknowledged'),
-      p('express_empathy'),
+      ...(isClovia ? [p('express_empathy')] : []),
     ],
     hold_procedure: [
       p('proper_hold_procedure'),
@@ -1386,16 +1407,15 @@ const COMPONENT_SCORE_EXPR: Record<string, string> = {
   soft_skill: `
     CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
     ELSE (
-      IF(q.professionalism_maintained         = 1, 0.10, 0) +
-      IF(q.assurance_or_appreciation_provided = 1, 0.10, 0) +
-      IF(q.pronunciation_and_clarity          = 1, 0.10, 0) +
-      IF(q.enthusiasm_and_no_fumbling         = 1, 0.10, 0) +
-      IF(q.active_listening                   = 1, 0.10, 0) +
-      IF(q.politeness_and_no_sarcasm          = 1, 0.10, 0) +
-      IF(q.proper_grammar                     = 1, 0.10, 0) +
-      IF(q.accurate_issue_probing             = 1, 0.10, 0) +
-      IF(q.customer_concern_acknowledged      = 1, 0.10, 0) +
-      IF(q.express_empathy                    = 1, 0.10, 0)
+      IF(q.professionalism_maintained         = 1, 0.111111111111111, 0) +
+      IF(q.assurance_or_appreciation_provided = 1, 0.111111111111111, 0) +
+      IF(q.pronunciation_and_clarity          = 1, 0.111111111111111, 0) +
+      IF(q.enthusiasm_and_no_fumbling         = 1, 0.111111111111111, 0) +
+      IF(q.active_listening                   = 1, 0.111111111111111, 0) +
+      IF(q.politeness_and_no_sarcasm          = 1, 0.111111111111111, 0) +
+      IF(q.proper_grammar                     = 1, 0.111111111111111, 0) +
+      IF(q.accurate_issue_probing             = 1, 0.111111111111111, 0) +
+      IF(q.customer_concern_acknowledged      = 1, 0.111111111111111, 0)
     ) END`,
   hold_procedure: `
     CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
@@ -2914,15 +2934,14 @@ const _OPENING = `ROUND(AVG(
 const _SOFT = `ROUND(AVG(
   CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
   ELSE (
-    IF(q.professionalism_maintained        =1,0.111111111111111,0)+
-    IF(q.assurance_or_appreciation_provided=1,0.111111111111111,0)+
-    IF(q.express_empathy                   =1,0.111111111111111,0)+
-    IF(q.pronunciation_and_clarity         =1,0.111111111111111,0)+
-    IF(q.enthusiasm_and_no_fumbling        =1,0.111111111111111,0)+
-    IF(q.active_listening                  =1,0.111111111111111,0)+
-    IF(q.politeness_and_no_sarcasm         =1,0.111111111111111,0)+
-    IF(q.proper_grammar                    =1,0.111111111111111,0)+
-    IF(q.accurate_issue_probing            =1,0.111111111111111,0)
+    IF(q.professionalism_maintained        =1,0.125,0)+
+    IF(q.assurance_or_appreciation_provided=1,0.125,0)+
+    IF(q.pronunciation_and_clarity         =1,0.125,0)+
+    IF(q.enthusiasm_and_no_fumbling        =1,0.125,0)+
+    IF(q.active_listening                  =1,0.125,0)+
+    IF(q.politeness_and_no_sarcasm         =1,0.125,0)+
+    IF(q.proper_grammar                    =1,0.125,0)+
+    IF(q.accurate_issue_probing            =1,0.125,0)
   ) END
 )*100,1)`;
 
@@ -3050,6 +3069,7 @@ export interface AgentGuidanceResult {
 
 export async function getAgentGuidance(filters: InboundQualityFilters): Promise<AgentGuidanceResult> {
   const { startDate, endDate, clientId } = filters;
+  const isClovia = clientId === CLOVIA_CLIENT_ID;
   const clientFilter = clientId ? 'AND q.ClientId = ?' : '';
   const baseParams: (string | number)[] = clientId
     ? [startDate, endDate, clientId]
@@ -3098,7 +3118,7 @@ export async function getAgentGuidance(filters: InboundQualityFilters): Promise<
     cq_score:    Number(r.cq_score ?? 0),
     params: GUIDANCE_PARAMS.map(p => ({
       column:   p.col,
-      label:    p.label,
+      label:    clientLabel(p.col, isClovia, p.label),
       pct:      Number(r[p.col] ?? 0),
       team_avg: teamAvg[p.col],
       category: p.cat,
@@ -3106,7 +3126,7 @@ export async function getAgentGuidance(filters: InboundQualityFilters): Promise<
   }));
 
   const team_params = GUIDANCE_PARAMS.map(p => ({
-    column: p.col, label: p.label, avg: teamAvg[p.col], category: p.cat,
+    column: p.col, label: clientLabel(p.col, isClovia, p.label), avg: teamAvg[p.col], category: p.cat,
   })).sort((a, b) => a.avg - b.avg);
 
   return { agents, team_params };
@@ -3321,6 +3341,7 @@ export interface QualityParameterRow {
 
 export async function getQualityParameters(filters: InboundQualityFilters & { scenario?: string; agentName?: string }): Promise<QualityParameterRow[]> {
   const { startDate, endDate, clientId, scenario, agentName } = filters;
+  const isClovia = clientId === CLOVIA_CLIENT_ID;
   const params: (string | number)[] = [startDate, endDate];
   let extra = '';
   if (clientId)  { extra += ' AND q.ClientId = ?';  params.push(clientId); }
@@ -3367,9 +3388,8 @@ export async function getQualityParameters(filters: InboundQualityFilters & { sc
       SUM(CASE WHEN further_assistance_offered       IS NOT NULL THEN 1 ELSE 0 END) AS t_fao,
       SUM(COALESCE(further_assistance_offered,0))                                      AS h_fao,
       SUM(CASE WHEN proper_call_closure              IS NOT NULL THEN 1 ELSE 0 END) AS t_closure,
-      SUM(COALESCE(proper_call_closure,0))                                             AS h_closure,
-      SUM(CASE WHEN express_empathy                  IS NOT NULL THEN 1 ELSE 0 END) AS t_empathy,
-      SUM(COALESCE(express_empathy,0))                                                 AS h_empathy
+      SUM(COALESCE(proper_call_closure,0))                                             AS h_closure
+      ${isClovia ? ", SUM(CASE WHEN express_empathy IS NOT NULL THEN 1 ELSE 0 END) AS t_empathy, SUM(COALESCE(express_empathy,0)) AS h_empathy" : ''}
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -3379,7 +3399,7 @@ export async function getQualityParameters(filters: InboundQualityFilters & { sc
   if (!row) return [];
 
   const def: Array<{ label: string; hKey: string; tKey: string }> = [
-    { label: 'Call Answered Within 5 Sec',      hKey: 'h_call_ans', tKey: 't_call_ans' },
+    { label: clientLabel('call_answered_within_5_seconds', isClovia, 'Call Answered Within 5 Sec'), hKey: 'h_call_ans', tKey: 't_call_ans' },
     { label: 'Customer Concern Acknowledged',    hKey: 'h_cca',      tKey: 't_cca'      },
     { label: 'Professionalism Maintained',       hKey: 'h_prof',     tKey: 't_prof'     },
     { label: 'Assurance / Appreciation Provided',hKey: 'h_assur',    tKey: 't_assur'    },
@@ -3398,7 +3418,7 @@ export async function getQualityParameters(filters: InboundQualityFilters & { sc
     { label: 'Upselling / Offers Suggested',     hKey: 'h_ups',      tKey: 't_ups'      },
     { label: 'Further Assistance Offered',       hKey: 'h_fao',      tKey: 't_fao'      },
     { label: 'Proper Call Closure',              hKey: 'h_closure',  tKey: 't_closure'  },
-    { label: 'Express Empathy',                  hKey: 'h_empathy',  tKey: 't_empathy'  },
+    ...(isClovia ? [{ label: 'Express Empathy', hKey: 'h_empathy', tKey: 't_empathy' }] : []),
   ];
 
   return def
@@ -3654,7 +3674,6 @@ export interface RawDataRow {
   upselling_or_offers_suggested: string;
   further_assistance_offered: string;
   proper_call_closure: string;
-  express_empathy: string;
 }
 
 export async function getRawData(filters: InboundQualityFilters): Promise<RawDataRow[]> {
@@ -3695,8 +3714,7 @@ export async function getRawData(filters: InboundQualityFilters): Promise<RawDat
       COALESCE(q.correct_and_complete_information, '')            AS correct_and_complete_information,
       COALESCE(q.upselling_or_offers_suggested, '')               AS upselling_or_offers_suggested,
       COALESCE(q.further_assistance_offered, '')                  AS further_assistance_offered,
-      COALESCE(q.proper_call_closure, '')                         AS proper_call_closure,
-      COALESCE(q.express_empathy, '')                             AS express_empathy
+      COALESCE(q.proper_call_closure, '')                         AS proper_call_closure
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
@@ -3737,7 +3755,6 @@ export async function getRawData(filters: InboundQualityFilters): Promise<RawDat
     upselling_or_offers_suggested:      String(r.upselling_or_offers_suggested),
     further_assistance_offered:         String(r.further_assistance_offered),
     proper_call_closure:                String(r.proper_call_closure),
-    express_empathy:                    String(r.express_empathy),
   }));
 }
 
@@ -3845,16 +3862,29 @@ export interface TNIResult {
   weeks:   TNIWeekRow[];
 }
 
+// Clovia (ClientId 468) gets an 8th Soft Skills parameter (express_empathy) here too, gated
+// per-row like CQ_SCORE_SQL so this fragment stays correct however the caller filters by client.
 const _TNI_SS = `ROUND(AVG(
-    (COALESCE(q.customer_concern_acknowledged,0) +
-     COALESCE(q.professionalism_maintained,0) +
-     COALESCE(q.assurance_or_appreciation_provided,0) +
-     COALESCE(q.express_empathy,0) +
-     COALESCE(q.enthusiasm_and_no_fumbling,0) +
-     COALESCE(q.active_listening,0) +
-     COALESCE(q.politeness_and_no_sarcasm,0) +
-     COALESCE(q.proper_call_closure,0)
-    ) / 8.0 * 100
+    CASE WHEN q.ClientId = '${CLOVIA_CLIENT_ID}' THEN
+      (COALESCE(q.customer_concern_acknowledged,0) +
+       COALESCE(q.professionalism_maintained,0) +
+       COALESCE(q.assurance_or_appreciation_provided,0) +
+       COALESCE(q.enthusiasm_and_no_fumbling,0) +
+       COALESCE(q.active_listening,0) +
+       COALESCE(q.politeness_and_no_sarcasm,0) +
+       COALESCE(q.proper_call_closure,0) +
+       COALESCE(q.express_empathy,0)
+      ) / 8.0 * 100
+    ELSE
+      (COALESCE(q.customer_concern_acknowledged,0) +
+       COALESCE(q.professionalism_maintained,0) +
+       COALESCE(q.assurance_or_appreciation_provided,0) +
+       COALESCE(q.enthusiasm_and_no_fumbling,0) +
+       COALESCE(q.active_listening,0) +
+       COALESCE(q.politeness_and_no_sarcasm,0) +
+       COALESCE(q.proper_call_closure,0)
+      ) / 7.0 * 100
+    END
   ), 1)`;
 
 const _TNI_PK = `ROUND(AVG(
@@ -3874,6 +3904,7 @@ const _TNI_CS = `ROUND(AVG(
 
 export async function getTNIAnalysis(filters: InboundQualityFilters): Promise<TNIResult> {
   const { startDate, endDate, clientId } = filters;
+  const isClovia = clientId === CLOVIA_CLIENT_ID;
   const params: (string | number)[] = [startDate, endDate];
   const extra = clientId ? ' AND q.ClientId = ?' : '';
   if (clientId) params.push(clientId);
@@ -3929,7 +3960,9 @@ export async function getTNIAnalysis(filters: InboundQualityFilters): Promise<TN
       soft_skills:       ss,
       process_knowledge: pk,
       communication:     comm,
-      tni_score:         Math.round((ss * 8 + pk * 5 + comm * 2) / 15 * 10) / 10,
+      tni_score:         isClovia
+        ? Math.round((ss * 8 + pk * 5 + comm * 2) / 15 * 10) / 10
+        : Math.round((ss * 7 + pk * 5 + comm * 2) / 14 * 10) / 10,
     };
   });
 
@@ -3959,7 +3992,7 @@ export interface TNIAgentParamRow {
   customer_concern_acknowledged:      number;
   professionalism_maintained:         number;
   assurance_or_appreciation_provided: number;
-  express_empathy:                    number;
+  express_empathy?:                   number;
   enthusiasm_and_no_fumbling:         number;
   active_listening:                   number;
   politeness_and_no_sarcasm:          number;
@@ -3977,6 +4010,7 @@ export async function getTNIAgentParams(
   filters: InboundQualityFilters & { agentId: string }
 ): Promise<TNIAgentParamRow> {
   const { startDate, endDate, clientId, agentId } = filters;
+  const isClovia = clientId === CLOVIA_CLIENT_ID;
   const params: (string | number)[] = [startDate, endDate, agentId];
   const extra = clientId ? ' AND q.ClientId = ?' : '';
   if (clientId) params.push(clientId);
@@ -3986,7 +4020,7 @@ export async function getTNIAgentParams(
       ROUND(AVG(COALESCE(q.customer_concern_acknowledged,0))      * 100, 1) AS customer_concern_acknowledged,
       ROUND(AVG(COALESCE(q.professionalism_maintained,0))         * 100, 1) AS professionalism_maintained,
       ROUND(AVG(COALESCE(q.assurance_or_appreciation_provided,0)) * 100, 1) AS assurance_or_appreciation_provided,
-      ROUND(AVG(COALESCE(q.express_empathy,0))                    * 100, 1) AS express_empathy,
+      ${isClovia ? "ROUND(AVG(COALESCE(q.express_empathy,0)) * 100, 1) AS express_empathy," : ''}
       ROUND(AVG(COALESCE(q.enthusiasm_and_no_fumbling,0))         * 100, 1) AS enthusiasm_and_no_fumbling,
       ROUND(AVG(COALESCE(q.active_listening,0))                   * 100, 1) AS active_listening,
       ROUND(AVG(COALESCE(q.politeness_and_no_sarcasm,0))          * 100, 1) AS politeness_and_no_sarcasm,
@@ -4010,7 +4044,7 @@ export async function getTNIAgentParams(
     customer_concern_acknowledged:      n('customer_concern_acknowledged'),
     professionalism_maintained:         n('professionalism_maintained'),
     assurance_or_appreciation_provided: n('assurance_or_appreciation_provided'),
-    express_empathy:                    n('express_empathy'),
+    ...(isClovia ? { express_empathy: n('express_empathy') } : {}),
     enthusiasm_and_no_fumbling:         n('enthusiasm_and_no_fumbling'),
     active_listening:                   n('active_listening'),
     politeness_and_no_sarcasm:          n('politeness_and_no_sarcasm'),
@@ -4151,6 +4185,7 @@ export async function getAgentCalls(filters: InboundQualityFilters & { agentId: 
 
 export async function getFatalCallsList(filters: InboundQualityFilters): Promise<FatalCallItem[]> {
   const { startDate, endDate, clientId } = filters;
+  const isClovia = clientId === CLOVIA_CLIENT_ID;
   const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
   const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
@@ -4202,7 +4237,7 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
   return rows.map(r => {
     const failed = paramKeys
       .filter(k => Number(r[k]) === 0)
-      .map(k => FATAL_PARAM_LABELS[k]);
+      .map(k => clientLabel(k, isClovia, FATAL_PARAM_LABELS[k]));
     return {
       lead_id:        String(r.lead_id),
       agent_id:       String(r.agent_id),
@@ -4754,13 +4789,11 @@ export interface ClapIntelligenceResult {
 
 export async function getClapIntelligence(filters: InboundQualityFilters): Promise<ClapIntelligenceResult> {
   const { startDate, endDate, clientId } = filters;
+  const isClovia = clientId === CLOVIA_CLIENT_ID;
   const cf = clientId ? ' AND q.ClientId = ?' : '';
   const base: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
-  const INTEL_PARAMS: { col: string; label: string; cat: string }[] = [
-    ...(GUIDANCE_PARAMS as unknown as { col: string; label: string; cat: string }[]),
-    { col: 'express_empathy', label: 'Express Empathy', cat: 'Soft Skill' },
-  ];
+  const INTEL_PARAMS = GUIDANCE_PARAMS as unknown as { col: string; label: string; cat: string }[];
 
   const paramSelect = INTEL_PARAMS.map(p =>
     `SUM(CASE WHEN COALESCE(q.${p.col},0) = 1 THEN 1 ELSE 0 END) AS ${p.col}_pass`
@@ -5039,7 +5072,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
   const qaTotal = total || 1;
   const qaParams: ClapQaParam[] = INTEL_PARAMS.map(p => ({
     param: p.col,
-    label: p.label,
+    label: clientLabel(p.col, isClovia, p.label),
     category: p.cat,
     passRate: Math.round(Number(qaParamRow[`${p.col}_pass`] ?? 0) / qaTotal * 1000) / 10,
   }));
@@ -5195,7 +5228,7 @@ const CQA_EXPORT_COLUMNS = [
   'politeness_and_no_sarcasm', 'proper_grammar', 'accurate_issue_probing', 'proper_hold_procedure',
   'proper_transfer_and_language', 'dead_air_under_10_seconds', 'case_escalated_correctly', 'address_recorded_completely',
   'correct_and_complete_information', 'upselling_or_offers_suggested', 'further_assistance_offered',
-  'proper_call_closure', 'total_score', 'max_score', 'quality_percentage', 'created_at', 'express_empathy',
+  'proper_call_closure', 'total_score', 'max_score', 'quality_percentage', 'created_at',
   'areas_for_improvement', 'top_positive_words', 'top_negative_words', 'agent_english_cuss_words',
   'agent_english_cuss_count', 'agent_hindi_cuss_words', 'agent_hindi_cuss_count', 'customer_hindi_cuss_words',
   'customer_hindi_cuss_count', 'customer_english_cuss_words', 'customer_english_cuss_count', 'scenario', 'scenario1',

@@ -2758,8 +2758,8 @@ export async function deleteMagicalScriptConfig(dialdeskClientId: number, id: nu
 // matching "court" the legal term, only the phrase does. Terms ending in "*" are prefix/stems (left
 // boundary only, e.g. "frustrat*" also matches "frustrated"/"frustrating"); terms without "*" must
 // match as a whole word/phrase (both boundaries).
-const esc = (term: string) => term.toLowerCase().replace(/'/g, "\\'");
-const against = (terms: string[]) => {
+export const esc = (term: string) => term.toLowerCase().replace(/'/g, "\\'");
+export const against = (terms: string[]) => {
   const parts = terms.map(t => {
     const stem = t.endsWith('*');
     const body = esc(stem ? t.slice(0, -1) : t);
@@ -2767,7 +2767,7 @@ const against = (terms: string[]) => {
   });
   return `REGEXP_LIKE(LOWER(cd.TranscribeText), '(${parts.join('|')})')`;
 };
-const stripStar = (k: string) => k.endsWith('*') ? k.slice(0, -1) : k;
+export const stripStar = (k: string) => k.endsWith('*') ? k.slice(0, -1) : k;
 
 // ── Legal / Social / Financial escalation, Refund & Cancellation intent — each an independent
 // flag (a call can be both "Frustration" AND "Legal Escalation" at once), surfaced as their own
@@ -3279,38 +3279,41 @@ const CALL_DETAILS_EXPORT_COLUMNS = [
   'Fatal', 'Product', 'SoftSkill',
 ];
 
-// ─── Housing Owner CQ Score (client-specific — Opening/Offered/PrepaidPitch/OfferUrgency/
-// Product/SoftSkill/ObjectionHandling) ─────────────────────────────────────────
+// ─── Housing Owner CQ Score (client-specific — Opening/Offered/OfferUrgency/Product/SoftSkill/
+// ObjectionHandling) ─────────────────────────────────────────
 // Housing Owner (496) is the only client with Product/SoftSkill populated, so this formula is
 // specific to it rather than folded into the generic OUTBOUND_PARAMS scoring:
-//   (Opening + Offered + ObjectionHandling + PrepaidPitch + OfferUrgency + Product + SoftSkill) / 7
-// Opening/Offered/PrepaidPitch/OfferUrgency/Product/SoftSkill are 0/1 flags (blank/NULL counts
-// as 0, same convention used everywhere else in this file). ObjectionHandling is free text for
-// this client, not a flag: a real sentence scores 1, an explicit "None" scores 0, and a
-// genuinely blank value is excluded from both the numerator and denominator for that call (so
-// that call divides by 6, not 7) — per explicit instruction ("if blank then not consider").
+//   (Opening + Offered + ObjectionHandling + OfferUrgency + Product + SoftSkill) / 6
+// PrepaidPitch was dropped from the formula per explicit instruction (not applicable to this
+// client). Opening/Offered/OfferUrgency/Product/SoftSkill are 0/1 flags (blank/NULL counts as 0,
+// same convention used everywhere else in this file). ObjectionHandling is free text for this
+// client, not a flag: a real sentence scores 1, an explicit "None" scores 0, and a genuinely
+// blank value is excluded from both the numerator and denominator for that call (so that call
+// divides by 5, not 6) — per explicit instruction ("if blank then not consider").
 const HOUSING_OWNER_CLIENT_ID = 496;
 
-// A call where the agent never even logged Opening/Offered (or has no MobileNo) isn't a scored
-// call at all — counting it as a 0-on-every-parameter failure is what was dragging the overall
-// average down to ~32% while individual agents' real calls were scoring ~60-70%. Per explicit
-// instruction: if MobileNo, Opening, or Offered is blank, exclude the call entirely (not just
-// zero it out) from every Housing Owner CQ query — the numerator, denominator, and call count.
+// A call where the agent never even logged Offered (or has no MobileNo) isn't a scored call at
+// all — counting it as a 0-on-every-parameter failure is what was dragging the overall average
+// down to ~32% while individual agents' real calls were scoring ~60-70%. Opening is deliberately
+// NOT part of this gate: this client's grading pipeline leaves Opening blank for a large share of
+// otherwise-real, gradable calls (895/1398 — same upstream gap noted at NO_OPENING_DATA_CLIENTS
+// below), so requiring it silently dropped ~52% of legitimately gradable calls. A blank Opening
+// still correctly scores 0 on that one parameter via housingOwnerCQExpr; it just no longer
+// disqualifies the whole call.
 const HOUSING_OWNER_VALID_CALL_CLAUSE = `
   AND cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
-  AND cd.Opening IS NOT NULL AND TRIM(cd.Opening) != ''
   AND cd.Offered IS NOT NULL AND TRIM(cd.Offered) != ''
 `;
 
 function housingOwnerCQExpr(alias = 'cd'): string {
   const p = alias ? `${alias}.` : '';
-  const flagSum = ['Opening', 'Offered', 'PrepaidPitch', 'OfferUrgency', 'Product', 'SoftSkill']
+  const flagSum = ['Opening', 'Offered', 'OfferUrgency', 'Product', 'SoftSkill']
     .map(c => `IF(${p}${c}=1,1,0)`).join(' + ');
   const ohBlank = `(${p}ObjectionHandling IS NULL OR TRIM(${p}ObjectionHandling) = '')`;
   const ohNone = `LOWER(TRIM(${p}ObjectionHandling)) IN ('none','na','n/a','null')`;
   const ohScore = `CASE WHEN ${ohBlank} THEN 0 WHEN ${ohNone} THEN 0 ELSE 1 END`;
   const ohCounted = `CASE WHEN ${ohBlank} THEN 0 ELSE 1 END`;
-  return `((${flagSum} + ${ohScore}) / (6 + ${ohCounted}))`;
+  return `((${flagSum} + ${ohScore}) / (5 + ${ohCounted}))`;
 }
 
 export interface HousingOwnerAgentCQRow {
@@ -3329,7 +3332,6 @@ export interface HousingOwnerCQParamSummary {
   opening: number;
   offered: number;
   objectionHandling: number;
-  prepaidPitch: number;
   offerUrgency: number;
   product: number;
   softSkill: number;
@@ -3391,7 +3393,7 @@ export async function getHousingOwnerCQScore(filters: QualityFilters): Promise<H
 // Agent-wise parameter breakdown behind the "CQ Score Details" page — per agent, the pass rate
 // on each of the 7 parameters plus their overall CQ%, so a 69% vs 32% question can be answered
 // by looking at which parameters and which agents are actually driving the number.
-const HOUSING_OWNER_FLAG_COLS = ['Opening', 'Offered', 'PrepaidPitch', 'OfferUrgency', 'Product', 'SoftSkill'] as const;
+const HOUSING_OWNER_FLAG_COLS = ['Opening', 'Offered', 'OfferUrgency', 'Product', 'SoftSkill'] as const;
 
 export async function getHousingOwnerCQScoreDetails(filters: QualityFilters): Promise<HousingOwnerCQDetailsResult> {
   const { startDate, endDate } = filters;
@@ -3439,7 +3441,6 @@ export async function getHousingOwnerCQScoreDetails(filters: QualityFilters): Pr
       opening: Number(summaryRow?.opening_rate ?? 0),
       offered: Number(summaryRow?.offered_rate ?? 0),
       objectionHandling: Number(summaryRow?.objection_handling_rate ?? 0),
-      prepaidPitch: Number(summaryRow?.prepaidpitch_rate ?? 0),
       offerUrgency: Number(summaryRow?.offerurgency_rate ?? 0),
       product: Number(summaryRow?.product_rate ?? 0),
       softSkill: Number(summaryRow?.softskill_rate ?? 0),
@@ -3451,7 +3452,6 @@ export async function getHousingOwnerCQScoreDetails(filters: QualityFilters): Pr
       opening: Number(r.opening_rate ?? 0),
       offered: Number(r.offered_rate ?? 0),
       objectionHandling: Number(r.objection_handling_rate ?? 0),
-      prepaidPitch: Number(r.prepaidpitch_rate ?? 0),
       offerUrgency: Number(r.offerurgency_rate ?? 0),
       product: Number(r.product_rate ?? 0),
       softSkill: Number(r.softskill_rate ?? 0),

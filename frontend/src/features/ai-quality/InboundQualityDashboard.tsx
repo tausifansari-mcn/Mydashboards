@@ -2069,7 +2069,6 @@ const TNI_PARAM_INFO: { key: string; label: string; category: 'Soft Skills' | 'P
   { key: 'customer_concern_acknowledged',      label: 'Customer Concern Acknowledged',  category: 'Soft Skills',        tip: 'Echo the customer\'s concern at call start to signal active listening and build rapport immediately.' },
   { key: 'professionalism_maintained',         label: 'Professionalism Maintained',     category: 'Soft Skills',        tip: 'Maintain a composed, respectful tone throughout even under pressure or aggression from the caller.' },
   { key: 'assurance_or_appreciation_provided', label: 'Assurance / Appreciation',       category: 'Soft Skills',        tip: 'Thank the caller or provide reassurance before ending — it directly lifts CSAT scores.' },
-  { key: 'express_empathy',                    label: 'Express Empathy',                category: 'Soft Skills',        tip: 'Use empathy phrases ("I understand how frustrating that must be") at least once per call.' },
   { key: 'enthusiasm_and_no_fumbling',         label: 'Enthusiasm & No Fumbling',       category: 'Soft Skills',        tip: 'Project energy from the first second; hesitation and filler sounds create distrust.' },
   { key: 'active_listening',                   label: 'Active Listening',               category: 'Soft Skills',        tip: 'Paraphrase key details back to the customer to confirm understanding before acting.' },
   { key: 'politeness_and_no_sarcasm',          label: 'Politeness & No Sarcasm',        category: 'Soft Skills',        tip: 'Avoid dismissive or sarcastic tone — when unsure, default to neutral and warm.' },
@@ -2082,6 +2081,13 @@ const TNI_PARAM_INFO: { key: string; label: string; category: 'Soft Skills' | 'P
   { key: 'pronunciation_and_clarity',          label: 'Pronunciation & Clarity',        category: 'Communication',     tip: 'Speak at 80–100 wpm, enunciate product names clearly; eliminate filler words like "umm".' },
   { key: 'proper_grammar',                     label: 'Proper Grammar',                 category: 'Communication',     tip: 'Use complete sentences; avoid "yaar", "bhai", or informal fillers — maintain professional register.' },
 ];
+
+// Clovia (clientId 468) only — its audit data populates express_empathy on every call, so it
+// counts as an 8th Soft Skills parameter there (see _TNI_SS/CLOVIA_CLIENT_ID on the backend).
+const EXPRESS_EMPATHY_PARAM = {
+  key: 'express_empathy', label: 'Express Empathy', category: 'Soft Skills' as const,
+  tip: 'Use empathy phrases ("I understand how frustrating that must be") at least once per call.',
+};
 
 const TNI_CAT_COLOR: Record<string, string> = {
   'Soft Skills':        '#F59E0B',
@@ -2110,6 +2116,8 @@ const SLIDES = [
 
 export default function InboundQualityDashboard() {
   const { clientId } = useParams<{ clientId: string }>();
+  const isClovia = clientId === '468';
+  const tniParamInfo = isClovia ? [...TNI_PARAM_INFO, EXPRESS_EMPATHY_PARAM] : TNI_PARAM_INFO;
   const navigate = useNavigate();
   const { canAccessInboundClient, loaded: processLoaded, dashboardSlugs } = useProcessStore();
   const canViewRawData = dashboardSlugs.includes('raw-data');
@@ -4609,9 +4617,108 @@ export default function InboundQualityDashboard() {
               {/* ── Two-column layout ── */}
               <div className="grid lg:grid-cols-2 gap-4 mb-4">
 
-                {/* LEFT — Scenario panels stacked */}
+                {/* LEFT — Scenario panels stacked (Clovia: scenario1 sub-category is unpopulated on
+                    every audit, so the per-scenario Top-5 breakdown below is just repeated
+                    "Unknown 100%" rows — a single pie chart of the top-level scenario category
+                    itself is the useful view there instead) */}
                 <div className="space-y-4">
-                  {dd.scenario_panels.filter(p => p.scenario !== 'Sale Done' && p.scenario !== 'Repeat').map(panel => {
+                  {isClovia ? (() => {
+                    const overviewPanels = dd.scenario_panels.filter(p => p.scenario !== 'Sale Done' && p.scenario !== 'Repeat');
+                    const overviewTotal = overviewPanels.reduce((s, p) => s + p.total_count, 0);
+                    const pieData = overviewPanels.map(p => ({ name: p.scenario, value: p.total_count }));
+                    const PIE_COLORS = ['#3B82F6','#22C55E','#F59E0B','#A855F7','#EF4444','#EC4899','#14B8A6','#F97316','#6366F1','#84CC16'];
+                    return (
+                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                        <div className="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2"
+                          style={{ background: 'linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%)' }}>
+                          <div className="w-1.5 h-4 rounded-full bg-blue-300" />
+                          <h3 className="text-xs font-black text-white uppercase tracking-widest">Scenario Breakdown</h3>
+                          <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full text-white" style={{ background: 'rgba(255,255,255,0.2)' }}>
+                            {overviewTotal.toLocaleString()} audits
+                          </span>
+                        </div>
+                        <div className="flex flex-col sm:flex-row">
+                          <div className="sm:w-[45%] overflow-hidden">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-b border-slate-200 bg-slate-50">
+                                  {['Scenario','Count','%'].map(h => (
+                                    <th key={h} className="py-2 px-3 text-left text-slate-600 font-semibold uppercase tracking-wider text-[9px]">{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {overviewPanels.map((p, i) => {
+                                  const pct = overviewTotal > 0 ? Math.round(p.total_count / overviewTotal * 1000) / 10 : 0;
+                                  return (
+                                    <tr key={p.scenario} className={`border-b border-slate-100 ${i % 2 ? 'bg-transparent' : ''}`}>
+                                      <td className="py-2 px-3 text-slate-700 leading-snug">{p.scenario}</td>
+                                      <td className="py-2 px-3 text-slate-600 font-semibold tabular-nums">{p.total_count.toLocaleString()}</td>
+                                      <td className="py-2 px-3 tabular-nums">
+                                        <div className="flex items-center gap-1.5">
+                                          <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden max-w-[40px]">
+                                            <div className="h-full rounded-full" style={{ width: `${pct}%`, background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                                          </div>
+                                          <span className="text-slate-400 text-[9px]">{pct}%</span>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div className="sm:w-[55%] border-t sm:border-t-0 sm:border-l border-slate-200 flex flex-col items-center justify-center py-2">
+                            <ResponsiveContainer width="100%" height={220}>
+                              <PieChart>
+                                <Pie
+                                  data={pieData}
+                                  dataKey="value"
+                                  cx="50%" cy="50%"
+                                  outerRadius={90}
+                                  innerRadius={40}
+                                  paddingAngle={2}
+                                  labelLine={false}
+                                  label={({ cx = 0, cy = 0, midAngle = 0, innerRadius = 0, outerRadius = 0, percent = 0 }: {
+                                    cx?: number; cy?: number; midAngle?: number; innerRadius?: number; outerRadius?: number; percent?: number;
+                                  }) => {
+                                    if (percent < 0.04) return null;
+                                    const R = Math.PI / 180;
+                                    const r = innerRadius + (outerRadius - innerRadius) * 0.6;
+                                    return (
+                                      <text
+                                        x={cx + r * Math.cos(-midAngle * R)}
+                                        y={cy + r * Math.sin(-midAngle * R)}
+                                        fill="#fff" textAnchor="middle" dominantBaseline="central"
+                                        fontSize={9} fontWeight={700}>
+                                        {`${(percent * 100).toFixed(0)}%`}
+                                      </text>
+                                    );
+                                  }}
+                                >
+                                  {pieData.map((_, pi) => (
+                                    <Cell key={pi} fill={PIE_COLORS[pi % PIE_COLORS.length]} />
+                                  ))}
+                                </Pie>
+                                <Tooltip
+                                  contentStyle={{ background: '#FFFFFF', border: '1px solid #ffffff15', borderRadius: 8, fontSize: 10 }}
+                                  formatter={(v: unknown, n: unknown) => [`${Number(v).toLocaleString()} audits`, String(n)]}
+                                />
+                              </PieChart>
+                            </ResponsiveContainer>
+                            <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 px-2 pb-2">
+                              {pieData.map((d, pi) => (
+                                <div key={pi} className="flex items-center gap-1 text-[9px]">
+                                  <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: PIE_COLORS[pi % PIE_COLORS.length] }} />
+                                  <span className="text-slate-600 truncate max-w-[80px]">{d.name}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })() : dd.scenario_panels.filter(p => p.scenario !== 'Sale Done' && p.scenario !== 'Repeat').map(panel => {
                     const color = scenColor(panel.scenario);
                     const pieData = panel.items.map(it => ({ name: it.scenario1, value: it.count }));
                     const PIE_COLORS = ['#3B82F6','#22C55E','#F59E0B','#A855F7','#EF4444'];
@@ -6698,7 +6805,7 @@ export default function InboundQualityDashboard() {
                   isTNI(a.process_knowledge) ? 'Process Knowledge'  : null,
                   isTNI(a.communication)     ? 'Communication'      : null,
                 ].filter(Boolean).join(' | ');
-                const tips = TNI_PARAM_INFO
+                const tips = tniParamInfo
                   .filter(p => isTNI(a.soft_skills)       && p.category === 'Soft Skills'        ? true
                              : isTNI(a.process_knowledge) && p.category === 'Process Knowledge'  ? true
                              : isTNI(a.communication)     && p.category === 'Communication'      ? true : false)
@@ -6794,13 +6901,13 @@ export default function InboundQualityDashboard() {
                             <div className="flex items-center gap-2 mb-2">
                               <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: '#D97706' }} />
                               <span className="text-[11px] font-black text-slate-900 uppercase tracking-wider">Soft Skills (P1)</span>
-                              <span className="ml-auto text-[9px] font-bold px-2 py-0.5 rounded-full text-amber-700" style={{ background: '#FEF3C7' }}>×8 weight</span>
+                              <span className="ml-auto text-[9px] font-bold px-2 py-0.5 rounded-full text-amber-700" style={{ background: '#FEF3C7' }}>×{isClovia ? 8 : 7} weight</span>
                             </div>
                             <p className="text-[9px] text-slate-500 mb-2.5 font-medium">
-                              Score = <span className="font-black text-slate-700">Hits on 8 params ÷ (8 × Audits) × 100</span>
+                              Score = <span className="font-black text-slate-700">Hits on {isClovia ? 8 : 7} params ÷ ({isClovia ? 8 : 7} × Audits) × 100</span>
                             </p>
                             <div className="flex flex-wrap gap-1">
-                              {TNI_PARAM_INFO.filter(p => p.category === 'Soft Skills').map(p => (
+                              {tniParamInfo.filter(p => p.category === 'Soft Skills').map(p => (
                                 <span key={p.key} className="text-[8.5px] px-1.5 py-0.5 rounded font-semibold text-amber-800" style={{ background: '#FEF3C7', border: '1px solid #FDE68A' }}>{p.label}</span>
                               ))}
                             </div>
@@ -6842,9 +6949,9 @@ export default function InboundQualityDashboard() {
                         <div className="px-5 py-3 flex flex-wrap items-center gap-3 border-t border-sky-100" style={{ background: '#F0F9FF' }}>
                           <span className="text-[9px] font-black text-sky-700 uppercase tracking-widest">TNI Composite Score =</span>
                           <span className="text-[11px] font-black text-slate-800">
-                            (P1 <span style={{ color: '#D97706' }}>× 8</span> &nbsp;+&nbsp; P2 <span style={{ color: '#7C3AED' }}>× 5</span> &nbsp;+&nbsp; P3 <span style={{ color: '#059669' }}>× 2</span>) &nbsp;÷&nbsp; 15
+                            (P1 <span style={{ color: '#D97706' }}>× {isClovia ? 8 : 7}</span> &nbsp;+&nbsp; P2 <span style={{ color: '#7C3AED' }}>× 5</span> &nbsp;+&nbsp; P3 <span style={{ color: '#059669' }}>× 2</span>) &nbsp;÷&nbsp; {isClovia ? 15 : 14}
                           </span>
-                          <span className="text-[9px] text-slate-500 font-semibold">— weighted average across all 15 parameters</span>
+                          <span className="text-[9px] text-slate-500 font-semibold">— weighted average across all {isClovia ? 15 : 14} parameters</span>
                           <span className="ml-auto text-[9px] font-black px-3 py-1 rounded-full text-red-700" style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.25)' }}>
                             ≤ {TNI_THRESHOLD}% = Training Needed
                           </span>
@@ -7175,14 +7282,14 @@ export default function InboundQualityDashboard() {
                           {tniDrillLoading ? (
                             <div className="flex items-center justify-center py-16 gap-3">
                               <Loader2 className="h-6 w-6 animate-spin text-sky-500" />
-                              <span className="text-sky-600 text-sm">Loading 15 parameters…</span>
+                              <span className="text-sky-600 text-sm">Loading {isClovia ? 15 : 14} parameters…</span>
                             </div>
                           ) : !tniDrillData ? (
                             <div className="text-center py-12 text-slate-400 text-sm">No parameter data available</div>
                           ) : (
                             <div className="grid grid-cols-1 gap-4">
                               {(['Soft Skills', 'Process Knowledge', 'Communication'] as const).map(cat => {
-                                const catParams = TNI_PARAM_INFO.filter(p => p.category === cat);
+                                const catParams = tniParamInfo.filter(p => p.category === cat);
                                 const catVal = cat === 'Soft Skills' ? tniDrillAgent.soft_skills : cat === 'Process Knowledge' ? tniDrillAgent.process_knowledge : tniDrillAgent.communication;
                                 const clr = TNI_CAT_COLOR[cat];
                                 return (

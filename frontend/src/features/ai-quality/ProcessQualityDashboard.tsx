@@ -636,6 +636,239 @@ interface BellavitaMagicalScriptData {
 
 type MagicalScriptData = GenericMagicalScriptData | BellavitaMagicalScriptData;
 
+// ─── Housing Owner — Script Compliance Checklist ────────────────────────────────
+interface HousingOwnerComplianceData {
+  totalCalls: number;
+  overallScore: number;
+  paramPassRate: Record<string, number>;
+  byAgent: (Record<string, number> & { agentId: string; agentName: string; callCount: number; overallScore: number })[];
+  cachedThrough: string | null;
+}
+// Mirrors COMPLIANCE_PARAM_LABELS in backend/src/modules/quality/housingOwnerCompliance.service.ts —
+// keep both lists in sync if a parameter is added/renamed/re-categorized.
+const COMPLIANCE_PARAMS: { key: string; label: string; category: string; confidence: 'normal' | 'low' }[] = [
+  { key: 'call_opening',                   label: 'Mandatory Call Opening',                          category: 'Call Opening & Discovery',         confidence: 'normal' },
+  { key: 'property_lead_details',          label: 'Property/Lead Details Handled as per Process',     category: 'Call Opening & Discovery',         confidence: 'normal' },
+  { key: 'requirement_probing',            label: 'Requirement & Property Probing',                   category: 'Call Opening & Discovery',         confidence: 'normal' },
+  { key: 'free_vs_paid_explanation',       label: 'Free Listing vs Paid Plan Explanation',             category: 'Plan & Pricing',                   confidence: 'normal' },
+  { key: 'correct_plan_info',              label: 'Correct Plan Information',                         category: 'Plan & Pricing',                   confidence: 'normal' },
+  { key: 'plan_recommendation',            label: 'Plan Recommendation Based on Requirement',          category: 'Plan & Pricing',                   confidence: 'low' },
+  { key: 'pricing_discount_compliance',    label: 'Pricing & Discount Compliance',                     category: 'Plan & Pricing',                   confidence: 'normal' },
+  { key: 'offer_communication_compliance', label: 'Offer Communication Compliance',                    category: 'Plan & Pricing',                   confidence: 'normal' },
+  { key: 'plan_amount_confirmation',       label: 'Correct Plan & Amount Confirmation',                category: 'Plan & Pricing',                   confidence: 'normal' },
+  { key: 'no_false_commitment_leads',      label: 'No False Commitment Regarding Leads',               category: 'Honesty & Commitments',            confidence: 'normal' },
+  { key: 'no_false_commitment_visibility', label: 'No False Commitment Regarding Visibility/Position', category: 'Honesty & Commitments',            confidence: 'normal' },
+  { key: 'no_manipulation_info',           label: 'No Manipulation of Customer Information',           category: 'Honesty & Commitments',            confidence: 'low' },
+  { key: 'no_misleading_info',             label: 'No Misleading Information',                         category: 'Honesty & Commitments',            confidence: 'normal' },
+  { key: 'no_unauthorized_commitment',     label: 'No Unauthorized Commitment',                        category: 'Honesty & Commitments',            confidence: 'normal' },
+  { key: 'objection_handling',             label: 'Customer Objection Handling',                       category: 'Engagement & Objection Handling',  confidence: 'normal' },
+  { key: 'active_listening',               label: 'Active Listening & Relevant Pitch',                 category: 'Engagement & Objection Handling',  confidence: 'low' },
+  { key: 'no_pressure_misselling',         label: 'No Unnecessary Pressure / Mis-selling',             category: 'Engagement & Objection Handling',  confidence: 'normal' },
+  { key: 'payment_info_compliance',        label: 'Payment/Transaction Information Compliance',        category: 'Payment & Closure',                confidence: 'normal' },
+  { key: 'sale_confirmation',              label: 'Sale Confirmation',                                 category: 'Payment & Closure',                confidence: 'normal' },
+  { key: 'correct_sale_tagging',           label: 'Correct Sale Tagging / Disposition',                category: 'Payment & Closure',                confidence: 'normal' },
+  { key: 'callback_commitment_compliance', label: 'Callback Commitment Compliance',                    category: 'Payment & Closure',                confidence: 'normal' },
+  { key: 'proper_call_closure',            label: 'Proper Call Closure',                               category: 'Payment & Closure',                confidence: 'normal' },
+  { key: 'professional_communication',     label: 'Professional Communication',                        category: 'Conduct & Process',                confidence: 'normal' },
+  { key: 'no_background_chitchat',         label: 'No Background Chitchat',                            category: 'Conduct & Process',                confidence: 'low' },
+  { key: 'call_recording_compliance',      label: 'Call Recording Compliance',                         category: 'Conduct & Process',                confidence: 'normal' },
+];
+const COMPLIANCE_CATEGORIES = [
+  'Call Opening & Discovery', 'Plan & Pricing', 'Honesty & Commitments',
+  'Engagement & Objection Handling', 'Payment & Closure', 'Conduct & Process',
+];
+const complianceHeatColor = (pct: number) => {
+  const stops = pct <= 50
+    ? { from: [232, 96, 125], to: [238, 161, 43], t: pct / 50 }
+    : { from: [238, 161, 43], to: [34, 185, 144], t: (pct - 50) / 50 };
+  const [r1, g1, b1] = stops.from, [r2, g2, b2] = stops.to;
+  const r = Math.round(r1 + (r2 - r1) * stops.t);
+  const g = Math.round(g1 + (g2 - g1) * stops.t);
+  const b = Math.round(b1 + (b2 - b1) * stops.t);
+  return { text: `rgb(${r},${g},${b})`, bg: `rgba(${r},${g},${b},0.14)` };
+};
+
+function HousingOwnerComplianceSection({ data, loading, onDrill }: {
+  data: HousingOwnerComplianceData | null; loading: boolean;
+  onDrill: (paramKey: string, label: string, pass: boolean, agentName?: string) => void;
+}) {
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set(['Call Opening & Discovery']));
+  const [agentSearch, setAgentSearch] = useState('');
+  const [agentDetail, setAgentDetail] = useState<HousingOwnerComplianceData['byAgent'][number] | null>(null);
+
+  const toggleCat = (cat: string) => setExpandedCats(prev => {
+    const next = new Set(prev);
+    if (next.has(cat)) next.delete(cat); else next.add(cat);
+    return next;
+  });
+
+  if (loading) {
+    return (
+      <div className="mt-6 flex items-center justify-center h-40 gap-3 text-slate-500 text-sm">
+        <div className="w-5 h-5 border-2 border-slate-300 border-t-blue-500 rounded-full animate-spin" />
+        Loading Script Compliance Checklist…
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const filteredAgents = data.byAgent.filter(a => a.agentName.toLowerCase().includes(agentSearch.trim().toLowerCase()));
+  const overallColor = data.overallScore >= 85 ? '#22b990' : data.overallScore >= 60 ? '#eea12b' : '#e8607d';
+
+  return (
+    <div className={`mt-6 rounded-[24px] ${MS_GLASS} overflow-hidden`} style={{ background: MS_COLORS.bg }}>
+      <MSFlowHeader cachedThrough={data.cachedThrough} right={
+        <span className="text-[10px] text-white/70 font-semibold">✅ Script Compliance Checklist</span>
+      } />
+      <div className="p-5" style={{ background: 'radial-gradient(circle at top left, #EFF6FF, transparent 60%)' }}>
+        {/* Overview strip */}
+        <div className={`rounded-2xl bg-white ${MS_GLASS} p-5 mb-5 flex flex-col sm:flex-row items-center gap-6`}>
+          <svg width="104" height="104" viewBox="0 0 104 104" className="shrink-0">
+            <circle cx="52" cy="52" r="44" fill="none" stroke="#eef2f1" strokeWidth="10" />
+            <circle cx="52" cy="52" r="44" fill="none" stroke={overallColor} strokeWidth="10" strokeLinecap="round"
+              strokeDasharray={`${(data.overallScore / 100) * 276.5} 276.5`} transform="rotate(-90 52 52)" />
+            <text x="52" y="48" textAnchor="middle" fontSize="20" fontWeight="800" fill="#15212d">{data.overallScore}%</text>
+            <text x="52" y="65" textAnchor="middle" fontSize="8" fontWeight="700" fill="#71808c">OVERALL</text>
+          </svg>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-slate-800 mb-1">{data.totalCalls.toLocaleString()} calls analysed this period</p>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              25 of 26 parameters are automatically monitored from call transcripts (keyword/phrase detection — a heuristic
+              signal, not a certified audit). <b>Smart Tool Compliance</b> requires manual/system verification and isn't
+              scored here. Parameters marked <span className="text-amber-600 font-semibold">low-confidence</span> below are
+              inherently harder to detect from text alone — treat them as directional, not definitive.
+            </p>
+          </div>
+        </div>
+
+        {/* Category accordions */}
+        <div className="flex flex-col gap-3 mb-5">
+          {COMPLIANCE_CATEGORIES.map(cat => {
+            const params = COMPLIANCE_PARAMS.filter(p => p.category === cat);
+            const catAvg = Math.round(params.reduce((s, p) => s + (data.paramPassRate[p.key] ?? 0), 0) / params.length * 10) / 10;
+            const catColor = complianceHeatColor(catAvg);
+            const isOpen = expandedCats.has(cat);
+            return (
+              <div key={cat} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                <button onClick={() => toggleCat(cat)}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
+                  <span className={`transition-transform text-slate-400 ${isOpen ? 'rotate-90' : ''}`}>▶</span>
+                  <span className="text-xs font-black text-slate-800 uppercase tracking-wider">{cat}</span>
+                  <span className="text-[9px] text-slate-400 font-semibold">{params.length} parameters</span>
+                  <span className="ml-auto inline-flex items-center gap-2">
+                    <span className="w-24 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                      <span className="block h-full rounded-full" style={{ width: `${catAvg}%`, background: catColor.text }} />
+                    </span>
+                    <span className="text-xs font-black tabular-nums" style={{ color: catColor.text }}>{catAvg}%</span>
+                  </span>
+                </button>
+                {isOpen && (
+                  <div className="border-t border-slate-100 divide-y divide-slate-50">
+                    {params.map(p => {
+                      const pct = data.paramPassRate[p.key] ?? 0;
+                      const c = complianceHeatColor(pct);
+                      return (
+                        <button key={p.key} onClick={() => onDrill(p.key, p.label, false)}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors text-left">
+                          <span className="flex-1 text-[11.5px] font-semibold text-slate-700">
+                            {p.label}
+                            {p.confidence === 'low' && (
+                              <span className="ml-2 text-[8.5px] font-bold uppercase tracking-wider text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">low-confidence</span>
+                            )}
+                          </span>
+                          <span className="w-28 h-1.5 rounded-full bg-slate-200 overflow-hidden shrink-0">
+                            <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: c.text }} />
+                          </span>
+                          <span className="w-12 text-right text-[11px] font-black tabular-nums shrink-0" style={{ color: c.text }}>{pct}%</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Agent-wise overall score */}
+        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+          <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200">
+            <span className="text-[11px] font-bold uppercase tracking-widest text-slate-600">Agent-wise Compliance Score</span>
+            <input value={agentSearch} onChange={e => setAgentSearch(e.target.value)} placeholder="Filter by agent name…"
+              className="bg-slate-50 border border-slate-300 rounded-lg pl-3 pr-3 py-1.5 text-xs text-slate-900 font-medium w-52 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all" />
+            <span className="text-[9px] text-slate-400 font-semibold">{filteredAgents.length} agents</span>
+            <ExportBtn onClick={() => downloadCSV(
+              filteredAgents.map(a => ({
+                Agent: a.agentName, Calls: a.callCount, 'Overall Score': `${a.overallScore}%`,
+                ...Object.fromEntries(COMPLIANCE_PARAMS.map(p => [p.label, `${a[p.key] ?? 0}%`])),
+              })),
+              'housing-owner-script-compliance.csv',
+            )} />
+          </div>
+          <div className="max-h-80 overflow-y-auto">
+            <table className="w-full text-[11px]">
+              <thead className="sticky top-0 bg-slate-50 z-10">
+                <tr className="text-slate-500 uppercase text-[9px] tracking-wider">
+                  <th className="px-3 py-2.5 text-left">Agent</th>
+                  <th className="px-3 py-2.5 text-right">Calls</th>
+                  <th className="px-3 py-2.5 text-center">Overall Score</th>
+                  <th className="px-3 py-2.5 text-left"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAgents.length === 0 ? (
+                  <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400">No agents match this period/filter.</td></tr>
+                ) : filteredAgents.map((a, i) => {
+                  const c = complianceHeatColor(a.overallScore);
+                  return (
+                    <tr key={a.agentId} className={i % 2 === 1 ? 'bg-slate-50/50' : undefined}>
+                      <td className="px-3 py-2 font-semibold text-slate-800">{a.agentName}</td>
+                      <td className="px-3 py-2 text-right text-slate-500 tabular-nums">{a.callCount}</td>
+                      <td className="px-3 py-2 text-center">
+                        <span className="inline-block min-w-[48px] px-1.5 py-0.5 rounded-md font-bold tabular-nums" style={{ color: c.text, backgroundColor: c.bg }}>
+                          {a.overallScore}%
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button onClick={() => setAgentDetail(a)} className="text-[10px] font-bold text-blue-600 hover:text-blue-800">View Breakdown →</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {agentDetail && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+          onClick={() => setAgentDetail(null)}>
+          <div className="w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl bg-white shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-3 flex items-center gap-2 sticky top-0" style={{ background: 'linear-gradient(135deg,#1565C0,#0D47A1)' }}>
+              <span className="text-xs font-black text-white uppercase tracking-widest flex-1">{agentDetail.agentName} — Full Breakdown</span>
+              <button onClick={() => setAgentDetail(null)} className="text-white/70 hover:text-white text-lg leading-none">✕</button>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {COMPLIANCE_PARAMS.map(p => {
+                const pct = agentDetail[p.key] ?? 0;
+                const c = complianceHeatColor(pct);
+                return (
+                  <button key={p.key} onClick={() => onDrill(p.key, p.label, false, agentDetail.agentName)}
+                    className="w-full flex items-center gap-3 px-5 py-2.5 hover:bg-slate-50 text-left">
+                    <span className="flex-1 text-[11px] font-semibold text-slate-700">{p.label}</span>
+                    <span className="text-[11px] font-black tabular-nums" style={{ color: c.text }}>{pct}%</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface MagicalScriptConfigRow {
   id: number;
   stage: 'op' | 'csp' | 'offer' | 'objection';
@@ -1306,6 +1539,8 @@ export default function ProcessQualityDashboard() {
   } | null>(null);
   const [magicalScript, setMagicalScript] = useState<MagicalScriptData | null>(null);
   const [magicalLoading, setMagicalLoading] = useState(false);
+  const [complianceData, setComplianceData] = useState<HousingOwnerComplianceData | null>(null);
+  const [complianceLoading, setComplianceLoading] = useState(false);
   const [bellaProductModal, setBellaProductModal] = useState(false);
   const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
   const [scriptEditorLoading, setScriptEditorLoading] = useState(false);
@@ -1348,8 +1583,8 @@ export default function ProcessQualityDashboard() {
 
   const campaignQs = selectedCampaign !== 'All' ? `&campaignId=${encodeURIComponent(selectedCampaign)}` : '';
 
-  // Housing Owner-specific CQ Score: (Opening+Offered+ObjectionHandling+PrepaidPitch+
-  // OfferUrgency+Product+SoftSkill)/7 — Product/SoftSkill only exist for this client.
+  // Housing Owner-specific CQ Score: (Opening+Offered+ObjectionHandling+OfferUrgency+
+  // Product+SoftSkill)/6 — Product/SoftSkill only exist for this client.
   const isHousingOwner = clientId === '496';
   const [housingOwnerCQ, setHousingOwnerCQ] = useState<{
     overallScore: number; totalCalls: number;
@@ -1364,7 +1599,7 @@ export default function ProcessQualityDashboard() {
 
   // "CQ Score Details" slide — agent-wise parameter breakdown, loaded lazily only when that tab
   // is opened.
-  type HousingOwnerParamRates = { opening: number; offered: number; objectionHandling: number; prepaidPitch: number; offerUrgency: number; product: number; softSkill: number };
+  type HousingOwnerParamRates = { opening: number; offered: number; objectionHandling: number; offerUrgency: number; product: number; softSkill: number };
   const [housingOwnerCQDetails, setHousingOwnerCQDetails] = useState<{
     totalCalls: number;
     paramPassRate: HousingOwnerParamRates;
@@ -1528,6 +1763,35 @@ export default function ProcessQualityDashboard() {
   // Magical Script is now the default landing slide (index 0), so it loads eagerly on mount just
   // like the header's client-name/KPI fetch, instead of waiting for its old lazy-load-on-visit trigger.
   useEffect(() => { refetchMagicalScript(); }, [refetchMagicalScript]);
+
+  // Script Compliance Checklist — Housing Owner only, loads alongside the main flow since it's
+  // part of the same Magical Script page rather than a separate tab.
+  useEffect(() => {
+    if (!isHousingOwner || !clientId) { setComplianceData(null); return; }
+    setComplianceLoading(true);
+    api.get<{ data: HousingOwnerComplianceData }>(`/quality/housing-owner-compliance?startDate=${sd}&endDate=${ed}`)
+      .then(r => setComplianceData(r.data?.data ?? null))
+      .catch(() => setComplianceData(null))
+      .finally(() => setComplianceLoading(false));
+  }, [isHousingOwner, clientId, sd, ed]);
+
+  const openComplianceDrill = (paramKey: string, label: string, pass: boolean, agentName?: string) => {
+    setPQDrillModal({ title: `${label} — ${pass ? 'Compliant' : 'Non-Compliant'} Calls`, accent: pass ? '#22C55E' : '#EF4444', columns: [], rows: [] });
+    const agentQs2 = agentName ? `&agentName=${encodeURIComponent(agentName)}` : '';
+    api.get<{ data: { callId: number; callDate: string; agentName: string; transcriptExcerpt: string }[] }>(
+      `/quality/housing-owner-compliance/drill?startDate=${sd}&endDate=${ed}&parameter=${paramKey}&pass=${pass ? 1 : 0}${agentQs2}`,
+    ).then(r => {
+      const rows = (r.data?.data ?? []).map(c => ({
+        'Call Date': c.callDate, Agent: c.agentName, Transcript: c.transcriptExcerpt,
+      }));
+      setPQDrillModal({
+        title: `${label} — ${pass ? 'Compliant' : 'Non-Compliant'} Calls`,
+        accent: pass ? '#22C55E' : '#EF4444',
+        columns: [{ key: 'Call Date', label: 'Call Date' }, { key: 'Agent', label: 'Agent' }, { key: 'Transcript', label: 'Transcript Excerpt' }],
+        rows,
+      });
+    }).catch(() => setPQDrillModal(null));
+  };
 
   const openScriptEditor = () => {
     if (!clientId) return;
@@ -3975,6 +4239,9 @@ export default function ProcessQualityDashboard() {
                   onCallEndClick={(category) => openCategoryCallEndDrill(category, 'generic')}
                   onStageCallEndClick={(stage) => openStageCallEndDrill(stage, 'generic')} />
               )}
+              {isHousingOwner && (
+                <HousingOwnerComplianceSection data={complianceData} loading={complianceLoading} onDrill={openComplianceDrill} />
+              )}
             </div>
           </div>
         )}
@@ -3991,7 +4258,6 @@ export default function ProcessQualityDashboard() {
             { key: 'opening', label: 'Opening' },
             { key: 'offered', label: 'Offered' },
             { key: 'objectionHandling', label: 'Objection Handling' },
-            { key: 'prepaidPitch', label: 'Prepaid Pitch' },
             { key: 'offerUrgency', label: 'Offer Urgency' },
             { key: 'product', label: 'Product' },
             { key: 'softSkill', label: 'Soft Skill' },
@@ -4011,7 +4277,7 @@ export default function ProcessQualityDashboard() {
             return { text: `rgb(${r},${g},${b})`, bg: `rgba(${r},${g},${b},0.14)` };
           };
           // The parameter(s) tied for an agent's lowest pass rate — what's actually pulling their
-          // score down, surfaced right next to the number instead of making someone eyeball 7 columns.
+          // score down, surfaced right next to the number instead of making someone eyeball 6 columns.
           const weakestParams = (a: (typeof filteredCqAgents)[number]) => {
             const min = Math.min(...PARAM_LABELS.map(p => a[p.key]));
             return { min, labels: PARAM_LABELS.filter(p => a[p.key] === min).map(p => p.label) };
@@ -4024,7 +4290,7 @@ export default function ProcessQualityDashboard() {
                   <Target size={14} className="text-white" />
                   <span className="text-[11px] font-bold uppercase tracking-widest text-white">CQ Score Overview</span>
                   <span className="ml-auto text-[9px] text-white/75 font-semibold">
-                    (Opening + Offered + ObjectionHandling + PrepaidPitch + OfferUrgency + Product + SoftSkill) ÷ 7
+                    (Opening + Offered + ObjectionHandling + OfferUrgency + Product + SoftSkill) ÷ 6
                   </span>
                 </div>
                 <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
@@ -4088,7 +4354,7 @@ export default function ProcessQualityDashboard() {
                       return {
                         Agent: a.agentName, Calls: a.callCount,
                         Opening: `${a.opening}%`, Offered: `${a.offered}%`, 'Objection Handling': `${a.objectionHandling}%`,
-                        'Prepaid Pitch': `${a.prepaidPitch}%`, 'Offer Urgency': `${a.offerUrgency}%`, Product: `${a.product}%`, 'Soft Skill': `${a.softSkill}%`,
+                        'Offer Urgency': `${a.offerUrgency}%`, Product: `${a.product}%`, 'Soft Skill': `${a.softSkill}%`,
                         'Overall CQ %': `${a.overallScore}%`,
                         'Weakest Area': weak.min < 100 ? `${weak.labels.join(', ')} (${weak.min}%)` : '',
                       };
@@ -4111,11 +4377,11 @@ export default function ProcessQualityDashboard() {
                     </thead>
                     <tbody>
                       {housingOwnerCQDetailsLoading ? (
-                        <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-400 border-b border-slate-100">
+                        <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-400 border-b border-slate-100">
                           <Loader2 size={16} className="inline animate-spin mr-2" /> Loading...
                         </td></tr>
                       ) : filteredCqAgents.length === 0 ? (
-                        <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-400 border-b border-slate-100">No agents match this period/filter.</td></tr>
+                        <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-400 border-b border-slate-100">No agents match this period/filter.</td></tr>
                       ) : filteredCqAgents.map((a, i) => {
                         const overallC = heatColor(a.overallScore);
                         const weak = weakestParams(a);

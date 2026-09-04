@@ -21,6 +21,7 @@ import {
   initMagicalScriptCacheTables, startMagicalScriptCacheJob,
   initOutboundDashboardCacheTables, startOutboundDashboardCacheJob,
 } from './modules/quality/quality.service';
+import { initHousingOwnerComplianceTables, startHousingOwnerComplianceJob } from './modules/quality/housingOwnerCompliance.service';
 import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.routes';
 import { initVideoPhraseCache, startVideoPhraseJob } from './modules/inbound-quality/inbound-quality.service';
 import taskSchedulerRoutes from './modules/task-scheduler/task-scheduler.routes';
@@ -74,6 +75,9 @@ const server = app.listen(PORT, () => {
   initOutboundDashboardCacheTables()
     .then(() => startOutboundDashboardCacheJob())
     .catch(err => logger.error('[startup] initOutboundDashboardCacheTables failed:', err.message));
+  initHousingOwnerComplianceTables()
+    .then(() => startHousingOwnerComplianceJob())
+    .catch(err => logger.error('[startup] initHousingOwnerComplianceTables failed:', err.message));
   startTaskSchedulerJob();
   initVideoPhraseCache()
     .then(() => startVideoPhraseJob())

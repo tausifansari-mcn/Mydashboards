@@ -25,6 +25,8 @@ router.get('/sale-done-calls',    ctrl.getSaleDoneCalls);
 router.get('/missed-opportunity-category-detail', ctrl.getMissedOpportunityCategoryDetail);
 router.get('/housing-owner-cq-score', ctrl.getHousingOwnerCQScore);
 router.get('/housing-owner-cq-score/details', ctrl.getHousingOwnerCQScoreDetails);
+router.get('/housing-owner-compliance', ctrl.getHousingOwnerCompliance);
+router.get('/housing-owner-compliance/drill', ctrl.getHousingOwnerComplianceDrill);
 router.get('/magical-script-category-sale-done', ctrl.getMagicalCategorySaleDoneCalls);
 router.get('/magical-script-category-call-end', ctrl.getMagicalCategoryCallEndCalls);
 router.get('/magical-script-stage-call-end',     ctrl.getMagicalStageCallEndCalls);

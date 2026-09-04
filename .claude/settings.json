@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo \"EXIT:$?\")",
+      "PowerShell(pm2 logs mydash-backend --lines 25 --nostream 2>&1)",
+      "PowerShell(pm2 logs mydash-frontend --lines 15 --nostream 2>&1)"
+    ]
+  }
+}

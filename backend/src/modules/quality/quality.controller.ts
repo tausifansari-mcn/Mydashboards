@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import * as svc from './quality.service';
+import * as complianceSvc from './housingOwnerCompliance.service';
 import { resolveUserScope } from '../call-master/call-master.service';
 import { getCaseActions as getCaseActionsFromLib, upsertCaseAction, type CaseActionFeature } from '../../lib/caseActions';
 
@@ -94,6 +95,34 @@ export async function getHousingOwnerCQScoreDetails(req: Request, res: Response)
   try {
     const filters = parseDateRange(req);
     const data = await svc.getHousingOwnerCQScoreDetails(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getHousingOwnerCompliance(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await complianceSvc.getHousingOwnerCompliance(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getHousingOwnerComplianceDrill(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const parameter = req.query.parameter as string;
+    const pass = req.query.pass !== '0';
+    const agentName = (req.query.agentName as string | undefined)?.trim() || undefined;
+    if (!parameter) { res.status(400).json({ message: 'parameter is required' }); return; }
+    const data = await complianceSvc.getHousingOwnerComplianceDrill(
+      filters, parameter as complianceSvc.ComplianceParamKey, pass, agentName,
+    );
     res.json({ data });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
