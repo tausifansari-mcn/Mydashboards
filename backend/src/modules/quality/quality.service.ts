@@ -3147,7 +3147,7 @@ export async function getCustomerInteractionInsights(filters: QualityFilters): P
 
 export interface OutboundInsightLead {
   callId: number; leadId: string; agentName: string; mobileNo: string; callDate: string;
-  type: string; matchedWord: string;
+  type: string; matchedWord: string; fileName: string;
 }
 export interface OutboundInsightDrillResponse { leads: OutboundInsightLead[]; }
 
@@ -3202,17 +3202,22 @@ export async function getOutboundInsightDrill(filters: QualityFilters, category:
     LIMIT 200
   `, [...params, ...extraParams]);
 
-  // The cache only stores boolean flags — pull transcripts for this (small, already-filtered)
-  // set of calls to surface which specific word/phrase triggered the match.
+  // The cache only stores boolean flags — pull transcripts (to surface which specific word/phrase
+  // triggered the match) and the recording file (so the drill modal can play it back) for this
+  // small, already-filtered set of calls.
   const callIds = rows.map(r => Number(r.call_id));
   const transcriptMap = new Map<number, string>();
+  const recordingMap = new Map<number, string>();
   if (callIds.length > 0) {
     const placeholders = callIds.map(() => '?').join(',');
-    const tRows = await querySource<{ id: number; TranscribeText: string | null }>(
-      `SELECT id, TranscribeText FROM db_external.CallDetails WHERE id IN (${placeholders})`,
+    const tRows = await querySource<{ id: number; TranscribeText: string | null; FileName: string | null }>(
+      `SELECT id, TranscribeText, FileName FROM db_external.CallDetails WHERE id IN (${placeholders})`,
       callIds,
     );
-    for (const t of tRows) transcriptMap.set(Number(t.id), String(t.TranscribeText ?? '').toLowerCase());
+    for (const t of tRows) {
+      transcriptMap.set(Number(t.id), String(t.TranscribeText ?? '').toLowerCase());
+      recordingMap.set(Number(t.id), String(t.FileName ?? ''));
+    }
   }
 
   const keywords = keywordsForCategory(category);
@@ -3230,6 +3235,7 @@ export async function getOutboundInsightDrill(filters: QualityFilters, category:
         callDate:    String(r.call_date),
         type:        typeLabel,
         matchedWord,
+        fileName:    recordingMap.get(Number(r.call_id)) ?? '',
       };
     }),
   };

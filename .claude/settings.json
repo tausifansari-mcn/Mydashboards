@@ -3,7 +3,14 @@
     "allow": [
       "Bash(echo \"EXIT:$?\")",
       "PowerShell(pm2 logs mydash-backend --lines 25 --nostream 2>&1)",
-      "PowerShell(pm2 logs mydash-frontend --lines 15 --nostream 2>&1)"
+      "PowerShell(pm2 logs mydash-frontend --lines 15 --nostream 2>&1)",
+      "Bash(node src/utils/_checkLPFeedback.js)",
+      "Bash(node src/utils/_addCampaignColumn.js)",
+      "Bash(rm -f \"/c/Users/MAS60358/Desktop/Call Rec UI/server/src/utils/_checkLPFeedback.js\" \"/c/Users/MAS60358/Desktop/Call Rec UI/server/src/utils/_addCampaignColumn.js\")"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\MAS60358\\Desktop\\Call Rec UI\\server\\src\\utils",
+      "C:\\Users\\MAS60358\\Desktop\\Call Rec UI\\server\\src\\models"
     ]
   }
 }

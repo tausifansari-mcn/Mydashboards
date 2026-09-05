@@ -194,7 +194,7 @@ interface OutboundCustomerInsights {
   cached_through: string | null;
 }
 
-interface OutboundInsightLead { callId: number; leadId: string; agentName: string; mobileNo: string; callDate: string; type: string; matchedWord: string; }
+interface OutboundInsightLead { callId: number; leadId: string; agentName: string; mobileNo: string; callDate: string; type: string; matchedWord: string; fileName: string; }
 interface OutboundCallTranscript { callId: number; leadId: string; agentName: string; mobileNo: string; callDate: string; transcript: string; }
 interface SaleDoneCallRow { callId: number; callDate: string; agentName: string; mobileNo: string; fileName: string; }
 
@@ -2161,7 +2161,7 @@ export default function ProcessQualityDashboard() {
         {ciDrill && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
             onClick={() => setCiDrill(null)}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
               <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white">
                 <div>
                   <h2 className="text-base font-bold text-slate-800">{ciDrill.title}</h2>
@@ -2171,7 +2171,7 @@ export default function ProcessQualityDashboard() {
                   <button
                     onClick={() => downloadCSV(ciDrill.leads.map(l => ({
                       Type: l.type || '—', 'Lead ID': l.leadId, 'Agent Name': l.agentName, 'Mobile No': l.mobileNo,
-                      'Threat Phrase': l.matchedWord || '—', 'Call Date': fmtDateTime(l.callDate),
+                      'Threat Phrase': l.matchedWord || '—', 'Call Date': fmtDateTime(l.callDate), Recording: l.fileName || '—',
                     })), `${ciDrill.title.toLowerCase().replace(/\s+/g, '-')}.csv`)}
                     title="Download CSV"
                     className="ml-auto flex items-center gap-1 px-2 py-1 rounded text-[10px] text-slate-500 hover:text-emerald-600 border border-slate-200 hover:border-emerald-500/30 transition-colors">
@@ -2195,7 +2195,7 @@ export default function ProcessQualityDashboard() {
                     <table className="w-full text-xs border-collapse">
                       <thead>
                         <tr className="bg-slate-50">
-                          {['Type', 'Lead ID', 'Agent Name', 'Mobile No', 'Threat Phrase', 'Date'].map(h => (
+                          {['Type', 'Lead ID', 'Agent Name', 'Mobile No', 'Threat Phrase', 'Date', 'Recording'].map(h => (
                             <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-500 whitespace-nowrap border-b border-slate-200">{h}</th>
                           ))}
                         </tr>
@@ -2214,6 +2214,11 @@ export default function ProcessQualityDashboard() {
                             <td className="px-3 py-2 font-mono text-slate-500 whitespace-nowrap">{l.mobileNo || '—'}</td>
                             <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{l.matchedWord || '—'}</td>
                             <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap">{fmtDateTime(l.callDate)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {l.fileName
+                                ? <audio controls preload="metadata" src={l.fileName} style={{ height: 30, width: 210 }} />
+                                : <span className="text-slate-300">—</span>}
+                            </td>
                           </tr>
                         ))}
                       </tbody>

@@ -2341,7 +2341,6 @@ export default function InboundQualityDashboard() {
   const [socialThreats, setSocialThreats]         = useState<AlertScenarioRow[]>([]);
   const [negSignalDetails, setNegSignalDetails]   = useState<NegSignalDetailRow[]>([]);
   const [posSignals, setPosSignals]               = useState<PosKeywordRow[]>([]);
-  const [potentialScams, setPotentialScams]       = useState<AlertScenarioRow[]>([]);
   const [answeredAudited, setAnsweredAudited]     = useState<DateWiseAnsweredAudited[]>([]);
   const [answeredAuditedLoading, setAnsweredAuditedLoading] = useState(false);
   const [scamDetailOpen,  setScamDetailOpen]  = useState(false);
@@ -2697,8 +2696,6 @@ export default function InboundQualityDashboard() {
       .then(r => setNegSignalDetails(r.data?.data ?? [])).catch(() => setNegSignalDetails([]));
     api.get<{ data: PosKeywordRow[] }>(`/inbound-quality/pos-signal-details?${q}`)
       .then(r => setPosSignals(r.data?.data ?? [])).catch(() => setPosSignals([]));
-    api.get<{ data: AlertScenarioRow[] }>(`/inbound-quality/potential-scams?${q}`)
-      .then(r => setPotentialScams(r.data?.data ?? [])).catch(() => setPotentialScams([]));
     setAnsweredAuditedLoading(true);
     api.get<{ data: DateWiseAnsweredAudited[] }>(`/inbound-quality/date-wise-answered-audited?${q}`)
       .then(r => setAnsweredAudited(r.data?.data ?? []))
@@ -3970,87 +3967,8 @@ export default function InboundQualityDashboard() {
             })()}
 
             {/* ── Alert Field Tables ─────────────────────────────────────── */}
-            {(socialThreats.length > 0 || negSignalDetails.length > 0 || potentialScams.length > 0 || answeredAuditedLoading || answeredAudited.length > 0) && (() => {
-              const negColor: Record<string, string> = {
-                Frustration: '#F97316', Threat: '#EF4444', Abuse: '#A855F7',
-                Slang: '#3B82F6', Sarcasm: '#14B8A6',
-              };
+            {(socialThreats.length > 0 || answeredAuditedLoading || answeredAudited.length > 0) && (() => {
               const totalSocial  = socialThreats.reduce((s, r) => s + r.count, 0);
-              const totalNeg     = negSignalDetails.reduce((s, r) => s + r.count, 0);
-              const totalScam    = potentialScams.reduce((s, r) => s + r.count, 0);
-
-              const AlertTable = ({
-                title, accentColor, rows, extraCol,
-              }: {
-                title: string;
-                accentColor: string;
-                rows: Array<{ scenario: string; scenario1: string; count: number; pct: number; extra?: string }>;
-                extraCol?: string;
-              }) => (
-                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="px-5 py-3 card-header gap-2 px-5 py-3">
-                    <div className="w-1 h-4 rounded-full" style={{ background: accentColor }} />
-                    <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">{title}</h3>
-                    <ExportBtn onClick={() => downloadCSV(rows.map(r => ({ Scenario: r.scenario, Scenario1: r.scenario1, ...(extraCol ? { [extraCol]: r.extra } : {}), Count: r.count, 'Count%': `${r.pct}%` })), `${title.replace(/\s+/g,'-').toLowerCase()}.csv`)} />
-                    <span className="ml-auto text-xs font-bold" style={{ color: accentColor }}>
-                      {rows.reduce((s, r) => s + r.count, 0).toLocaleString()} calls
-                    </span>
-                  </div>
-                  {rows.length === 0 ? (
-                    <p className="text-xs text-slate-600 p-4">No data for selected period.</p>
-                  ) : (
-                    <div className="overflow-y-auto max-h-64">
-                      <table className="w-full text-xs">
-                        <thead className="sticky top-0 bg-white z-10">
-                          <tr className="border-b border-slate-200 bg-slate-50">
-                            <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">Scenario</th>
-                            <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">Scenario1</th>
-                            {extraCol && <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">{extraCol}</th>}
-                            <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">Count</th>
-                            <th className="py-2.5 px-4 text-left text-slate-600 font-semibold uppercase tracking-wider">Count%</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rows.map((r, i) => (
-                            <tr key={i} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${i % 2 === 0 ? '' : 'bg-transparent'}`}>
-                              <td className="py-2.5 px-4 text-slate-900 font-semibold">{r.scenario}</td>
-                              <td className="py-2.5 px-4 text-slate-800 font-medium">{r.scenario1}</td>
-                              {extraCol && (
-                                <td className="py-2.5 px-4">
-                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold"
-                                    style={{
-                                      background: `${negColor[r.extra ?? ''] ?? '#64748B'}22`,
-                                      color: negColor[r.extra ?? ''] ?? '#475569',
-                                      border: `1px solid ${negColor[r.extra ?? ''] ?? '#64748B'}40`,
-                                    }}>
-                                    {r.extra}
-                                  </span>
-                                </td>
-                              )}
-                              <td className="py-2.5 px-4 text-slate-900 font-bold tabular-nums">{r.count.toLocaleString()}</td>
-                              <td className="py-2.5 px-4 tabular-nums">
-                                <div className="flex items-center gap-2">
-                                  <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden max-w-[60px]">
-                                    <div className="h-full rounded-full" style={{ width: `${r.pct}%`, background: accentColor }} />
-                                  </div>
-                                  <span className="text-slate-900 font-bold">{r.pct}%</span>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                        <tfoot className="border-t-2 border-slate-300">
-                          <tr className="bg-slate-100">
-                            <td colSpan={extraCol ? 3 : 2} className="py-2.5 px-4 text-slate-900 font-bold text-[11px] uppercase tracking-wide">Grand Total</td>
-                            <td className="py-2.5 px-4 text-slate-900 font-bold tabular-nums">{rows.reduce((s, r) => s + r.count, 0).toLocaleString()}</td>
-                            <td className="py-2.5 px-4 text-slate-900 font-bold">100%</td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              );
 
               return (
                 <div className="mt-6 mb-6 space-y-4">
@@ -4112,27 +4030,10 @@ export default function InboundQualityDashboard() {
                       )}
                     </div>
                   )}
-                  {negSignalDetails.length > 0 && (
-                    <AlertTable
-                      title="Top Negative Signals"
-                      accentColor="#F59E0B"
-                      extraCol="Signal Type"
-                      rows={negSignalDetails.map(r => ({ ...r, extra: r.neg_signal }))}
-                    />
-                  )}
-                  {potentialScams.length > 0 && (
-                    <AlertTable
-                      title="Potential Scam Leads"
-                      accentColor="#EF4444"
-                      rows={potentialScams.map(r => ({ ...r, extra: undefined }))}
-                    />
-                  )}
                   {/* summary strip */}
                   <div className="flex gap-3">
                     {[
                       { label: 'Social Media & Court Threats', count: totalSocial, color: '#F97316' },
-                      { label: 'Top Negative Signal Calls',    count: totalNeg,    color: '#F59E0B' },
-                      { label: 'Potential Scam Leads',         count: totalScam,   color: '#EF4444' },
                     ].map(s => (
                       <div key={s.label} className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center gap-3">
                         <div className="w-1 self-stretch rounded-full" style={{ background: s.color }} />
