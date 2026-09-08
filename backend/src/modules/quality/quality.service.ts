@@ -2151,8 +2151,10 @@ export async function initMagicalScriptCacheTables(): Promise<void> {
         objection_category  VARCHAR(120) NULL,
         offered_pitch_context VARCHAR(500) NULL,
         campaign_id         VARCHAR(20) NULL,
+        agent_name          VARCHAR(100) NULL,
         computed_at         DATETIME DEFAULT NOW(),
-        INDEX idx_client_date (client_id, call_date)
+        INDEX idx_client_date (client_id, call_date),
+        INDEX idx_client_agent (client_id, agent_name)
       )
     `);
 
@@ -2189,6 +2191,25 @@ export async function initMagicalScriptCacheTables(): Promise<void> {
       migrated = true;
     }
 
+    // Migration for a table created before agent-level filtering support (Bellavita's LOB selector
+    // — Repeat Customer LOB / Abandon Cart — was silently a no-op on this page because the cache
+    // never stored which agent worked each call, so there was nothing to filter by). Unlike the
+    // migrations above, this one needs a FULL history reprocess, not just the usual 30-day
+    // lookback — Magical Script is explicitly designed to support arbitrary historical date
+    // ranges (see the cache rationale comment above), so a partial backfill would leave every
+    // call older than 30 days permanently unfilterable by LOB.
+    const [agentColRows] = await pool.execute(`
+      SELECT COLUMN_NAME FROM information_schema.columns
+      WHERE TABLE_SCHEMA = 'db_masmis' AND TABLE_NAME = 'magical_script_cache' AND COLUMN_NAME = 'agent_name'
+    `);
+    let needsFullBackfill = false;
+    if ((agentColRows as unknown[]).length === 0) {
+      await pool.execute(`ALTER TABLE db_masmis.magical_script_cache ADD COLUMN agent_name VARCHAR(100) NULL`);
+      try { await pool.execute(`ALTER TABLE db_masmis.magical_script_cache ADD INDEX idx_client_agent (client_id, agent_name)`); } catch { /* index may already exist on a fresh table */ }
+      migrated = true;
+      needsFullBackfill = true;
+    }
+
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS db_masmis.magical_script_cursor (
         id      TINYINT PRIMARY KEY DEFAULT 1,
@@ -2196,12 +2217,18 @@ export async function initMagicalScriptCacheTables(): Promise<void> {
       )
     `);
     const [cursorRows] = await pool.execute(`SELECT next_id FROM db_masmis.magical_script_cursor WHERE id = 1`);
-    // Re-seed a fully-consumed cursor (next_id = 0) to a 30-day lookback so it starts picking up
-    // new rows again instead of staying dead forever — see processMagicalScriptBatch. A fresh table
-    // seeds from 0 so the whole history gets classified, matching the original intent.
     if ((cursorRows as any[]).length === 0) {
+      // Fresh table — full backfill from the start, same as needsFullBackfill below.
       await pool.execute(`INSERT INTO db_masmis.magical_script_cursor (id, next_id) VALUES (1, 0)`);
+    } else if (needsFullBackfill) {
+      // 1, not 0 — the generic "next_id === 0" branch below treats 0 as "re-seed to 30 days",
+      // which would immediately undo a real full rewind on the very next call to this function
+      // (e.g. the next process restart). 1 is functionally "process everything" (real CallDetails
+      // ids start well above 1) without tripping that special case.
+      await pool.execute(`UPDATE db_masmis.magical_script_cursor SET next_id = 1 WHERE id = 1`);
     } else if (migrated || Number((cursorRows as { next_id: number }[])[0].next_id) === 0) {
+      // Re-seed a fully-consumed cursor (next_id = 0) to a 30-day lookback so it starts picking up
+      // new rows again instead of staying dead forever — see processMagicalScriptBatch.
       const seedRows = await querySource<{ minId: number }>(
         `SELECT COALESCE(MIN(id), 0) AS minId FROM db_external.CallDetails WHERE CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
       );
@@ -2224,12 +2251,12 @@ async function processMagicalScriptBatch(batchSize = 1000): Promise<number> {
     op_success: number | null; csp_success: number; csp_call_end: number; csp_variant: string | null;
     offer_success: number; product_offering: string | null; resolved_category: string | null;
     sale_done: number; call_stage: string; objection_category: string | null;
-    offered_pitch_context: string | null; campaign_id: string | null;
+    offered_pitch_context: string | null; campaign_id: string | null; AgentName: string | null;
   };
 
   const rows = await querySource<Row>(`
     SELECT
-      cd.id, cd.client_id, cd.CallDate,
+      cd.id, cd.client_id, cd.CallDate, cd.AgentName,
       CASE WHEN cd.Opening IS NULL OR cd.Opening = 'None' THEN NULL
            WHEN cd.Opening IN ('', '0') THEN 0 ELSE 1 END AS op_success,
       CASE WHEN cd.ContactSettingContext IS NOT NULL AND cd.ContactSettingContext NOT IN ('', 'None') THEN 1 ELSE 0 END AS csp_success,
@@ -2271,14 +2298,14 @@ async function processMagicalScriptBatch(batchSize = 1000): Promise<number> {
     'call_id', 'client_id', 'call_date',
     'op_success', 'csp_success', 'csp_call_end', 'csp_variant',
     'offer_success', 'product_offering', 'resolved_category',
-    'sale_done', 'call_stage', 'objection_category', 'offered_pitch_context', 'campaign_id',
+    'sale_done', 'call_stage', 'objection_category', 'offered_pitch_context', 'campaign_id', 'agent_name',
   ];
   const placeholders = rows.map(() => `(${cols.map(() => '?').join(',')},NOW())`).join(',');
   const flat = rows.flatMap(r => [
     r.id, r.client_id, r.CallDate,
     r.op_success, r.csp_success, r.csp_call_end, r.csp_variant,
     r.offer_success, r.product_offering, r.resolved_category,
-    r.sale_done, r.call_stage, r.objection_category, r.offered_pitch_context, r.campaign_id,
+    r.sale_done, r.call_stage, r.objection_category, r.offered_pitch_context, r.campaign_id, r.AgentName,
   ]);
   const updateCols = cols.filter(c => c !== 'call_id').map(c => `${c} = VALUES(${c})`).join(', ');
 
@@ -2362,7 +2389,16 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
   const allowedCampaigns = filters.clientId ? CAMPAIGN_ALLOWLIST[filters.clientId] : undefined;
   const campaignClause = allowedCampaigns ? ` AND campaign_id IN (${allowedCampaigns.map(() => '?').join(',')})` : '';
   const campaignParams: string[] = allowedCampaigns ?? [];
-  const params = [...baseParams, ...campaignParams];
+
+  // LOB filter (Bellavita's "Repeat Customer LOB" / "Abandon Cart" selector, see getLOBOptions) —
+  // the frontend already sends the selected LOB's agent_ids as filters.agentIds; this was
+  // previously ignored entirely here (the cache had no agent column to filter on), so switching
+  // between LOBs silently kept showing the same all-agents numbers.
+  const agentIds = filters.agentIds && filters.agentIds.length > 0 ? filters.agentIds : undefined;
+  const agentClause = agentIds ? ` AND agent_name IN (${agentIds.map(() => '?').join(',')})` : '';
+  const agentParams: string[] = agentIds ?? [];
+
+  const params = [...baseParams, ...campaignParams, ...agentParams];
 
   // All 5 reads come from the pre-classified db_masmis cache (see initMagicalScriptCacheTables /
   // processMagicalScriptBatch above) instead of scanning CallDetails live — that's what cut this
@@ -2377,7 +2413,7 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(CASE WHEN op_success = 1 THEN 1 ELSE 0 END) AS success,
         SUM(CASE WHEN op_success IS NOT NULL AND sale_done = 1 THEN 1 ELSE 0 END) AS sale_contrib
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${campaignClause}
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${campaignClause}${agentClause}
     `, params),
 
     // CSP: population = calls that passed Opening.
@@ -2393,7 +2429,7 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(CASE WHEN csp_variant = 'before' THEN 1 ELSE 0 END) AS feedback_before,
         SUM(CASE WHEN csp_variant = 'same' THEN 1 ELSE 0 END) AS feedback_same
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${skipOpGate ? '' : ' AND op_success = 1'}${campaignClause}
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${skipOpGate ? '' : ' AND op_success = 1'}${campaignClause}${agentClause}
     `, params),
 
     // Offer: population = calls that passed CSP (and OP, unless this client has no OP data).
@@ -2404,14 +2440,14 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(offer_success) AS success,
         SUM(CASE WHEN offer_success = 1 AND sale_done = 1 THEN 1 ELSE 0 END) AS sale_contrib
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${skipOpGate ? '' : ' AND op_success = 1'} AND csp_success = 1${campaignClause}
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${skipOpGate ? '' : ' AND op_success = 1'} AND csp_success = 1${campaignClause}${agentClause}
     `, params),
 
     queryMasmis<{ product: string; n: number }>(`
       SELECT product_offering AS product, COUNT(*) AS n
       FROM db_masmis.magical_script_cache
       WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?
-        AND offer_success = 1 AND product_offering IS NOT NULL${campaignClause}
+        AND offer_success = 1 AND product_offering IS NOT NULL${campaignClause}${agentClause}
       GROUP BY product_offering
       ORDER BY n DESC
     `, params),
@@ -2421,7 +2457,7 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
     queryMasmis<{ resolved_category: string; total: number; sales: number }>(`
       SELECT resolved_category, COUNT(*) AS total, SUM(sale_done) AS sales
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND resolved_category IS NOT NULL${campaignClause}
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND resolved_category IS NOT NULL${campaignClause}${agentClause}
       GROUP BY resolved_category
       ORDER BY total DESC
       LIMIT 20
@@ -2435,7 +2471,7 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
       SELECT resolved_category, offered_pitch_context AS context, COUNT(*) AS n
       FROM db_masmis.magical_script_cache
       WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?
-        AND resolved_category IS NOT NULL AND offered_pitch_context IS NOT NULL${campaignClause}
+        AND resolved_category IS NOT NULL AND offered_pitch_context IS NOT NULL${campaignClause}${agentClause}
       GROUP BY resolved_category, offered_pitch_context
       ORDER BY resolved_category, n DESC
       LIMIT 2000
@@ -3282,7 +3318,7 @@ const CALL_DETAILS_EXPORT_COLUMNS = [
   'Order_Summary', 'Further_Assistance', 'Call_Closing', 'Product_Description_Guideline', 'Alternative_Suggestion',
   'Reason_for_Not_Placing_Order', 'Pricing_and_Discount_Structure',
   'fraud_and_data_security_compliance', 'fraud_detected_sentence',
-  'Fatal', 'Product', 'SoftSkill',
+  'Fatal', 'Product', 'SoftSkill', 'CQScore',
 ];
 
 // ─── Housing Owner CQ Score (client-specific — Opening/Offered/OfferUrgency/Product/SoftSkill/
@@ -3466,10 +3502,181 @@ export async function getHousingOwnerCQScoreDetails(filters: QualityFilters): Pr
   };
 }
 
+// ─── Bellavita CQ Score (Opening/Offered/ObjectionHandling/PrepaidPitch/UpsellingEfforts/
+// OfferUrgency) ─────────────────────────────────────────
+// Per explicit instruction: sum these 6 as 0/1 flags and divide by 6, unweighted. PrepaidPitch
+// stores free-text pitch excerpts for this client rather than a bare 0/1 flag — reusing the same
+// "blank/None/0 → 0, anything else → 1" convention call-master.service.ts already applies
+// generically to these exact columns (obFlagCase), here applied uniformly across all 6 so any of
+// them being free text (not just PrepaidPitch) still scores correctly.
+const BELLAVITA_CQ_PARAMS = ['Opening', 'Offered', 'ObjectionHandling', 'PrepaidPitch', 'UpsellingEfforts', 'OfferUrgency'] as const;
+
+function bellavitaFlagCase(alias: string, col: string): string {
+  const c = `${alias}.${col}`;
+  return `(CASE WHEN ${c} IS NULL OR TRIM(${c}) = '' OR LOWER(TRIM(${c})) IN ('none','na','n/a','null','0') THEN 0 ELSE 1 END)`;
+}
+
+function bellavitaCQExpr(alias = 'cd'): string {
+  const flagSum = BELLAVITA_CQ_PARAMS.map(c => bellavitaFlagCase(alias, c)).join(' + ');
+  return `((${flagSum}) / 6)`;
+}
+
+// Same gate as Housing Owner's: a call where the agent never logged Offered (or has no MobileNo)
+// isn't a scored call at all.
+const BELLAVITA_CQ_VALID_CALL_CLAUSE = `
+  AND cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
+  AND cd.Offered IS NOT NULL AND TRIM(cd.Offered) != ''
+`;
+
+export interface BellavitaAgentCQRow {
+  agentId: string;
+  agentName: string;
+  callCount: number;
+  avgScore: number;
+}
+export interface BellavitaCQScoreResult {
+  overallScore: number;
+  totalCalls: number;
+  byAgent: BellavitaAgentCQRow[];
+}
+
+export async function getBellavitaCQScore(filters: QualityFilters): Promise<BellavitaCQScoreResult> {
+  const { startDate, endDate } = filters;
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const perCallScore = bellavitaCQExpr('cd');
+  const params = [startDate, endDate, ...campParams];
+
+  const [overallRow] = await querySource<{ avg_score: number | null; total_calls: number }>(`
+    SELECT ROUND(AVG(${perCallScore}) * 100, 1) AS avg_score, COUNT(*) AS total_calls
+    FROM db_external.CallDetails cd FORCE INDEX (Index_3)
+    WHERE cd.client_id = 375
+      AND cd.CallDate BETWEEN ? AND ? ${campF}
+      ${BELLAVITA_CQ_VALID_CALL_CLAUSE}
+  `, params);
+
+  const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; avg_score: number | null }>(`
+    SELECT
+      cd.AgentName AS agent_id,
+      COALESCE(am.AgentName, cd.AgentName) AS agent_name,
+      COUNT(*) AS call_count,
+      ROUND(AVG(${perCallScore}) * 100, 1) AS avg_score
+    FROM db_external.CallDetails cd FORCE INDEX (Index_3)
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE cd.client_id = 375
+      AND cd.CallDate BETWEEN ? AND ? ${campF}
+      ${BELLAVITA_CQ_VALID_CALL_CLAUSE}
+      AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
+    GROUP BY cd.AgentName, am.AgentName
+    ORDER BY avg_score DESC
+  `, params);
+
+  return {
+    overallScore: Number(overallRow?.avg_score ?? 0),
+    totalCalls: Number(overallRow?.total_calls ?? 0),
+    byAgent: agentRows.map(r => ({
+      agentId: String(r.agent_id),
+      agentName: String(r.agent_name ?? r.agent_id),
+      callCount: Number(r.call_count),
+      avgScore: Number(r.avg_score ?? 0),
+    })),
+  };
+}
+
+// Per-parameter breakdown, mirroring Housing Owner's CQ Score Details page shape.
+export interface BellavitaCQParamSummary {
+  opening: number;
+  offered: number;
+  objectionHandling: number;
+  prepaidPitch: number;
+  upsellingEfforts: number;
+  offerUrgency: number;
+}
+export interface BellavitaAgentParamRow extends BellavitaCQParamSummary {
+  agentId: string;
+  agentName: string;
+  callCount: number;
+  overallScore: number;
+}
+export interface BellavitaCQDetailsResult {
+  totalCalls: number;
+  paramPassRate: BellavitaCQParamSummary;
+  byAgent: BellavitaAgentParamRow[];
+}
+
+export async function getBellavitaCQScoreDetails(filters: QualityFilters): Promise<BellavitaCQDetailsResult> {
+  const { startDate, endDate } = filters;
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const baseWhere = `
+    cd.client_id = 375
+    AND cd.CallDate BETWEEN ? AND ? ${campF}
+    ${BELLAVITA_CQ_VALID_CALL_CLAUSE}
+  `;
+  const params = [startDate, endDate, ...campParams];
+  const perCallScore = bellavitaCQExpr('cd');
+  const rateExprs = BELLAVITA_CQ_PARAMS
+    .map(c => `ROUND(AVG(${bellavitaFlagCase('cd', c)}) * 100, 1) AS ${c.toLowerCase()}_rate`)
+    .join(',\n      ');
+
+  const [summaryRow] = await querySource<{ total_calls: number } & Record<string, number>>(`
+    SELECT COUNT(*) AS total_calls, ${rateExprs}
+    FROM db_external.CallDetails cd FORCE INDEX (Index_3)
+    WHERE ${baseWhere}
+  `, params);
+
+  const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; overall_score: number | null } & Record<string, number>>(`
+    SELECT
+      cd.AgentName AS agent_id,
+      COALESCE(am.AgentName, cd.AgentName) AS agent_name,
+      COUNT(*) AS call_count,
+      ${rateExprs},
+      ROUND(AVG(${perCallScore}) * 100, 1) AS overall_score
+    FROM db_external.CallDetails cd FORCE INDEX (Index_3)
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE ${baseWhere}
+      AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
+    GROUP BY cd.AgentName, am.AgentName
+    ORDER BY overall_score DESC
+  `, params);
+
+  return {
+    totalCalls: Number(summaryRow?.total_calls ?? 0),
+    paramPassRate: {
+      opening: Number(summaryRow?.opening_rate ?? 0),
+      offered: Number(summaryRow?.offered_rate ?? 0),
+      objectionHandling: Number(summaryRow?.objectionhandling_rate ?? 0),
+      prepaidPitch: Number(summaryRow?.prepaidpitch_rate ?? 0),
+      upsellingEfforts: Number(summaryRow?.upsellingefforts_rate ?? 0),
+      offerUrgency: Number(summaryRow?.offerurgency_rate ?? 0),
+    },
+    byAgent: agentRows.map(r => ({
+      agentId: String(r.agent_id),
+      agentName: String(r.agent_name ?? r.agent_id),
+      callCount: Number(r.call_count),
+      opening: Number(r.opening_rate ?? 0),
+      offered: Number(r.offered_rate ?? 0),
+      objectionHandling: Number(r.objectionhandling_rate ?? 0),
+      prepaidPitch: Number(r.prepaidpitch_rate ?? 0),
+      upsellingEfforts: Number(r.upsellingefforts_rate ?? 0),
+      offerUrgency: Number(r.offerurgency_rate ?? 0),
+      overallScore: Number(r.overall_score ?? 0),
+    })),
+  };
+}
+
 // CallDate needs an explicit SQL-side format (dd-mm-yyyy hh:mm:ss) rather than the raw DATETIME —
 // letting mysql2/CSV serialize a Date object directly produces a locale/timezone-dependent string.
+// CQScore is a computed column, not a raw CallDetails column: Housing Owner and Bellavita each
+// have their own CQ formula (see housingOwnerCQExpr/bellavitaCQExpr above); any other client has
+// no defined formula and gets a blank value rather than a made-up number.
 function exportSelectExpr(col: string, tableAlias: string): string {
   if (col === 'CallDate') return `DATE_FORMAT(${tableAlias}.CallDate, '%d-%m-%Y %H:%i:%s') AS CallDate`;
+  if (col === 'CQScore') {
+    return `(CASE
+      WHEN ${tableAlias}.client_id = ${HOUSING_OWNER_CLIENT_ID} THEN ROUND(${housingOwnerCQExpr(tableAlias)} * 100, 1)
+      WHEN ${tableAlias}.client_id = 375 THEN ROUND(${bellavitaCQExpr(tableAlias)} * 100, 1)
+      ELSE NULL
+    END) AS CQScore`;
+  }
   return `${tableAlias}.${col}`;
 }
 
