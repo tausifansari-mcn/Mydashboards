@@ -3663,17 +3663,172 @@ export async function getBellavitaCQScoreDetails(filters: QualityFilters): Promi
   };
 }
 
+// ─── Housing Premium CQ Score (Opening/Offered/ObjectionHandling/PrepaidPitch/UpsellingEfforts/
+// OfferUrgency) ─────────────────────────────────────────
+// Same 6 parameters, same formula and same "blank/None/0 → 0, anything else → 1" flag rule as
+// Bellavita's CQ Score above (reuses bellavitaFlagCase — it's generic, not Bellavita-specific) —
+// per explicit instruction, Housing Premium's Opening/ObjectionHandling/PrepaidPitch store free
+// text (visible directly in the export/raw data) rather than a bare 0/1 flag, same shape as
+// Bellavita's PrepaidPitch.
+const HOUSING_PREMIUM_CQ_PARAMS = ['Opening', 'Offered', 'ObjectionHandling', 'PrepaidPitch', 'UpsellingEfforts', 'OfferUrgency'] as const;
+
+function housingPremiumCQExpr(alias = 'cd'): string {
+  const flagSum = HOUSING_PREMIUM_CQ_PARAMS.map(c => bellavitaFlagCase(alias, c)).join(' + ');
+  return `((${flagSum}) / 6)`;
+}
+
+const HOUSING_PREMIUM_CQ_VALID_CALL_CLAUSE = `
+  AND cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
+  AND cd.Offered IS NOT NULL AND TRIM(cd.Offered) != ''
+`;
+
+export interface HousingPremiumAgentCQRow {
+  agentId: string;
+  agentName: string;
+  callCount: number;
+  avgScore: number;
+}
+export interface HousingPremiumCQScoreResult {
+  overallScore: number;
+  totalCalls: number;
+  byAgent: HousingPremiumAgentCQRow[];
+}
+
+export async function getHousingPremiumCQScore(filters: QualityFilters): Promise<HousingPremiumCQScoreResult> {
+  const { startDate, endDate } = filters;
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const perCallScore = housingPremiumCQExpr('cd');
+  const params = [startDate, endDate, ...campParams];
+
+  const [overallRow] = await querySource<{ avg_score: number | null; total_calls: number }>(`
+    SELECT ROUND(AVG(${perCallScore}) * 100, 1) AS avg_score, COUNT(*) AS total_calls
+    FROM db_external.CallDetails cd FORCE INDEX (Index_3)
+    WHERE cd.client_id = 419
+      AND cd.CallDate BETWEEN ? AND ? ${campF}
+      ${HOUSING_PREMIUM_CQ_VALID_CALL_CLAUSE}
+  `, params);
+
+  const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; avg_score: number | null }>(`
+    SELECT
+      cd.AgentName AS agent_id,
+      COALESCE(am.AgentName, cd.AgentName) AS agent_name,
+      COUNT(*) AS call_count,
+      ROUND(AVG(${perCallScore}) * 100, 1) AS avg_score
+    FROM db_external.CallDetails cd FORCE INDEX (Index_3)
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE cd.client_id = 419
+      AND cd.CallDate BETWEEN ? AND ? ${campF}
+      ${HOUSING_PREMIUM_CQ_VALID_CALL_CLAUSE}
+      AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
+    GROUP BY cd.AgentName, am.AgentName
+    ORDER BY avg_score DESC
+  `, params);
+
+  return {
+    overallScore: Number(overallRow?.avg_score ?? 0),
+    totalCalls: Number(overallRow?.total_calls ?? 0),
+    byAgent: agentRows.map(r => ({
+      agentId: String(r.agent_id),
+      agentName: String(r.agent_name ?? r.agent_id),
+      callCount: Number(r.call_count),
+      avgScore: Number(r.avg_score ?? 0),
+    })),
+  };
+}
+
+export interface HousingPremiumCQParamSummary {
+  opening: number;
+  offered: number;
+  objectionHandling: number;
+  prepaidPitch: number;
+  upsellingEfforts: number;
+  offerUrgency: number;
+}
+export interface HousingPremiumAgentParamRow extends HousingPremiumCQParamSummary {
+  agentId: string;
+  agentName: string;
+  callCount: number;
+  overallScore: number;
+}
+export interface HousingPremiumCQDetailsResult {
+  totalCalls: number;
+  paramPassRate: HousingPremiumCQParamSummary;
+  byAgent: HousingPremiumAgentParamRow[];
+}
+
+export async function getHousingPremiumCQScoreDetails(filters: QualityFilters): Promise<HousingPremiumCQDetailsResult> {
+  const { startDate, endDate } = filters;
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const baseWhere = `
+    cd.client_id = 419
+    AND cd.CallDate BETWEEN ? AND ? ${campF}
+    ${HOUSING_PREMIUM_CQ_VALID_CALL_CLAUSE}
+  `;
+  const params = [startDate, endDate, ...campParams];
+  const perCallScore = housingPremiumCQExpr('cd');
+  const rateExprs = HOUSING_PREMIUM_CQ_PARAMS
+    .map(c => `ROUND(AVG(${bellavitaFlagCase('cd', c)}) * 100, 1) AS ${c.toLowerCase()}_rate`)
+    .join(',\n      ');
+
+  const [summaryRow] = await querySource<{ total_calls: number } & Record<string, number>>(`
+    SELECT COUNT(*) AS total_calls, ${rateExprs}
+    FROM db_external.CallDetails cd FORCE INDEX (Index_3)
+    WHERE ${baseWhere}
+  `, params);
+
+  const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; overall_score: number | null } & Record<string, number>>(`
+    SELECT
+      cd.AgentName AS agent_id,
+      COALESCE(am.AgentName, cd.AgentName) AS agent_name,
+      COUNT(*) AS call_count,
+      ${rateExprs},
+      ROUND(AVG(${perCallScore}) * 100, 1) AS overall_score
+    FROM db_external.CallDetails cd FORCE INDEX (Index_3)
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE ${baseWhere}
+      AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
+    GROUP BY cd.AgentName, am.AgentName
+    ORDER BY overall_score DESC
+  `, params);
+
+  return {
+    totalCalls: Number(summaryRow?.total_calls ?? 0),
+    paramPassRate: {
+      opening: Number(summaryRow?.opening_rate ?? 0),
+      offered: Number(summaryRow?.offered_rate ?? 0),
+      objectionHandling: Number(summaryRow?.objectionhandling_rate ?? 0),
+      prepaidPitch: Number(summaryRow?.prepaidpitch_rate ?? 0),
+      upsellingEfforts: Number(summaryRow?.upsellingefforts_rate ?? 0),
+      offerUrgency: Number(summaryRow?.offerurgency_rate ?? 0),
+    },
+    byAgent: agentRows.map(r => ({
+      agentId: String(r.agent_id),
+      agentName: String(r.agent_name ?? r.agent_id),
+      callCount: Number(r.call_count),
+      opening: Number(r.opening_rate ?? 0),
+      offered: Number(r.offered_rate ?? 0),
+      objectionHandling: Number(r.objectionhandling_rate ?? 0),
+      prepaidPitch: Number(r.prepaidpitch_rate ?? 0),
+      upsellingEfforts: Number(r.upsellingefforts_rate ?? 0),
+      offerUrgency: Number(r.offerurgency_rate ?? 0),
+      overallScore: Number(r.overall_score ?? 0),
+    })),
+  };
+}
+
 // CallDate needs an explicit SQL-side format (dd-mm-yyyy hh:mm:ss) rather than the raw DATETIME —
 // letting mysql2/CSV serialize a Date object directly produces a locale/timezone-dependent string.
-// CQScore is a computed column, not a raw CallDetails column: Housing Owner and Bellavita each
-// have their own CQ formula (see housingOwnerCQExpr/bellavitaCQExpr above); any other client has
-// no defined formula and gets a blank value rather than a made-up number.
+// CQScore is a computed column, not a raw CallDetails column: Housing Owner, Bellavita and Housing
+// Premium each have their own CQ formula (see housingOwnerCQExpr/bellavitaCQExpr/
+// housingPremiumCQExpr above); any other client has no defined formula and gets a blank value
+// rather than a made-up number.
 function exportSelectExpr(col: string, tableAlias: string): string {
   if (col === 'CallDate') return `DATE_FORMAT(${tableAlias}.CallDate, '%d-%m-%Y %H:%i:%s') AS CallDate`;
   if (col === 'CQScore') {
     return `(CASE
       WHEN ${tableAlias}.client_id = ${HOUSING_OWNER_CLIENT_ID} THEN ROUND(${housingOwnerCQExpr(tableAlias)} * 100, 1)
       WHEN ${tableAlias}.client_id = 375 THEN ROUND(${bellavitaCQExpr(tableAlias)} * 100, 1)
+      WHEN ${tableAlias}.client_id = 419 THEN ROUND(${housingPremiumCQExpr(tableAlias)} * 100, 1)
       ELSE NULL
     END) AS CQScore`;
   }

@@ -124,6 +124,28 @@ export async function getBellavitaCQScoreDetails(req: Request, res: Response) {
   }
 }
 
+export async function getHousingPremiumCQScore(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getHousingPremiumCQScore(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getHousingPremiumCQScoreDetails(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getHousingPremiumCQScoreDetails(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
 export async function getHousingOwnerCompliance(req: Request, res: Response) {
   try {
     const filters = parseDateRange(req);

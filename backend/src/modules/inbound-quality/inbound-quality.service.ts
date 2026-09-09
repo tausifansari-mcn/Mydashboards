@@ -38,23 +38,50 @@ const CQ_PARAM_COLS = [
 ];
 const CLOVIA_CLIENT_ID = '468';
 const CQ_PARAM_COLS_CLOVIA = [...CQ_PARAM_COLS, 'express_empathy'];
-const cqFlagSum = (cols: string[]) => cols.map(c => `IF(q.${c} = 1, 1, 0)`).join(' + ');
+// Per explicit instruction: a blank parameter is excluded from both the numerator and denominator
+// of every CQ-style score in this module — same "hits / applicable count" methodology the Quality
+// Parameters table has always used per-parameter (getQualityParameters below), now applied
+// consistently to the aggregate CQ score and the Score Components sub-scores too, so a call that
+// was never graded on a given parameter neither helps nor hurts the score on it. Went through two
+// earlier iterations before landing here: first Clovia-only "blank counts as pass when Opening=1"
+// (its QA form leaves several parameters structurally blank), then generalized to every client —
+// both replaced by this once the Quality Parameters table showed those parameter-level scores
+// (93-99% for most columns) didn't match the still-lower Score Components numbers the Opening-gated
+// rule produced, because that rule still counted a blank as a fail on any call where Opening wasn't
+// 1. Excluding blanks unconditionally resolves that inconsistency and matches Quality Parameters
+// exactly. An explicit 0 still counts as a genuine fail.
+const excludeBlankRatio = (cols: string[], alias = 'q') => {
+  const num = cols.map(c => `(CASE WHEN ${alias}.${c} IS NOT NULL THEN IF(${alias}.${c} = 1, 1, 0) ELSE 0 END)`).join(' + ');
+  const den = cols.map(c => `(CASE WHEN ${alias}.${c} IS NOT NULL THEN 1 ELSE 0 END)`).join(' + ');
+  return `(${num}) / NULLIF(${den}, 0)`;
+};
+// Same rule collapsed into a single aggregate percentage (pooled hit-count / applicable-count
+// across the group, rather than per-row) — used for parameter-level score breakdowns (e.g. the
+// Score Components drill-down) that report one % per column instead of one % per call.
+const paramScorePct = (col: string, alias = 'q') =>
+  `ROUND(100.0 * SUM(COALESCE(${alias}.${col},0)) / NULLIF(SUM(CASE WHEN ${alias}.${col} IS NOT NULL THEN 1 ELSE 0 END), 0), 1)`;
 const CQ_SCORE_SQL = `(CASE WHEN q.ClientId = '${CLOVIA_CLIENT_ID}'
-  THEN (${cqFlagSum(CQ_PARAM_COLS_CLOVIA)}) / ${CQ_PARAM_COLS_CLOVIA.length}
-  ELSE (${cqFlagSum(CQ_PARAM_COLS)}) / ${CQ_PARAM_COLS.length}
+  THEN ${excludeBlankRatio(CQ_PARAM_COLS_CLOVIA)}
+  ELSE ${excludeBlankRatio(CQ_PARAM_COLS)}
 END)`;
 
-// Neemans (ClientId 475) — per explicit instruction, a call scored quality_percentage = 0 isn't a
-// real scored call and must be excluded entirely from every CQ-style calculation/count in this
-// module, not just zeroed out (same "exclude the call, don't zero it out" convention used for
-// Housing Owner's HOUSING_OWNER_VALID_CALL_CLAUSE in quality.service.ts). Appended everywhere this
-// module already gates on "was this call actually audited" (quality_percentage IS NOT NULL), so
-// the exclusion reaches the main CQ score and every sub-score/table/export derived from it. Two
-// variants: most queries alias the table `q` (db_audit.call_quality_assessment q); a handful of
-// unaliased single-table queries need the bare column names instead.
-const NEEMANS_CLIENT_ID = '475';
-const NEEMANS_QUALITY_GATE = `AND (q.ClientId != '${NEEMANS_CLIENT_ID}' OR q.quality_percentage != 0)`;
-const NEEMANS_QUALITY_GATE_BARE = `AND (ClientId != '${NEEMANS_CLIENT_ID}' OR quality_percentage != 0)`;
+// Clients where a low-scoring audit isn't a real scored call and must be excluded entirely (not
+// zeroed out) from every CQ-style calculation/count in this module — same "exclude the call, don't
+// zero it out" convention used for Housing Owner's HOUSING_OWNER_VALID_CALL_CLAUSE in
+// quality.service.ts. Appended everywhere this module already gates on "was this call actually
+// audited" (quality_percentage IS NOT NULL), so the exclusion reaches the main CQ score and every
+// sub-score/table/export derived from it. Two variants: most queries alias the table `q`
+// (db_audit.call_quality_assessment q); a handful of unaliased single-table queries need the bare
+// column names instead.
+// quality_percentage <= 35 (which covers exactly 0 too) isn't a real scored call, for: Bellavita
+// (375), GNC (409), Neemans (475) — Neemans started narrower ("= 0 only") per an earlier
+// instruction, broadened to this same <=35 threshold per explicit instruction once Bellavita's
+// version proved out.
+const LOW_QUALITY_GATE_CLIENT_IDS = ['375', '409', '475'];
+const PER_CLIENT_QUALITY_GATE = LOW_QUALITY_GATE_CLIENT_IDS
+  .map(id => `AND (q.ClientId != '${id}' OR q.quality_percentage > 35)`).join('\n  ');
+const PER_CLIENT_QUALITY_GATE_BARE = LOW_QUALITY_GATE_CLIENT_IDS
+  .map(id => `AND (ClientId != '${id}' OR quality_percentage > 35)`).join('\n  ');
 
 // Clovia (ClientId 468) uses its own team's terminology for this parameter in every parameter
 // list/label it appears in — display label only, the underlying column and scoring are unchanged.
@@ -428,7 +455,7 @@ export async function getInboundClients(filters: InboundQualityFilters): Promise
     FROM db_audit.call_quality_assessment q
     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
     GROUP BY q.ClientId, c.name
     ORDER BY client_name ASC
   `, [startDate, endDate]);
@@ -532,45 +559,30 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
       SUM(CASE WHEN ${fatalCheckSql('q')}                                    THEN 1 ELSE 0 END) AS fatal_count,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-        ELSE IF(q.call_answered_within_5_seconds = 1, 1, 0) END
+        ELSE ${excludeBlankRatio(['call_answered_within_5_seconds'])} END
       ) * 100, 1) AS opening_skill,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-        ELSE (
-          IF(q.professionalism_maintained         = 1, 0.111111111111111, 0) +
-          IF(q.assurance_or_appreciation_provided = 1, 0.111111111111111, 0) +
-          IF(q.pronunciation_and_clarity          = 1, 0.111111111111111, 0) +
-          IF(q.enthusiasm_and_no_fumbling         = 1, 0.111111111111111, 0) +
-          IF(q.active_listening                   = 1, 0.111111111111111, 0) +
-          IF(q.politeness_and_no_sarcasm          = 1, 0.111111111111111, 0) +
-          IF(q.proper_grammar                     = 1, 0.111111111111111, 0) +
-          IF(q.accurate_issue_probing             = 1, 0.111111111111111, 0) +
-          IF(q.customer_concern_acknowledged      = 1, 0.111111111111111, 0)
-        ) END
+        ELSE ${excludeBlankRatio([
+          'professionalism_maintained', 'assurance_or_appreciation_provided', 'pronunciation_and_clarity',
+          'enthusiasm_and_no_fumbling', 'active_listening', 'politeness_and_no_sarcasm',
+          'proper_grammar', 'accurate_issue_probing', 'customer_concern_acknowledged',
+        ])} END
       ) * 100, 1) AS soft_skill,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-        ELSE (
-          IF(q.proper_hold_procedure       = 1, 0.333, 0) +
-          IF(q.proper_transfer_and_language= 1, 0.333, 0) +
-          IF(q.dead_air_under_10_seconds   = 1, 0.334, 0)
-        ) END
+        ELSE ${excludeBlankRatio(['proper_hold_procedure', 'proper_transfer_and_language', 'dead_air_under_10_seconds'])} END
       ) * 100, 1) AS hold_procedure,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-        ELSE (
-          IF(q.case_escalated_correctly         = 1, 0.25, 0) +
-          IF(q.address_recorded_completely      = 1, 0.25, 0) +
-          IF(q.correct_and_complete_information = 1, 0.25, 0) +
-          IF(q.upselling_or_offers_suggested    = 1, 0.25, 0)
-        ) END
+        ELSE ${excludeBlankRatio([
+          'case_escalated_correctly', 'address_recorded_completely',
+          'correct_and_complete_information', 'upselling_or_offers_suggested',
+        ])} END
       ) * 100, 1) AS resolution,
       ROUND(AVG(
         CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-        ELSE (
-          IF(q.further_assistance_offered = 1, 0.5, 0) +
-          IF(q.proper_call_closure        = 1, 0.5, 0)
-        ) END
+        ELSE ${excludeBlankRatio(['further_assistance_offered', 'proper_call_closure'])} END
       ) * 100, 1) AS closing,
       SUM(CASE WHEN
         NOT (
@@ -606,7 +618,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
     FROM db_audit.call_quality_assessment q
     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
     ${groupByClient}
   `, params);
@@ -648,7 +660,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
       )                                                                           AS fatal_pct
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       AND q.length_in_sec IS NOT NULL
       AND TRIM(q.length_in_sec) != ''
       ${clientFilter}
@@ -688,7 +700,7 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters): Pro
     SELECT ${NEG_CAT_EXPR} AS neg_cat, COUNT(*) AS cnt
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
     GROUP BY neg_cat
   `, params);
@@ -752,7 +764,7 @@ export async function getTopPerformers(filters: InboundQualityFilters): Promise<
     FROM db_audit.call_quality_assessment q
     LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       AND q.User IS NOT NULL
       AND TRIM(q.User) != ''
       ${clientFilter}
@@ -789,7 +801,7 @@ export async function getDailyScores(filters: InboundQualityFilters): Promise<Da
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate >= DATE_SUB(DATE(?), INTERVAL 6 DAY)
       AND q.CallDate <  DATE_ADD(DATE(?), INTERVAL 1 DAY)
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
     GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
     ORDER BY call_date ASC
@@ -816,7 +828,7 @@ export async function getDailyScoresRange(filters: InboundQualityFilters): Promi
       COUNT(*)                                   AS audit_count
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
     GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
     ORDER BY call_date ASC
@@ -845,7 +857,7 @@ export async function getDateWiseAnsweredAudited(filters: InboundQualityFilters)
   const auditedRows = await querySource<{ call_date: string; audited: number }>(`
     SELECT
       DATE_FORMAT(q.CallDate, '%Y-%m-%d')                                     AS call_date,
-      SUM(CASE WHEN q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} THEN 1 ELSE 0 END)       AS audited
+      SUM(CASE WHEN q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} THEN 1 ELSE 0 END)       AS audited
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ? ${clientFilter}
     GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
@@ -927,7 +939,7 @@ export async function getScenarios(filters: InboundQualityFilters): Promise<Scen
       COUNT(*) AS cnt
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
     GROUP BY scenario, scenario1
     ORDER BY scenario, cnt DESC
@@ -1029,7 +1041,7 @@ export async function getSocialMediaThreats(filters: InboundQualityFilters): Pro
       COUNT(*) AS cnt
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
       AND (${ALERT_FIELD}) = 'Social Media and Consumer Court Threat'
     GROUP BY scenario, scenario1
@@ -1090,7 +1102,7 @@ export async function getSocialThreatDetail(
       COALESCE(q.call_recording, '')                                          AS call_recording
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
       AND NOT (
         LOWER(TRIM(q.financial_fraud)) = 'yes'
@@ -1165,7 +1177,7 @@ export async function getTopPositiveSignals(filters: InboundQualityFilters): Pro
       SELECT 'Wonderful',                'wonder'
     ) kw
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
     GROUP BY kw.keyword, kw.pattern
     ORDER BY total_count DESC
@@ -1202,7 +1214,7 @@ export async function getPosKeywordPhrases(
       SELECT TRIM(q.top_positive_words) AS phrase, COUNT(*) AS cnt
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND LOWER(q.top_positive_words) LIKE ?
         AND TRIM(q.top_positive_words) NOT IN ('','None','N/A')
@@ -1212,7 +1224,7 @@ export async function getPosKeywordPhrases(
       SELECT TRIM(q.top_positive_words_agent) AS phrase, COUNT(*) AS cnt
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND LOWER(q.top_positive_words_agent) LIKE ?
         AND TRIM(q.top_positive_words_agent) NOT IN ('','None','N/A','Not applicable','Not Available')
@@ -1257,7 +1269,8 @@ export async function getRawCallData(
   const rows = await querySource<Record<string, unknown>>(`
     SELECT ${CQA_EXPORT_COLUMNS.map(c => exportSelectExpr(c)).join(', ')}
     FROM db_audit.call_quality_assessment q ${mobileNo ? '' : 'FORCE INDEX (Index_2)'}
-    WHERE 1=1 ${dateClause} ${cf} ${mf} ${cursorClause}
+    WHERE q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
+      ${dateClause} ${cf} ${mf} ${cursorClause}
     ORDER BY q.id DESC
     LIMIT ${limit}
   `, params);
@@ -1340,29 +1353,29 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
   const rows = await querySource<Record<string, unknown>>(`
     SELECT
       COUNT(*) AS total,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.call_answered_within_5_seconds,0)     = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS call_answered_within_5_seconds,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.customer_concern_acknowledged,0)      = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS customer_concern_acknowledged,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.professionalism_maintained,0)         = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS professionalism_maintained,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.assurance_or_appreciation_provided,0) = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS assurance_or_appreciation_provided,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.pronunciation_and_clarity,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pronunciation_and_clarity,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.enthusiasm_and_no_fumbling,0)         = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS enthusiasm_and_no_fumbling,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.active_listening,0)                   = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS active_listening,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.politeness_and_no_sarcasm,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS politeness_and_no_sarcasm,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_grammar,0)                     = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_grammar,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.accurate_issue_probing,0)             = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS accurate_issue_probing,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_hold_procedure,0)              = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_hold_procedure,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_transfer_and_language,0)       = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_transfer_and_language,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.dead_air_under_10_seconds,0)          = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS dead_air_under_10_seconds,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.case_escalated_correctly,0)           = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS case_escalated_correctly,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.address_recorded_completely,0)        = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS address_recorded_completely,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.correct_and_complete_information,0)   = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS correct_and_complete_information,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.upselling_or_offers_suggested,0)      = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS upselling_or_offers_suggested,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.further_assistance_offered,0)         = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS further_assistance_offered,
-      ROUND(100.0 * SUM(CASE WHEN COALESCE(q.proper_call_closure,0)                = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS proper_call_closure
-      ${isClovia ? ", ROUND(100.0 * SUM(CASE WHEN COALESCE(q.express_empathy,0) = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS express_empathy" : ''}
+      ${paramScorePct('call_answered_within_5_seconds')}     AS call_answered_within_5_seconds,
+      ${paramScorePct('customer_concern_acknowledged')}      AS customer_concern_acknowledged,
+      ${paramScorePct('professionalism_maintained')}         AS professionalism_maintained,
+      ${paramScorePct('assurance_or_appreciation_provided')} AS assurance_or_appreciation_provided,
+      ${paramScorePct('pronunciation_and_clarity')}          AS pronunciation_and_clarity,
+      ${paramScorePct('enthusiasm_and_no_fumbling')}         AS enthusiasm_and_no_fumbling,
+      ${paramScorePct('active_listening')}                   AS active_listening,
+      ${paramScorePct('politeness_and_no_sarcasm')}          AS politeness_and_no_sarcasm,
+      ${paramScorePct('proper_grammar')}                     AS proper_grammar,
+      ${paramScorePct('accurate_issue_probing')}             AS accurate_issue_probing,
+      ${paramScorePct('proper_hold_procedure')}               AS proper_hold_procedure,
+      ${paramScorePct('proper_transfer_and_language')}       AS proper_transfer_and_language,
+      ${paramScorePct('dead_air_under_10_seconds')}          AS dead_air_under_10_seconds,
+      ${paramScorePct('case_escalated_correctly')}           AS case_escalated_correctly,
+      ${paramScorePct('address_recorded_completely')}        AS address_recorded_completely,
+      ${paramScorePct('correct_and_complete_information')}   AS correct_and_complete_information,
+      ${paramScorePct('upselling_or_offers_suggested')}      AS upselling_or_offers_suggested,
+      ${paramScorePct('further_assistance_offered')}         AS further_assistance_offered,
+      ${paramScorePct('proper_call_closure')}                AS proper_call_closure
+      ${isClovia ? `, ${paramScorePct('express_empathy')} AS express_empathy` : ''}
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
   `, params);
 
@@ -1415,41 +1428,26 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters): P
 const COMPONENT_SCORE_EXPR: Record<string, string> = {
   opening_skill: `
     CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-    ELSE IF(q.call_answered_within_5_seconds = 1, 1, 0) END`,
+    ELSE ${excludeBlankRatio(['call_answered_within_5_seconds'])} END`,
   soft_skill: `
     CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-    ELSE (
-      IF(q.professionalism_maintained         = 1, 0.111111111111111, 0) +
-      IF(q.assurance_or_appreciation_provided = 1, 0.111111111111111, 0) +
-      IF(q.pronunciation_and_clarity          = 1, 0.111111111111111, 0) +
-      IF(q.enthusiasm_and_no_fumbling         = 1, 0.111111111111111, 0) +
-      IF(q.active_listening                   = 1, 0.111111111111111, 0) +
-      IF(q.politeness_and_no_sarcasm          = 1, 0.111111111111111, 0) +
-      IF(q.proper_grammar                     = 1, 0.111111111111111, 0) +
-      IF(q.accurate_issue_probing             = 1, 0.111111111111111, 0) +
-      IF(q.customer_concern_acknowledged      = 1, 0.111111111111111, 0)
-    ) END`,
+    ELSE ${excludeBlankRatio([
+      'professionalism_maintained', 'assurance_or_appreciation_provided', 'pronunciation_and_clarity',
+      'enthusiasm_and_no_fumbling', 'active_listening', 'politeness_and_no_sarcasm',
+      'proper_grammar', 'accurate_issue_probing', 'customer_concern_acknowledged',
+    ])} END`,
   hold_procedure: `
     CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-    ELSE (
-      IF(q.proper_hold_procedure        = 1, 0.333, 0) +
-      IF(q.proper_transfer_and_language = 1, 0.333, 0) +
-      IF(q.dead_air_under_10_seconds    = 1, 0.334, 0)
-    ) END`,
+    ELSE ${excludeBlankRatio(['proper_hold_procedure', 'proper_transfer_and_language', 'dead_air_under_10_seconds'])} END`,
   resolution: `
     CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-    ELSE (
-      IF(q.case_escalated_correctly         = 1, 0.25, 0) +
-      IF(q.address_recorded_completely      = 1, 0.25, 0) +
-      IF(q.correct_and_complete_information = 1, 0.25, 0) +
-      IF(q.upselling_or_offers_suggested    = 1, 0.25, 0)
-    ) END`,
+    ELSE ${excludeBlankRatio([
+      'case_escalated_correctly', 'address_recorded_completely',
+      'correct_and_complete_information', 'upselling_or_offers_suggested',
+    ])} END`,
   closing: `
     CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-    ELSE (
-      IF(q.further_assistance_offered = 1, 0.5, 0) +
-      IF(q.proper_call_closure        = 1, 0.5, 0)
-    ) END`,
+    ELSE ${excludeBlankRatio(['further_assistance_offered', 'proper_call_closure'])} END`,
 };
 
 export interface ScoreComponentTrendRow { call_date: string; score: number; audit_count: number; }
@@ -1471,7 +1469,7 @@ export async function getScoreComponentTrend(
       COUNT(*)                            AS audit_count
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
     GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
     ORDER BY call_date ASC
@@ -1532,7 +1530,7 @@ export async function getDateWiseParameterScores(filters: InboundQualityFilters)
       ${paramSelects}
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
     GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
     ORDER BY call_date ASC
@@ -1545,7 +1543,7 @@ export async function getDateWiseParameterScores(filters: InboundQualityFilters)
       ${paramSelects}
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
   `, baseParams);
 
@@ -1666,7 +1664,7 @@ export async function getClapKeywordDrill(
   if (scenario) drillParams.push(scenario);
   if (subScenario) drillParams.push(subScenario);
 
-  const where = `CallDate BETWEEN ? AND ? AND quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE_BARE} ${clientFilter} AND ${typeClause}`;
+  const where = `CallDate BETWEEN ? AND ? AND quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE_BARE} ${clientFilter} AND ${typeClause}`;
   const fullWhere = where + clapFilter + scenarioFilter + subScenarioFilter;
 
   const baseParamsForWhere = [...baseParams, ...typeParams];
@@ -1810,7 +1808,7 @@ export async function getClapWords(filters: InboundQualityFilters): Promise<Clap
         querySource<{ words: string; cnt: number }>(
           `SELECT ${q.posField} AS words, COUNT(*) AS cnt
            FROM db_audit.call_quality_assessment q
-           WHERE CallDate BETWEEN ? AND ? AND quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE_BARE} ${clientFilter}
+           WHERE CallDate BETWEEN ? AND ? AND quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE_BARE} ${clientFilter}
              AND ${CLAP_CASE_INBOUND} = ? AND ${q.posField} IS NOT NULL AND TRIM(${q.posField}) != ''
            GROUP BY ${q.posField} ORDER BY cnt DESC LIMIT 30`,
           [...base, q.clap],
@@ -1818,7 +1816,7 @@ export async function getClapWords(filters: InboundQualityFilters): Promise<Clap
         querySource<{ words: string; cnt: number }>(
           `SELECT ${q.negField} AS words, COUNT(*) AS cnt
            FROM db_audit.call_quality_assessment q
-           WHERE CallDate BETWEEN ? AND ? AND quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE_BARE} ${clientFilter}
+           WHERE CallDate BETWEEN ? AND ? AND quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE_BARE} ${clientFilter}
              AND ${CLAP_CASE_INBOUND} = ? AND ${q.negField} IS NOT NULL AND TRIM(${q.negField}) != ''
            GROUP BY ${q.negField} ORDER BY cnt DESC LIMIT 30`,
           [...base, q.clap],
@@ -1869,7 +1867,7 @@ export async function getPosKeywordLeads(
         COALESCE(call_recording, '')                        AS call_recording
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?
-        AND quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE_BARE}
+        AND quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE_BARE}
         ${clientFilter}
         AND LOWER(top_positive_words) LIKE ?
       ORDER BY CallDate DESC
@@ -1886,7 +1884,7 @@ export async function getPosKeywordLeads(
         COALESCE(call_recording, '')                        AS call_recording
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?
-        AND quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE_BARE}
+        AND quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE_BARE}
         ${clientFilter}
         AND LOWER(top_positive_words_agent) LIKE ?
       ORDER BY CallDate DESC
@@ -1931,7 +1929,7 @@ export async function getTopNegativeSignalDetails(filters: InboundQualityFilters
       COUNT(*) AS cnt
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
       AND (${ALERT_FIELD}) = 'Top Negative Signals'
     GROUP BY scenario, scenario1, neg_signal
@@ -1961,7 +1959,7 @@ export async function getPotentialScams(filters: InboundQualityFilters): Promise
       COUNT(*) AS cnt
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
       AND (${ALERT_FIELD}) = 'Scam Leads'
     GROUP BY scenario, scenario1
@@ -2067,7 +2065,7 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(q.call_recording, '')  AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND q.agent_hindi_cuss_count > 0
         AND q.agent_hindi_cuss_words IS NOT NULL
@@ -2087,7 +2085,7 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(q.call_recording, '')  AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND q.agent_english_cuss_count > 0
         AND q.agent_english_cuss_words IS NOT NULL
@@ -2110,7 +2108,7 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(q.call_recording, '')  AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND q.customer_hindi_cuss_count > 0
         AND q.customer_hindi_cuss_words IS NOT NULL
@@ -2130,7 +2128,7 @@ export async function getAbuseDetail(filters: InboundQualityFilters): Promise<{ 
         COALESCE(q.call_recording, '')  AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND q.customer_english_cuss_count > 0
         AND q.customer_english_cuss_words IS NOT NULL
@@ -2217,7 +2215,7 @@ export async function getNegSignalDetail(
       COALESCE(q.call_recording, '')  AS call_recording
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
       AND q.top_negative_words IS NOT NULL
       AND TRIM(q.top_negative_words) != ''
@@ -2302,7 +2300,7 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
         THEN 1 ELSE 0 END) AS scam_words
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND ${SCAM_CONDITION}
     `, params),
@@ -2324,7 +2322,7 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
         COALESCE(q.call_recording, '') AS call_recording
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND ${SCAM_CONDITION}
       ORDER BY q.CallDate DESC
@@ -2505,7 +2503,7 @@ export async function getSensitiveWordAnalysis(filters: InboundQualityFilters): 
         COUNT(*) AS cnt
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND ${SCAM_EXCLUSION}
         AND ${HAS_SENSITIVE_WORD}
@@ -2522,7 +2520,7 @@ export async function getSensitiveWordAnalysis(filters: InboundQualityFilters): 
                        LOWER(q.sensetive_word) LIKE '%fir%') THEN 1 ELSE 0 END) AS court_count
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND ${SCAM_EXCLUSION}
         AND ${HAS_SENSITIVE_WORD}
@@ -2535,7 +2533,7 @@ export async function getSensitiveWordAnalysis(filters: InboundQualityFilters): 
         COUNT(*) AS cnt
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
         AND ${SCAM_EXCLUSION}
         AND LOWER(q.sensetive_word) LIKE '%akash%'
@@ -2639,7 +2637,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
         SUM(CASE WHEN TRIM(q.scenario)='Request'   AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS request_fatal,
         SUM(CASE WHEN TRIM(q.scenario)='Sale Done' AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS sale_done_fatal
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${clientFilter}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${clientFilter}
     `, params),
 
     querySource<{ agent_name: string; audit_count: number; fatal_count: number; fatal_pct: number | null }>(`
@@ -2648,7 +2646,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
         ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS fatal_pct
       FROM db_audit.call_quality_assessment q
       LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         AND q.User IS NOT NULL AND TRIM(q.User) != '' ${clientFilter}
       GROUP BY q.User, am.AgentName ORDER BY fatal_count DESC, fatal_pct DESC LIMIT 5
     `, params),
@@ -2665,7 +2663,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
         SUM(CASE WHEN TRIM(q.scenario)='Complaint' AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS complaint_fatal,
         SUM(CASE WHEN TRIM(q.scenario)='Request'   AND ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS request_fatal
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         AND q.scenario IS NOT NULL AND TRIM(q.scenario) != ''
         ${clientFilter}
       GROUP BY DATE_FORMAT(q.CallDate,'%Y-%m-%d')
@@ -2695,7 +2693,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
               NULLIF(SUM(CASE WHEN TRIM(q.scenario)='Sale Done' THEN 1 ELSE 0 END),0),0) AS sale_done_fatal_pct,
         SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END) AS total_fatal
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${clientFilter}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${clientFilter}
       GROUP BY week_label ORDER BY week_label ASC
     `, params),
 
@@ -2716,7 +2714,7 @@ export async function getFatalAnalysis(filters: InboundQualityFilters): Promise<
         ROUND(SUM(CASE WHEN q.quality_percentage>=98  THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS excellent_pct
       FROM db_audit.call_quality_assessment q
       LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         AND q.User IS NOT NULL AND TRIM(q.User) != '' ${clientFilter}
       GROUP BY q.User, am.AgentName ORDER BY fatal_count DESC, fatal_pct DESC
     `, params),
@@ -2829,7 +2827,7 @@ export async function getDetailAnalysis(filters: InboundQualityFilters): Promise
         SUM(CASE WHEN TRIM(q.scenario)='Request'   THEN 1 ELSE 0 END) AS request_count,
         SUM(CASE WHEN TRIM(q.scenario)='Sale Done' THEN 1 ELSE 0 END) AS sale_done_count
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${clientFilter}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${clientFilter}
     `, params),
 
     querySource<{ scenario: string; scenario1: string; cnt: number }>(`
@@ -2838,7 +2836,7 @@ export async function getDetailAnalysis(filters: InboundQualityFilters): Promise
         CASE WHEN TRIM(q.scenario1)='' OR q.scenario1 IS NULL THEN 'Unknown' ELSE TRIM(q.scenario1) END AS scenario1,
         COUNT(*) AS cnt
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${clientFilter}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${clientFilter}
         AND q.scenario IS NOT NULL AND TRIM(q.scenario) != ''
       GROUP BY TRIM(q.scenario), scenario1
       ORDER BY TRIM(q.scenario), cnt DESC
@@ -2853,7 +2851,7 @@ export async function getDetailAnalysis(filters: InboundQualityFilters): Promise
         SUM(CASE WHEN TRIM(q.scenario)='Query'     THEN 1 ELSE 0 END) AS query_c,
         COUNT(*) AS total
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${clientFilter}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${clientFilter}
       GROUP BY DATE_FORMAT(q.CallDate,'%Y-%m-%d')
       ORDER BY call_date DESC
     `, params),
@@ -2877,7 +2875,7 @@ export async function getDetailAnalysis(filters: InboundQualityFilters): Promise
         ROUND(SUM(CASE WHEN TRIM(q.scenario)='Sale Done' THEN 1 ELSE 0 END)*100.0/COUNT(*),0) AS sale_done_pct,
         COUNT(*) AS total
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${clientFilter}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${clientFilter}
       GROUP BY week_label
       ORDER BY total DESC
     `, params),
@@ -2940,36 +2938,31 @@ export async function getDetailAnalysis(filters: InboundQualityFilters): Promise
 // ─── Shared score SQL fragments ───────────────────────────────────────────────
 const _OPENING = `ROUND(AVG(
   CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-  ELSE COALESCE(q.call_answered_within_5_seconds,0) END
+  ELSE ${excludeBlankRatio(['call_answered_within_5_seconds'])} END
 )*100,1)`;
 
 const _SOFT = `ROUND(AVG(
   CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-  ELSE (
-    IF(q.professionalism_maintained        =1,0.125,0)+
-    IF(q.assurance_or_appreciation_provided=1,0.125,0)+
-    IF(q.pronunciation_and_clarity         =1,0.125,0)+
-    IF(q.enthusiasm_and_no_fumbling        =1,0.125,0)+
-    IF(q.active_listening                  =1,0.125,0)+
-    IF(q.politeness_and_no_sarcasm         =1,0.125,0)+
-    IF(q.proper_grammar                    =1,0.125,0)+
-    IF(q.accurate_issue_probing            =1,0.125,0)
-  ) END
+  ELSE ${excludeBlankRatio([
+    'professionalism_maintained', 'assurance_or_appreciation_provided', 'pronunciation_and_clarity',
+    'enthusiasm_and_no_fumbling', 'active_listening', 'politeness_and_no_sarcasm',
+    'proper_grammar', 'accurate_issue_probing',
+  ])} END
 )*100,1)`;
 
 const _HOLD = `ROUND(AVG(
   CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-  ELSE (IF(q.proper_hold_procedure=1,0.5,0)+IF(q.proper_transfer_and_language=1,0.5,0)) END
+  ELSE ${excludeBlankRatio(['proper_hold_procedure', 'proper_transfer_and_language'])} END
 )*100,1)`;
 
 const _RESOLUTION = `ROUND(AVG(
   CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-  ELSE (IF(q.address_recorded_completely=1,0.5,0)+IF(q.correct_and_complete_information=1,0.5,0)) END
+  ELSE ${excludeBlankRatio(['address_recorded_completely', 'correct_and_complete_information'])} END
 )*100,1)`;
 
 const _CLOSING = `ROUND(AVG(
   CASE WHEN q.scenario1 IN ('Call Drop in between','Short Call/Blank Call') THEN 1
-  ELSE COALESCE(q.professionalism_maintained,0) END
+  ELSE ${excludeBlankRatio(['professionalism_maintained'])} END
 )*100,1)`;
 
 // ─── Agent & Parameter Wise CQ Score% ────────────────────────────────────────
@@ -3020,7 +3013,7 @@ export async function getAgentParameterWise(filters: InboundQualityFilters & { s
     LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     LEFT JOIN shivamgiri.AgentsMaster am2 ON am2.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       AND q.User IS NOT NULL AND TRIM(q.User) != ''
       ${extra}
     GROUP BY q.User, q.Campaign, am.AgentName, am2.AgentName
@@ -3096,7 +3089,7 @@ export async function getAgentGuidance(filters: InboundQualityFilters): Promise<
       SELECT ${paramSelect}
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         ${clientFilter}
     `, baseParams),
     querySource<Record<string, unknown>>(`
@@ -3109,7 +3102,7 @@ export async function getAgentGuidance(filters: InboundQualityFilters): Promise<
       FROM db_audit.call_quality_assessment q
       LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
         AND q.User IS NOT NULL AND TRIM(q.User) != ''
         ${clientFilter}
       GROUP BY q.User, am.AgentName
@@ -3218,13 +3211,13 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters): Promise
         FROM db_audit.call_quality_assessment
         WHERE CallDate BETWEEN ? AND ? ${subClient}
           AND MobileNo IS NOT NULL AND TRIM(MobileNo) != ''
-          AND quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE_BARE}
+          AND quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE_BARE}
         GROUP BY MobileNo
         HAVING COUNT(*) > 1
       ) r ON q.MobileNo = r.MobileNo
       WHERE q.CallDate BETWEEN ? AND ? ${mainClient}
         AND q.MobileNo IS NOT NULL AND TRIM(q.MobileNo) != ''
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       GROUP BY DATE_FORMAT(q.CallDate, '%Y-%m-%d')
       ORDER BY call_date ASC
     `, [...base, ...base]),
@@ -3239,7 +3232,7 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters): Promise
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ? ${subClient}
         AND MobileNo IS NOT NULL AND TRIM(MobileNo) != ''
-        AND quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE_BARE}
+        AND quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE_BARE}
     `, base),
 
     // Pivot: all phones × all dates (call count per combination)
@@ -3251,7 +3244,7 @@ export async function getRepeatAnalysis(filters: InboundQualityFilters): Promise
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ? ${mainClient}
         AND q.MobileNo IS NOT NULL AND TRIM(q.MobileNo) != ''
-        AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       GROUP BY q.MobileNo, DATE_FORMAT(q.CallDate, '%Y-%m-%d')
       ORDER BY q.MobileNo ASC, call_date ASC
     `, base),
@@ -3329,7 +3322,7 @@ export async function getRepeatCallDetail(
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.MobileNo = ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${extra}
     ORDER BY q.CallDate ASC
   `, params);
@@ -3404,7 +3397,7 @@ export async function getQualityParameters(filters: InboundQualityFilters & { sc
       ${isClovia ? ", SUM(CASE WHEN express_empathy IS NOT NULL THEN 1 ELSE 0 END) AS t_empathy, SUM(COALESCE(express_empathy,0)) AS h_empathy" : ''}
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${extra}
   `, params);
 
@@ -3479,7 +3472,7 @@ export async function getWeekWiseQuality(filters: InboundQualityFilters & { scen
       ${_CLOSING}    AS closing
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${extra}
     GROUP BY week_label
     ORDER BY MIN(q.CallDate) ASC
@@ -3526,7 +3519,7 @@ export async function getDayWiseQuality(filters: InboundQualityFilters & { scena
       ${_CLOSING}    AS closing
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${extra}
     GROUP BY DATE_FORMAT(q.CallDate,'%Y-%m-%d')
     ORDER BY call_date DESC
@@ -3581,7 +3574,7 @@ export async function getBandDetail(
     : band === 'below_average' ? 'q.quality_percentage > 0 AND q.quality_percentage < 85'
     : band === 'fatal'       ? fatalCheckSql('q')
     : band === 'no_fatal'    ? noFatalCheckSql('q')
-    : `q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}`;
+    : `q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}`;
 
   let extra = '';
   if (clientId) { extra += ' AND q.ClientId = ?'; params.push(clientId); }
@@ -3597,7 +3590,7 @@ export async function getBandDetail(
       ROUND(AVG(${CQ_SCORE_SQL}) * 100,  1)              AS avg_score
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       AND (${bandCondition})
       ${extra}
     GROUP BY q.User, q.scenario
@@ -3729,7 +3722,7 @@ export async function getRawData(filters: InboundQualityFilters): Promise<RawDat
       COALESCE(q.proper_call_closure, '')                         AS proper_call_closure
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${extra}
     ORDER BY q.CallDate DESC
     LIMIT 10000
@@ -3817,7 +3810,7 @@ export async function getMissingAgents(filters: InboundQualityFilters): Promise<
     FROM db_audit.call_quality_assessment q
     LEFT JOIN shivamgiri.AgentsMaster am ON am.MasId = q.User
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       AND q.User IS NOT NULL AND TRIM(q.User) != ''
       AND am.MasId IS NULL
       ${extra}
@@ -3876,42 +3869,32 @@ export interface TNIResult {
 
 // Clovia (ClientId 468) gets an 8th Soft Skills parameter (express_empathy) here too, gated
 // per-row like CQ_SCORE_SQL so this fragment stays correct however the caller filters by client.
+// Same exclude-blank-from-the-ratio treatment as CQ Score/Score Components (see excludeBlankRatio
+// above) — a parameter that was never graded on a call is dropped from that call's ratio instead
+// of counting as a fail (the previous COALESCE(...,0) treated every blank as 0).
 const _TNI_SS = `ROUND(AVG(
-    CASE WHEN q.ClientId = '${CLOVIA_CLIENT_ID}' THEN
-      (COALESCE(q.customer_concern_acknowledged,0) +
-       COALESCE(q.professionalism_maintained,0) +
-       COALESCE(q.assurance_or_appreciation_provided,0) +
-       COALESCE(q.enthusiasm_and_no_fumbling,0) +
-       COALESCE(q.active_listening,0) +
-       COALESCE(q.politeness_and_no_sarcasm,0) +
-       COALESCE(q.proper_call_closure,0) +
-       COALESCE(q.express_empathy,0)
-      ) / 8.0 * 100
-    ELSE
-      (COALESCE(q.customer_concern_acknowledged,0) +
-       COALESCE(q.professionalism_maintained,0) +
-       COALESCE(q.assurance_or_appreciation_provided,0) +
-       COALESCE(q.enthusiasm_and_no_fumbling,0) +
-       COALESCE(q.active_listening,0) +
-       COALESCE(q.politeness_and_no_sarcasm,0) +
-       COALESCE(q.proper_call_closure,0)
-      ) / 7.0 * 100
+    CASE WHEN q.ClientId = '${CLOVIA_CLIENT_ID}'
+      THEN ${excludeBlankRatio([
+        'customer_concern_acknowledged', 'professionalism_maintained', 'assurance_or_appreciation_provided',
+        'enthusiasm_and_no_fumbling', 'active_listening', 'politeness_and_no_sarcasm',
+        'proper_call_closure', 'express_empathy',
+      ])} * 100
+      ELSE ${excludeBlankRatio([
+        'customer_concern_acknowledged', 'professionalism_maintained', 'assurance_or_appreciation_provided',
+        'enthusiasm_and_no_fumbling', 'active_listening', 'politeness_and_no_sarcasm', 'proper_call_closure',
+      ])} * 100
     END
   ), 1)`;
 
 const _TNI_PK = `ROUND(AVG(
-    (COALESCE(q.accurate_issue_probing,0) +
-     COALESCE(q.proper_hold_procedure,0) +
-     COALESCE(q.proper_transfer_and_language,0) +
-     COALESCE(q.address_recorded_completely,0) +
-     COALESCE(q.correct_and_complete_information,0)
-    ) / 5.0 * 100
+    ${excludeBlankRatio([
+      'accurate_issue_probing', 'proper_hold_procedure', 'proper_transfer_and_language',
+      'address_recorded_completely', 'correct_and_complete_information',
+    ])} * 100
   ), 1)`;
 
 const _TNI_CS = `ROUND(AVG(
-    (COALESCE(q.pronunciation_and_clarity,0) +
-     COALESCE(q.proper_grammar,0)
-    ) / 2.0 * 100
+    ${excludeBlankRatio(['pronunciation_and_clarity', 'proper_grammar'])} * 100
   ), 1)`;
 
 export async function getTNIAnalysis(filters: InboundQualityFilters): Promise<TNIResult> {
@@ -3933,7 +3916,7 @@ export async function getTNIAnalysis(filters: InboundQualityFilters): Promise<TN
       ${_TNI_CS}                                     AS communication
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${extra}
     GROUP BY q.User
     ORDER BY soft_skills ASC
@@ -3956,7 +3939,7 @@ export async function getTNIAnalysis(filters: InboundQualityFilters): Promise<TN
       ${_TNI_CS}                                     AS communication
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${extra}
     GROUP BY q.User, week_label
     ORDER BY q.User ASC, MIN(q.CallDate) ASC
@@ -4029,25 +4012,25 @@ export async function getTNIAgentParams(
 
   const [row] = await querySource<Record<string, number | null>>(`
     SELECT
-      ROUND(AVG(COALESCE(q.customer_concern_acknowledged,0))      * 100, 1) AS customer_concern_acknowledged,
-      ROUND(AVG(COALESCE(q.professionalism_maintained,0))         * 100, 1) AS professionalism_maintained,
-      ROUND(AVG(COALESCE(q.assurance_or_appreciation_provided,0)) * 100, 1) AS assurance_or_appreciation_provided,
-      ${isClovia ? "ROUND(AVG(COALESCE(q.express_empathy,0)) * 100, 1) AS express_empathy," : ''}
-      ROUND(AVG(COALESCE(q.enthusiasm_and_no_fumbling,0))         * 100, 1) AS enthusiasm_and_no_fumbling,
-      ROUND(AVG(COALESCE(q.active_listening,0))                   * 100, 1) AS active_listening,
-      ROUND(AVG(COALESCE(q.politeness_and_no_sarcasm,0))          * 100, 1) AS politeness_and_no_sarcasm,
-      ROUND(AVG(COALESCE(q.proper_call_closure,0))                * 100, 1) AS proper_call_closure,
-      ROUND(AVG(COALESCE(q.accurate_issue_probing,0))             * 100, 1) AS accurate_issue_probing,
-      ROUND(AVG(COALESCE(q.proper_hold_procedure,0))              * 100, 1) AS proper_hold_procedure,
-      ROUND(AVG(COALESCE(q.proper_transfer_and_language,0))       * 100, 1) AS proper_transfer_and_language,
-      ROUND(AVG(COALESCE(q.address_recorded_completely,0))        * 100, 1) AS address_recorded_completely,
-      ROUND(AVG(COALESCE(q.correct_and_complete_information,0))   * 100, 1) AS correct_and_complete_information,
-      ROUND(AVG(COALESCE(q.pronunciation_and_clarity,0))          * 100, 1) AS pronunciation_and_clarity,
-      ROUND(AVG(COALESCE(q.proper_grammar,0))                     * 100, 1) AS proper_grammar
+      ${paramScorePct('customer_concern_acknowledged')}      AS customer_concern_acknowledged,
+      ${paramScorePct('professionalism_maintained')}         AS professionalism_maintained,
+      ${paramScorePct('assurance_or_appreciation_provided')} AS assurance_or_appreciation_provided,
+      ${isClovia ? `${paramScorePct('express_empathy')} AS express_empathy,` : ''}
+      ${paramScorePct('enthusiasm_and_no_fumbling')}         AS enthusiasm_and_no_fumbling,
+      ${paramScorePct('active_listening')}                   AS active_listening,
+      ${paramScorePct('politeness_and_no_sarcasm')}          AS politeness_and_no_sarcasm,
+      ${paramScorePct('proper_call_closure')}                AS proper_call_closure,
+      ${paramScorePct('accurate_issue_probing')}             AS accurate_issue_probing,
+      ${paramScorePct('proper_hold_procedure')}              AS proper_hold_procedure,
+      ${paramScorePct('proper_transfer_and_language')}       AS proper_transfer_and_language,
+      ${paramScorePct('address_recorded_completely')}        AS address_recorded_completely,
+      ${paramScorePct('correct_and_complete_information')}   AS correct_and_complete_information,
+      ${paramScorePct('pronunciation_and_clarity')}          AS pronunciation_and_clarity,
+      ${paramScorePct('proper_grammar')}                     AS proper_grammar
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND TRIM(q.User) = ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${extra}
   `, params);
 
@@ -4176,7 +4159,7 @@ export async function getAgentCalls(filters: InboundQualityFilters & { agentId: 
       ROUND(q.quality_percentage, 1)                                AS score
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       AND TRIM(q.User) = ?
       ${clientFilter}
     ORDER BY q.CallDate DESC
@@ -4238,7 +4221,7 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND ${fatalCheckSql('q')}
-      AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE}
+      AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${clientFilter}
     ORDER BY q.CallDate DESC
     LIMIT 300
@@ -4419,7 +4402,7 @@ function buildKwScanSQL(
   ).join(',\n    ');
   const sql = `SELECT ${cols}
     FROM db_audit.call_quality_assessment q
-    WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+    WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
       ${clapWhere}
       AND q.Transcribe_Text IS NOT NULL AND TRIM(q.Transcribe_Text) != ''`;
   const params: (string | number)[] = [...keywords.map(kw => `%${kw}%`), ...base];
@@ -4510,14 +4493,14 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
     querySource<{ total: number }>(`
       SELECT COUNT(*) AS total
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
     `, overallBase),
 
     // 2. Per-branch call totals — scenario classification (used for the "N total calls" label in the detail panel)
     querySource<{ clap: string; total: number }>(`
       SELECT ${CLAP_CASE_INBOUND} AS clap, COUNT(*) AS total
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
         AND ${CLAP_CASE_INBOUND} IN ('Logistic','Agent','Product')
       GROUP BY clap
     `, base),
@@ -4534,7 +4517,7 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
         SUM(CASE WHEN q.customer_voc_product_positive  IS NOT NULL AND q.customer_voc_product_positive  != '' THEN 1 ELSE 0 END) AS prodPos,
         SUM(CASE WHEN q.customer_voc_product_negative  IS NOT NULL AND q.customer_voc_product_negative  != '' THEN 1 ELSE 0 END) AS prodNeg
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
     `, base),
 
     // 4. Logistic + Agent scenario+sub breakdown (subquery for reliability) — unchanged
@@ -4545,7 +4528,7 @@ export async function getClapCustomerAnalysis(filters: InboundQualityFilters): P
           q.scenario,
           COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
         FROM db_audit.call_quality_assessment q
-        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
       ) AS t
       WHERE t.clap IN ('Logistic','Agent')
       GROUP BY t.clap, t.scenario, t.sub_scenario
@@ -4623,7 +4606,7 @@ export async function getClapVocQuotes(
            COALESCE(q.call_recording, '') AS call_recording
     FROM db_audit.call_quality_assessment q
     LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-    WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+    WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
       AND q.${column} IS NOT NULL AND TRIM(q.${column}) != ''
     ORDER BY q.CallDate DESC
   `, base);
@@ -4669,7 +4652,7 @@ function fetchRawProductVocRows(
            COALESCE(q.call_recording, '') AS call_recording
     FROM db_audit.call_quality_assessment q
     LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-    WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+    WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
       AND q.${column} IS NOT NULL AND TRIM(q.${column}) != ''
     ORDER BY q.CallDate DESC
   `, base);
@@ -4869,7 +4852,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         SUM(CASE WHEN q.top_positive_words IS NOT NULL AND TRIM(q.top_positive_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS posCount,
         SUM(CASE WHEN q.top_negative_words IS NOT NULL AND TRIM(q.top_negative_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS negCount
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
     `, base),
 
     // 2. CLAP breakdown
@@ -4878,7 +4861,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
       FROM (
         SELECT (${CLAP_CASE_INBOUND}) AS clap
         FROM db_audit.call_quality_assessment q
-        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
       ) t
       GROUP BY t.clap
       ORDER BY count DESC
@@ -4888,7 +4871,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
     querySource<Record<string, number>>(`
       SELECT COUNT(*) AS total, ${paramSelect}
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
     `, base),
 
     // 4. Customer scenarios
@@ -4897,7 +4880,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
       FROM (
         SELECT (${CLAP_CASE_INBOUND}) AS clap, q.scenario
         FROM db_audit.call_quality_assessment q
-        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
       ) t
       WHERE t.clap = 'Customer'
       GROUP BY t.scenario
@@ -4911,7 +4894,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_positive_words),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 8000) AS pw,
         LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_negative_words),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 8000) AS nw
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
         AND (${CLAP_CASE_INBOUND}) = 'Customer'
     `, base),
 
@@ -4923,7 +4906,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
           q.scenario,
           COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
         FROM db_audit.call_quality_assessment q
-        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
       ) t
       WHERE t.clap = 'Logistic'
       GROUP BY t.scenario, t.sub_scenario
@@ -4938,7 +4921,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS avgScore
       FROM db_audit.call_quality_assessment q
       LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
         AND q.User IS NOT NULL AND TRIM(q.User) != ''
       GROUP BY q.User, am.AgentName
       HAVING COUNT(*) >= 2
@@ -4954,7 +4937,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS avgScore
       FROM db_audit.call_quality_assessment q
       LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
         AND q.User IS NOT NULL AND TRIM(q.User) != ''
       GROUP BY q.User, am.AgentName
       HAVING COUNT(*) >= 2
@@ -4968,7 +4951,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_positive_words_agent),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 8000) AS apw,
         LEFT(GROUP_CONCAT(NULLIF(TRIM(q.top_negative_words_agent),'') ORDER BY q.CallDate DESC SEPARATOR '|'), 8000) AS anw
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
     `, base),
 
     // 10. Product sub-scenarios
@@ -4979,7 +4962,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
           q.scenario,
           COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
         FROM db_audit.call_quality_assessment q
-        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
       ) t
       WHERE t.clap = 'Product'
       GROUP BY t.scenario, t.sub_scenario
@@ -4995,7 +4978,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
           q.scenario,
           COALESCE(NULLIF(TRIM(q.scenario1),''),'—') AS sub_scenario
         FROM db_audit.call_quality_assessment q
-        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
           AND q.Transcribe_Text IS NOT NULL AND TRIM(q.Transcribe_Text) != ''
       ) t
       WHERE t.clap = 'Product' AND t.product IS NOT NULL
@@ -5012,7 +4995,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         SUM(CASE WHEN q.top_negative_words IS NOT NULL AND TRIM(q.top_negative_words) NOT IN ('','None','N/A','Not applicable','Not Available') THEN 1 ELSE 0 END) AS negCount,
         ROUND(AVG(${CQ_SCORE_SQL}) * 100, 1) AS avgQA
       FROM db_audit.call_quality_assessment q
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
       GROUP BY date
       ORDER BY date ASC
     `, base),
@@ -5026,7 +5009,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
       FROM (
         SELECT q.MobileNo, COUNT(*) AS cnt
         FROM db_audit.call_quality_assessment q
-        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+        WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
           AND q.MobileNo IS NOT NULL AND TRIM(q.MobileNo) != ''
         GROUP BY q.MobileNo
       ) rc
@@ -5050,7 +5033,7 @@ export async function getClapIntelligence(filters: InboundQualityFilters): Promi
         END AS rule
       FROM db_audit.call_quality_assessment q
       LEFT JOIN db_masmis.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${NEEMANS_QUALITY_GATE} ${cf}
+      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE} ${cf}
         AND (${CLAP_CASE_INBOUND}) = 'Agent'
       ORDER BY q.CallDate DESC
       LIMIT 200
@@ -5259,6 +5242,9 @@ const CQA_EXPORT_COLUMNS = [
 
 // CallDate needs an explicit SQL-side format (dd-mm-yyyy hh:mm:ss) rather than the raw DATETIME —
 // letting mysql2/CSV serialize a Date object directly produces a locale/timezone-dependent string.
+// A blank CQ parameter cell is exported as-is (blank) — the scoring formulas now exclude blanks
+// from the ratio entirely rather than treating them as a pass, so forcing the cell to show "1"
+// would misrepresent a parameter that was never actually graded on that call.
 function exportSelectExpr(col: string): string {
   if (col === 'CallDate') return `DATE_FORMAT(q.CallDate, '%d-%m-%Y %H:%i:%s') AS CallDate`;
   return `q.${col}`;
@@ -5294,7 +5280,9 @@ export async function streamInboundExportCsv(
     const rows = await querySource<Record<string, unknown>>(`
       SELECT ${CQA_EXPORT_COLUMNS.map(c => exportSelectExpr(c)).join(', ')}
       FROM db_audit.call_quality_assessment q FORCE INDEX (Index_2)
-      WHERE q.id > ? AND q.CallDate BETWEEN ? AND ? ${clientFilter}
+      WHERE q.id > ? AND q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
+        ${clientFilter}
       ORDER BY q.id ASC
       LIMIT ${BATCH}
     `, [lastId, startDate, endDate, ...clientParams]);

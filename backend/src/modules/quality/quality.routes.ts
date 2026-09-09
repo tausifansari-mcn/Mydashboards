@@ -27,6 +27,8 @@ router.get('/housing-owner-cq-score', ctrl.getHousingOwnerCQScore);
 router.get('/housing-owner-cq-score/details', ctrl.getHousingOwnerCQScoreDetails);
 router.get('/bellavita-cq-score', ctrl.getBellavitaCQScore);
 router.get('/bellavita-cq-score/details', ctrl.getBellavitaCQScoreDetails);
+router.get('/housing-premium-cq-score', ctrl.getHousingPremiumCQScore);
+router.get('/housing-premium-cq-score/details', ctrl.getHousingPremiumCQScoreDetails);
 router.get('/housing-owner-compliance', ctrl.getHousingOwnerCompliance);
 router.get('/housing-owner-compliance/drill', ctrl.getHousingOwnerComplianceDrill);
 router.get('/magical-script-category-sale-done', ctrl.getMagicalCategorySaleDoneCalls);

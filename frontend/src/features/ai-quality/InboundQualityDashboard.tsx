@@ -2107,7 +2107,7 @@ const SLIDES = [
   { label: 'Detail Analysis',     color: 'purple'  },
   { label: 'Repeat Analysis',     color: 'teal'    },
   { label: 'CLAP Analysis',       color: 'amber'   },
-  { label: 'Proof Collection Analysis', color: 'orange'  },
+  { label: 'SOP Analyse', color: 'orange'  },
   { label: 'TNI Detection',       color: 'emerald' },
   { label: 'Fraud Call',          color: 'rose'    },
   { label: 'Actionable Insights', color: 'indigo'  },
@@ -2814,7 +2814,7 @@ export default function InboundQualityDashboard() {
         <div className="pill-tabs mb-6">
           {SLIDES.map((s, i) => {
             if (s.label === 'Raw Data' && !canViewRawData) return null;
-            if (s.label === 'Proof Collection Analysis' && clientId !== '375') return null;
+            if (s.label === 'SOP Analyse' && clientId !== '375') return null;
             return (
               <button key={s.label}
                 onClick={() => setActiveSlide(i)}
