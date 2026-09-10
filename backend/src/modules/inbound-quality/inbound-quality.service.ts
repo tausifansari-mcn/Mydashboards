@@ -1262,12 +1262,15 @@ export async function getRawCallData(
     ...(cursor ? [cursor] : []),
   ];
 
+  // Only rename when the table is scoped to exactly Clovia — see exportSelectExpr's comment.
+  const isClovia = clientId === CLOVIA_CLIENT_ID;
+
   // Same FORCE INDEX reasoning as streamInboundExportCsv above — without it, MySQL can pick the
   // PRIMARY (id) index for this all-columns query and scan far more rows than the date/client
   // filter actually matches before reaching LIMIT, which is slow enough with 89 heavy columns to
   // risk the query timeout on wide date ranges or deep "Load More" pagination.
   const rows = await querySource<Record<string, unknown>>(`
-    SELECT ${CQA_EXPORT_COLUMNS.map(c => exportSelectExpr(c)).join(', ')}
+    SELECT ${CQA_EXPORT_COLUMNS.map(c => exportSelectExpr(c, isClovia)).join(', ')}
     FROM db_audit.call_quality_assessment q ${mobileNo ? '' : 'FORCE INDEX (Index_2)'}
     WHERE q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
       ${dateClause} ${cf} ${mf} ${cursorClause}
@@ -1276,7 +1279,7 @@ export async function getRawCallData(
   `, params);
 
   return {
-    columns: CQA_EXPORT_COLUMNS,
+    columns: exportColumnLabels(isClovia),
     rows,
     nextCursor: rows.length === limit ? Number(rows[rows.length - 1].id) : null,
   };
@@ -5245,9 +5248,20 @@ const CQA_EXPORT_COLUMNS = [
 // A blank CQ parameter cell is exported as-is (blank) — the scoring formulas now exclude blanks
 // from the ratio entirely rather than treating them as a pass, so forcing the cell to show "1"
 // would misrepresent a parameter that was never actually graded on that call.
-function exportSelectExpr(col: string): string {
+// For a Clovia-scoped request, call_answered_within_5_seconds is aliased straight to its display
+// label (CLOVIA_LABEL_OVERRIDES — "Standard Call Opening", same rename already used in Score
+// Components/Quality Parameters/TNI) so the Raw Data table and the exported CSV both show the
+// renamed header, not just aggregate views. Only done when the export/table is scoped to Clovia
+// alone — a mixed/unrestricted multi-client export keeps the raw column name, since one CSV can
+// only have one header row and other clients' rows would be mislabeled otherwise.
+function exportSelectExpr(col: string, isClovia = false): string {
   if (col === 'CallDate') return `DATE_FORMAT(q.CallDate, '%d-%m-%Y %H:%i:%s') AS CallDate`;
+  const label = clientLabel(col, isClovia, col);
+  if (label !== col) return `q.${col} AS \`${label}\``;
   return `q.${col}`;
+}
+function exportColumnLabels(isClovia: boolean): string[] {
+  return CQA_EXPORT_COLUMNS.map(c => clientLabel(c, isClovia, c));
 }
 
 export async function streamInboundExportCsv(
@@ -5258,8 +5272,11 @@ export async function streamInboundExportCsv(
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
   // UTF-8 BOM — without it, Excel misdetects the encoding and garbles the Hindi/Hinglish text that
   // shows up throughout Transcribe_Text and the other free-text columns.
+  // Only rename when this export is scoped to exactly Clovia — see exportSelectExpr's comment.
+  const isClovia = clientIds !== null && clientIds.length === 1 && clientIds[0] === Number(CLOVIA_CLIENT_ID);
+  const outCols = exportColumnLabels(isClovia);
   res.write(Buffer.from([0xEF, 0xBB, 0xBF]));
-  res.write(CQA_EXPORT_COLUMNS.join(',') + '\n');
+  res.write(outCols.join(',') + '\n');
 
   // clientIds === null → unrestricted (super_admin); [] → no accessible clients at all → empty export
   const clientFilter = clientIds !== null
@@ -5278,7 +5295,7 @@ export async function streamInboundExportCsv(
     // returns just the header row. Forcing the CallDate index turns it into a cheap index-range
     // scan (confirmed via EXPLAIN: ~24K rows examined vs 400K+), completing in ~6s instead.
     const rows = await querySource<Record<string, unknown>>(`
-      SELECT ${CQA_EXPORT_COLUMNS.map(c => exportSelectExpr(c)).join(', ')}
+      SELECT ${CQA_EXPORT_COLUMNS.map(c => exportSelectExpr(c, isClovia)).join(', ')}
       FROM db_audit.call_quality_assessment q FORCE INDEX (Index_2)
       WHERE q.id > ? AND q.CallDate BETWEEN ? AND ?
         AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
@@ -5289,7 +5306,7 @@ export async function streamInboundExportCsv(
 
     if (rows.length === 0) break;
     for (const r of rows) {
-      res.write(CQA_EXPORT_COLUMNS.map(c => csvEscape(r[c])).join(',') + '\n');
+      res.write(outCols.map(c => csvEscape(r[c])).join(',') + '\n');
     }
     lastId = Number(rows[rows.length - 1].id);
     if (rows.length < BATCH) break;
