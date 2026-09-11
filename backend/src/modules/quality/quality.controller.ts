@@ -168,6 +168,50 @@ export async function getGncCQScoreDetails(req: Request, res: Response) {
   }
 }
 
+export async function getHousingOwnerCQScoreDateWise(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getHousingOwnerCQScoreDateWise(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getBellavitaCQScoreDateWise(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getBellavitaCQScoreDateWise(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getHousingPremiumCQScoreDateWise(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getHousingPremiumCQScoreDateWise(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getGncCQScoreDateWise(req: Request, res: Response) {
+  try {
+    const filters = parseDateRange(req);
+    const data = await svc.getGncCQScoreDateWise(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
 export async function getHousingOwnerCompliance(req: Request, res: Response) {
   try {
     const filters = parseDateRange(req);

@@ -63,6 +63,51 @@ function ExportBtn({ onClick, title = 'Export CSV' }: { onClick: () => void; tit
   );
 }
 
+// ─── CQ Score Date-Wise Trend chart — shared by every Outbound CQ Score page ───
+function fmtDateShort(s: string) {
+  const d = new Date(s + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function CQDateWiseTrendChart({ data, loading, color }: {
+  data: { date: string; auditCount: number; cqScore: number }[]; loading: boolean; color: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+      <div className="px-5 py-3 flex items-center gap-2 border-b border-slate-200">
+        <BarChart3 size={14} className="text-slate-500" />
+        <span className="text-[11px] font-bold uppercase tracking-widest text-slate-600">Date-wise Audit Count &amp; CQ Score</span>
+      </div>
+      <div className="p-4">
+        {loading ? (
+          <div className="flex items-center justify-center h-64 text-slate-400 text-xs gap-2">
+            <Loader2 size={14} className="animate-spin" /> Loading trend…
+          </div>
+        ) : data.length === 0 ? (
+          <div className="flex items-center justify-center h-64 text-slate-400 text-xs">No data for this period.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={data} margin={{ top: 24, right: 60, left: 10, bottom: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+              <XAxis dataKey="date" tickFormatter={fmtDateShort} tick={{ fill: '#334155', fontSize: 9 }} interval="preserveStartEnd" />
+              <YAxis yAxisId="left" tick={{ fill: color, fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} domain={[0, 100]}
+                label={{ value: 'CQ Score %', angle: -90, position: 'insideLeft', fill: color, fontSize: 9, dx: -4 }} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fill: '#64748B', fontSize: 9 }} tickFormatter={(v: number) => v.toLocaleString()}
+                label={{ value: 'Audit Count', angle: 90, position: 'insideRight', fill: '#64748B', fontSize: 9, dx: 10 }} />
+              <Tooltip contentStyle={TT} labelFormatter={(s: unknown) => fmtDateShort(String(s))} />
+              <Legend
+                wrapperStyle={{ fontSize: 11, color: '#94A3B8', paddingTop: 8 }}
+                formatter={(value) => <span style={{ color: value === 'CQ Score %' ? color : '#64748B' }}>{value}</span>}
+              />
+              <Line yAxisId="left" type="monotone" dataKey="cqScore" name="CQ Score %" stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }} />
+              <Line yAxisId="right" type="monotone" dataKey="auditCount" name="Audit Count" stroke="#64748B" strokeWidth={2} dot={{ r: 3, fill: '#64748B' }} activeDot={{ r: 5 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Drill Modal ──────────────────────────────────────────────────────────────
 interface PQDrillModalProps { title: string; accent: string; onClose: () => void; children: React.ReactNode; }
 function PQDrillModal({ title, accent, onClose, children }: PQDrillModalProps) {
@@ -1608,6 +1653,10 @@ export default function ProcessQualityDashboard() {
   const [housingOwnerCQDetailsLoading, setHousingOwnerCQDetailsLoading] = useState(false);
   const [cqAgentSearch, setCqAgentSearch] = useState('');
 
+  type CQDateWiseRow = { date: string; auditCount: number; cqScore: number };
+  const [housingOwnerCQDateWise, setHousingOwnerCQDateWise] = useState<CQDateWiseRow[]>([]);
+  const [housingOwnerCQDateWiseLoading, setHousingOwnerCQDateWiseLoading] = useState(false);
+
   // Bellavita-specific CQ Score: (Opening+Offered+ObjectionHandling+PrepaidPitch+UpsellingEfforts+
   // OfferUrgency)/6 — same shape as Housing Owner's CQ Score Details, different 6 parameters.
   const [bellavitaCQ, setBellavitaCQ] = useState<{
@@ -1628,6 +1677,8 @@ export default function ProcessQualityDashboard() {
     byAgent: (BellavitaParamRates & { agentId: string; agentName: string; callCount: number; overallScore: number })[];
   } | null>(null);
   const [bellavitaCQDetailsLoading, setBellavitaCQDetailsLoading] = useState(false);
+  const [bellavitaCQDateWise, setBellavitaCQDateWise] = useState<CQDateWiseRow[]>([]);
+  const [bellavitaCQDateWiseLoading, setBellavitaCQDateWiseLoading] = useState(false);
 
   // Housing Premium (clientId 419) CQ Score — same 6-parameter shape as Bellavita's.
   const isHousingPremium = clientId === '419';
@@ -1649,6 +1700,8 @@ export default function ProcessQualityDashboard() {
     byAgent: (HousingPremiumParamRates & { agentId: string; agentName: string; callCount: number; overallScore: number })[];
   } | null>(null);
   const [housingPremiumCQDetailsLoading, setHousingPremiumCQDetailsLoading] = useState(false);
+  const [housingPremiumCQDateWise, setHousingPremiumCQDateWise] = useState<CQDateWiseRow[]>([]);
+  const [housingPremiumCQDateWiseLoading, setHousingPremiumCQDateWiseLoading] = useState(false);
 
   // GNC (clientId 409) CQ Score — same 6-parameter shape as Bellavita's/Housing Premium's.
   const isGnc = clientId === '409';
@@ -1670,6 +1723,8 @@ export default function ProcessQualityDashboard() {
     byAgent: (GncParamRates & { agentId: string; agentName: string; callCount: number; overallScore: number })[];
   } | null>(null);
   const [gncCQDetailsLoading, setGncCQDetailsLoading] = useState(false);
+  const [gncCQDateWise, setGncCQDateWise] = useState<CQDateWiseRow[]>([]);
+  const [gncCQDateWiseLoading, setGncCQDateWiseLoading] = useState(false);
 
   const [exportingProcess, setExportingProcess] = useState(false);
   const handleExportProcess = async () => {
@@ -1710,6 +1765,11 @@ export default function ProcessQualityDashboard() {
       .then(r => setHousingOwnerCQDetails(r.data?.data ?? null))
       .catch(() => setHousingOwnerCQDetails(null))
       .finally(() => setHousingOwnerCQDetailsLoading(false));
+    setHousingOwnerCQDateWiseLoading(true);
+    api.get<{ data: CQDateWiseRow[] }>(`/quality/housing-owner-cq-score/date-wise?startDate=${sd}&endDate=${ed}${campaignQs}`)
+      .then(r => setHousingOwnerCQDateWise(r.data?.data ?? []))
+      .catch(() => setHousingOwnerCQDateWise([]))
+      .finally(() => setHousingOwnerCQDateWiseLoading(false));
   }, [isHousingOwner, clientId, activeSlide, sd, ed, campaignQs]);
 
   useEffect(() => {
@@ -1719,6 +1779,11 @@ export default function ProcessQualityDashboard() {
       .then(r => setBellavitaCQDetails(r.data?.data ?? null))
       .catch(() => setBellavitaCQDetails(null))
       .finally(() => setBellavitaCQDetailsLoading(false));
+    setBellavitaCQDateWiseLoading(true);
+    api.get<{ data: CQDateWiseRow[] }>(`/quality/bellavita-cq-score/date-wise?startDate=${sd}&endDate=${ed}${campaignQs}`)
+      .then(r => setBellavitaCQDateWise(r.data?.data ?? []))
+      .catch(() => setBellavitaCQDateWise([]))
+      .finally(() => setBellavitaCQDateWiseLoading(false));
   }, [isBellavita, clientId, activeSlide, sd, ed, campaignQs]);
 
   useEffect(() => {
@@ -1728,6 +1793,11 @@ export default function ProcessQualityDashboard() {
       .then(r => setHousingPremiumCQDetails(r.data?.data ?? null))
       .catch(() => setHousingPremiumCQDetails(null))
       .finally(() => setHousingPremiumCQDetailsLoading(false));
+    setHousingPremiumCQDateWiseLoading(true);
+    api.get<{ data: CQDateWiseRow[] }>(`/quality/housing-premium-cq-score/date-wise?startDate=${sd}&endDate=${ed}${campaignQs}`)
+      .then(r => setHousingPremiumCQDateWise(r.data?.data ?? []))
+      .catch(() => setHousingPremiumCQDateWise([]))
+      .finally(() => setHousingPremiumCQDateWiseLoading(false));
   }, [isHousingPremium, clientId, activeSlide, sd, ed, campaignQs]);
 
   useEffect(() => {
@@ -1737,6 +1807,11 @@ export default function ProcessQualityDashboard() {
       .then(r => setGncCQDetails(r.data?.data ?? null))
       .catch(() => setGncCQDetails(null))
       .finally(() => setGncCQDetailsLoading(false));
+    setGncCQDateWiseLoading(true);
+    api.get<{ data: CQDateWiseRow[] }>(`/quality/gnc-cq-score/date-wise?startDate=${sd}&endDate=${ed}${campaignQs}`)
+      .then(r => setGncCQDateWise(r.data?.data ?? []))
+      .catch(() => setGncCQDateWise([]))
+      .finally(() => setGncCQDateWiseLoading(false));
   }, [isGnc, clientId, activeSlide, sd, ed, campaignQs]);
 
   // Land on Dashboard instead of the hidden Magical Script slide for clients it's turned off for.
@@ -4436,6 +4511,8 @@ export default function ProcessQualityDashboard() {
                 </div>
               </div>
 
+              <CQDateWiseTrendChart data={housingOwnerCQDateWise} loading={housingOwnerCQDateWiseLoading} color="#1565C0" />
+
               {/* Agent-wise Parameters Score */}
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                 <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200">
@@ -4618,6 +4695,8 @@ export default function ProcessQualityDashboard() {
                 </div>
               </div>
 
+              <CQDateWiseTrendChart data={bellavitaCQDateWise} loading={bellavitaCQDateWiseLoading} color="#7C3AED" />
+
               {/* Agent-wise Parameters Score */}
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                 <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200">
@@ -4797,6 +4876,8 @@ export default function ProcessQualityDashboard() {
                 </div>
               </div>
 
+              <CQDateWiseTrendChart data={housingPremiumCQDateWise} loading={housingPremiumCQDateWiseLoading} color="#0891B2" />
+
               {/* Agent-wise Parameters Score */}
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                 <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200">
@@ -4975,6 +5056,8 @@ export default function ProcessQualityDashboard() {
                   </div>
                 </div>
               </div>
+
+              <CQDateWiseTrendChart data={gncCQDateWise} loading={gncCQDateWiseLoading} color="#D97706" />
 
               {/* Agent-wise Parameters Score */}
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">

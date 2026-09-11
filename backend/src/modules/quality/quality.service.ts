@@ -3965,6 +3965,61 @@ export async function getGncCQScoreDetails(filters: QualityFilters): Promise<Gnc
   };
 }
 
+// ─── CQ Score Date-Wise Trend (shared across every Outbound CQ Score page) ──────
+// Same per-call CQ formula as each client's overall/details score above, just grouped by calendar
+// day instead of collapsed into one number, so the "CQ Score" tab can show a date-wise audit-count
+// + CQ-score trend chart. One generic query shape reused for all four clients — only the client id,
+// CQ formula and valid-call gate differ per client.
+export interface CQScoreDateWiseRow {
+  date:       string;
+  auditCount: number;
+  cqScore:    number;
+}
+
+async function getCQScoreDateWise(
+  clientId: number,
+  cqExpr: (alias?: string) => string,
+  validCallClause: string,
+  filters: QualityFilters,
+): Promise<CQScoreDateWiseRow[]> {
+  const { startDate, endDate } = filters;
+  const { sql: campF, params: campParams } = campaignClause(filters);
+  const perCallScore = cqExpr('cd');
+  const params = [startDate, endDate, ...campParams];
+
+  const rows = await querySource<{ call_date: string; audit_count: number; avg_score: number | null }>(`
+    SELECT
+      DATE_FORMAT(cd.CallDate, '%Y-%m-%d') AS call_date,
+      COUNT(*) AS audit_count,
+      ROUND(AVG(${perCallScore}) * 100, 1) AS avg_score
+    FROM db_external.CallDetails cd FORCE INDEX (Index_3)
+    WHERE cd.client_id = ${clientId}
+      AND cd.CallDate BETWEEN ? AND ? ${campF}
+      ${validCallClause}
+    GROUP BY DATE_FORMAT(cd.CallDate, '%Y-%m-%d')
+    ORDER BY call_date ASC
+  `, params);
+
+  return rows.map(r => ({
+    date:       String(r.call_date),
+    auditCount: Number(r.audit_count),
+    cqScore:    Number(r.avg_score ?? 0),
+  }));
+}
+
+export async function getHousingOwnerCQScoreDateWise(filters: QualityFilters): Promise<CQScoreDateWiseRow[]> {
+  return getCQScoreDateWise(HOUSING_OWNER_CLIENT_ID, housingOwnerCQExpr, HOUSING_OWNER_VALID_CALL_CLAUSE, filters);
+}
+export async function getBellavitaCQScoreDateWise(filters: QualityFilters): Promise<CQScoreDateWiseRow[]> {
+  return getCQScoreDateWise(375, bellavitaCQExpr, BELLAVITA_CQ_VALID_CALL_CLAUSE, filters);
+}
+export async function getHousingPremiumCQScoreDateWise(filters: QualityFilters): Promise<CQScoreDateWiseRow[]> {
+  return getCQScoreDateWise(419, housingPremiumCQExpr, HOUSING_PREMIUM_CQ_VALID_CALL_CLAUSE, filters);
+}
+export async function getGncCQScoreDateWise(filters: QualityFilters): Promise<CQScoreDateWiseRow[]> {
+  return getCQScoreDateWise(409, gncCQExpr, GNC_CQ_VALID_CALL_CLAUSE, filters);
+}
+
 // CallDate needs an explicit SQL-side format (dd-mm-yyyy hh:mm:ss) rather than the raw DATETIME —
 // letting mysql2/CSV serialize a Date object directly produces a locale/timezone-dependent string.
 // CQScore is a computed column, not a raw CallDetails column: Housing Owner, Bellavita, Housing

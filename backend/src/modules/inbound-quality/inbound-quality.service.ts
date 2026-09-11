@@ -3810,10 +3810,27 @@ export async function updateAgentName(masId: string, agentName: string): Promise
   `, [masId, agentName]);
 }
 
+// Merges two separately-maintained agent-name tables: shivamgiri.AgentsMaster (this module's own,
+// only 49 rows — names added specifically via this module's "Insert Agent Master" flow) and
+// db_masmis.AgentMaster (the much larger, 166-row table the Outbound quality module uses). A name
+// added on one side (e.g. via Outbound) was invisible here, so calls kept showing a raw MasId in
+// every agent-name column on this dashboard even when the name was genuinely on file elsewhere —
+// confirmed case: MAS62397 (Neha Ansari) exists in db_masmis.AgentMaster but not
+// shivamgiri.AgentsMaster. shivamgiri.AgentsMaster wins when both have an entry for the same MasId
+// (it's this module's own source of truth and carries the Inbound-specific LOB), db_masmis.AgentMaster
+// fills in anyone missing from it.
 export async function getAgentMaster(): Promise<AgentMasterRow[]> {
   const rows = await querySource<{ MasId: string; AgentName: string; Lob: string }>(`
-    SELECT MasId, AgentName, Lob
-    FROM shivamgiri.AgentsMaster
+    SELECT MasId, AgentName, Lob FROM (
+      SELECT MasId, AgentName, Lob,
+        ROW_NUMBER() OVER (PARTITION BY MasId ORDER BY priority ASC) AS rn
+      FROM (
+        SELECT MasId, AgentName, Lob, 1 AS priority FROM shivamgiri.AgentsMaster
+        UNION ALL
+        SELECT MasId, AgentName, Lob, 2 AS priority FROM db_masmis.AgentMaster
+      ) combined
+    ) ranked
+    WHERE rn = 1
     ORDER BY AgentName ASC
   `);
   return rows.map(r => ({
@@ -4137,10 +4154,26 @@ export async function upsertTNIComment(
   `, [agentId, clientId, comment, updatedBy]);
 }
 
+// The upstream AI that generates `top_negative_words` occasionally mis-tags a respectful/friendly
+// address term as negative sentiment — confirmed case: "भाईजान" ("dear brother", a warm Hindi-Urdu
+// term of address, not negative in any register), which then gets highlighted as a "negative word"
+// in the Fatal Call transcript view. Strip known false positives here, at the one place this field
+// is exposed for display in the Fatal Calls feature, rather than trusting the raw AI tag verbatim.
+const NEGATIVE_WORD_FALSE_POSITIVES = new Set(['भाईजान', 'भाई जान', 'भाईजान्']);
+function cleanNegativeWords(raw: string | null | undefined): string {
+  if (!raw) return '';
+  return raw
+    .split(',')
+    .map(w => w.trim())
+    .filter(w => w && !NEGATIVE_WORD_FALSE_POSITIVES.has(w))
+    .join(', ');
+}
+
 // ─── Fatal Calls List ─────────────────────────────────────────────────────────
 export interface FatalCallItem {
   lead_id:        string;
   agent_id:       string;
+  mobile_no:      string;
   call_date:      string;
   scenario:       string;
   scenario1:      string;
@@ -4178,12 +4211,13 @@ export async function getAgentCalls(filters: InboundQualityFilters & { agentId: 
   const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
   const rows = await querySource<{
-    lead_id: string; agent_id: string; call_date: string;
+    lead_id: string; agent_id: string; mobile_no: string; call_date: string;
     scenario: string; scenario1: string; score: number;
   }>(`
     SELECT
       COALESCE(q.lead_id, '')                                       AS lead_id,
       COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown')                 AS agent_id,
+      COALESCE(q.MobileNo, '')                                      AS mobile_no,
       DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                     AS call_date,
       COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')            AS scenario,
       COALESCE(NULLIF(TRIM(q.scenario1), ''), '—')                  AS scenario1,
@@ -4200,6 +4234,7 @@ export async function getAgentCalls(filters: InboundQualityFilters & { agentId: 
   return rows.map(r => ({
     lead_id:        String(r.lead_id),
     agent_id:       String(r.agent_id),
+    mobile_no:      String(r.mobile_no ?? ''),
     call_date:      String(r.call_date),
     scenario:       String(r.scenario),
     scenario1:      String(r.scenario1),
@@ -4216,7 +4251,7 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
   const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
   type RawRow = {
-    lead_id: string; agent_id: string; call_date: string;
+    lead_id: string; agent_id: string; mobile_no: string; call_date: string;
     scenario: string; scenario1: string; negative_words: string;
     [key: string]: unknown;
   };
@@ -4225,6 +4260,7 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
     SELECT
       COALESCE(q.lead_id, '')                                     AS lead_id,
       COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown')               AS agent_id,
+      COALESCE(q.MobileNo, '')                                    AS mobile_no,
       DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                   AS call_date,
       COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')          AS scenario,
       COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')          AS scenario1,
@@ -4267,11 +4303,12 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
     return {
       lead_id:        String(r.lead_id),
       agent_id:       String(r.agent_id),
+      mobile_no:      String(r.mobile_no ?? ''),
       call_date:      String(r.call_date),
       scenario:       String(r.scenario),
       scenario1:      String(r.scenario1),
       failed_params:  failed,
-      negative_words: String(r.negative_words),
+      negative_words: cleanNegativeWords(r.negative_words),
       call_recording: String(r.call_recording ?? ''),
     };
   });
