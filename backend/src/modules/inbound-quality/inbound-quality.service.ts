@@ -2359,15 +2359,36 @@ export async function getPotentialScamsDetail(filters: InboundQualityFilters): P
 }
 
 // ─── Fraud Call Detection ─────────────────────────────────────────────────────
-// Inbound fraud is driven ONLY by db_audit.call_quality_assessment.fraud_detected_sentence:
-// a call counts as a fraud call when that column holds a real sentence value
-// (non-empty, non-placeholder like 'None'/'NA'). The fraud_and_data_security_compliance
+// Base rule: db_audit.call_quality_assessment.fraud_detected_sentence holds a real sentence
+// value (non-empty, non-placeholder like 'None'/'NA'). The fraud_and_data_security_compliance
 // column is intentionally ignored — same rule the outbound fraud endpoint uses, so the
 // shared FraudCallTab component behaves identically for both dashboards.
+//
+// Widened per explicit instruction after the AI-generated sentence field missed a real case: a
+// customer explicitly threatening to report the company for fraud (police complaint, consumer
+// court, legal action) is also a fraud-relevant call even when fraud_detected_sentence itself
+// came back blank/"None" for it — the AI field flags fraud committed against the customer, this
+// catches the customer alleging fraud against the company, a different but equally real signal.
+// Checked before adding: only 6 of 2,167 Neemans calls in the last 30 days match this pattern, so
+// it's a rare, specific signal, not something that will flood the tab.
+//
+// Deliberately NOT widened to catch "OTP + bank account mentioned in the same call" — checked
+// that pattern too (13/30 days) and every hit was the same agent reciting the same scripted line
+// describing a legitimate third-party refund-verification link (Razorpay/Cashfree), not an actual
+// OTP-phishing attempt. Adding it would flag that one agent's normal script repeatedly instead of
+// catching real scam attempts.
+const FRAUD_THREAT_LANGUAGE_CHECK = `(
+  (LOWER(q.Transcribe_Text) LIKE '%police%' OR LOWER(q.Transcribe_Text) LIKE '%consumer court%'
+    OR LOWER(q.Transcribe_Text) LIKE '%consumer forum%' OR LOWER(q.Transcribe_Text) LIKE '%legal action%')
+  AND (LOWER(q.Transcribe_Text) LIKE '%fraud%' OR LOWER(q.Transcribe_Text) LIKE '%cheat%' OR LOWER(q.Transcribe_Text) LIKE '%scam%')
+)`;
 
-const INBOUND_FRAUD_SENTENCE_CHECK = `q.fraud_detected_sentence IS NOT NULL
-  AND TRIM(q.fraud_detected_sentence) != ''
-  AND LOWER(TRIM(q.fraud_detected_sentence)) NOT IN ('none', 'na', 'n/a', 'null')`;
+const INBOUND_FRAUD_SENTENCE_CHECK = `(
+  (q.fraud_detected_sentence IS NOT NULL
+    AND TRIM(q.fraud_detected_sentence) != ''
+    AND LOWER(TRIM(q.fraud_detected_sentence)) NOT IN ('none', 'na', 'n/a', 'null'))
+  OR (q.Transcribe_Text IS NOT NULL AND ${FRAUD_THREAT_LANGUAGE_CHECK})
+)`;
 
 export interface FraudCallRow {
   lead_id:       string;
@@ -2417,7 +2438,14 @@ export async function getFraudCalls(filters: InboundQualityFilters): Promise<Fra
         DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i')                     AS call_date,
         COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')            AS scenario,
         CASE WHEN ${INBOUND_FRAUD_SENTENCE_CHECK} THEN 1 ELSE 0 END   AS compliance,
-        COALESCE(q.fraud_detected_sentence, '')                       AS sentence,
+        CASE
+          WHEN q.fraud_detected_sentence IS NOT NULL AND TRIM(q.fraud_detected_sentence) != ''
+            AND LOWER(TRIM(q.fraud_detected_sentence)) NOT IN ('none', 'na', 'n/a', 'null')
+            THEN q.fraud_detected_sentence
+          WHEN q.Transcribe_Text IS NOT NULL AND ${FRAUD_THREAT_LANGUAGE_CHECK}
+            THEN 'Customer threatened to report fraud (police/legal action/consumer court)'
+          ELSE ''
+        END                                                            AS sentence,
         COALESCE(q.Transcribe_Text, '')                               AS transcript,
         COALESCE(q.call_recording, '')                                AS call_recording,
         COALESCE(q.Social_Media_Phone_Number_Order_ID_Email_ID, '')   AS social_media_info
