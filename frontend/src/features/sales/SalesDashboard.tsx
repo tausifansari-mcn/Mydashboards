@@ -23,24 +23,33 @@ import NeemansSaleUpload from './NeemansSaleUpload';
 import NeemansAllocationUpload from './NeemansAllocationUpload';
 import NeemansAprUpload from './NeemansAprUpload';
 import NeemansDashboard from './NeemansDashboard';
+import AwDashboard from './AwDashboard';
+import AwNewCdrUpload from './AwNewCdrUpload';
+import AwOutUpload from './AwOutUpload';
+import AwInboundUpload from './AwInboundUpload';
+import AwMandateUpload from './AwMandateUpload';
+import AwBillingUpload from './AwBillingUpload';
 
-type Brand = 'bellavita' | 'gnc' | 'neemans';
+type Brand = 'bellavita' | 'gnc' | 'neemans' | 'aw';
 type Section = 'dashboards' | 'uploader' | 'repeatAllocation';
 type BellavitaUploadType = 'sale' | 'apr' | 'chat' | 'cart' | 'orderExport' | 'repeatCdr' | 'repeatAllocation';
 type GncUploadType = 'sale' | 'apr' | 'allocation';
 type NeemansUploadType = 'cart' | 'sale' | 'allocation' | 'apr';
+type AwUploadType = 'newCdr' | 'out' | 'inbound' | 'mandate' | 'billing';
 type IconType = typeof BarChart3;
 
 const BRAND_THEMES: Record<Brand, { color: string; color2: string; label: string }> = {
   bellavita: { color: '#1A1A1A', color2: '#3F3F46', label: 'Bellavita' },
   gnc:       { color: '#ED1C24', color2: '#F97066', label: 'GNC' },
   neemans:   { color: '#2D6A4F', color2: '#40916C', label: 'Neemans' },
+  aw:        { color: '#0F172A', color2: '#38BDF8', label: 'AW' },
 };
 
 const BRANDS: { key: Brand; label: string; desc: string }[] = [
   { key: 'bellavita', label: 'Bellavita', desc: 'Manage Bellavita sale data' },
   { key: 'gnc',       label: 'GNC',       desc: 'Manage GNC sale data' },
   { key: 'neemans',   label: 'Neemans',   desc: 'Manage Neemans sale data' },
+  { key: 'aw',        label: 'AW',        desc: 'Manage AW calling & billing data' },
 ];
 
 const SECTIONS: { key: Section; icon: IconType; label: string; desc: string; brandOnly?: Brand }[] = [
@@ -70,6 +79,14 @@ const NEEMANS_UPLOAD_TYPES: { key: NeemansUploadType; icon: IconType; label: str
   { key: 'allocation', icon: Package,      label: 'Allocation Data', desc: 'Upload Neemans allocation / calling data' },
   { key: 'cart',       icon: ShoppingCart, label: 'Cart Data',       desc: 'Upload Neemans cart / abandoned cart data' },
   { key: 'apr',        icon: Activity,     label: 'APR Data',        desc: 'Upload Neemans Agent Performance Report' },
+];
+
+const AW_UPLOAD_TYPES: { key: AwUploadType; icon: IconType; label: string; desc: string }[] = [
+  { key: 'newCdr',  icon: PhoneCall,  label: 'New CDR',    desc: 'Upload AW new call detail records' },
+  { key: 'out',     icon: Activity,   label: 'Outbound',   desc: 'Upload AW outbound agent performance data' },
+  { key: 'inbound', icon: PhoneCall,  label: 'Inbound',    desc: 'Upload AW inbound call detail records' },
+  { key: 'mandate', icon: Receipt,    label: 'Mandate',    desc: 'Upload AW billing mandate rates' },
+  { key: 'billing', icon: Package,    label: 'Billing',    desc: 'Upload AW billing data' },
 ];
 
 const BrandAccentCtx = createContext('#10B981');
@@ -163,6 +180,7 @@ export default function SalesDashboard() {
   const [bellavitaUploadType, setBellavitaUploadType] = useState<BellavitaUploadType | null>(null);
   const [gncUploadType,       setGncUploadType]       = useState<GncUploadType | null>(null);
   const [neemansUploadType,   setNeemansUploadType]   = useState<NeemansUploadType | null>(null);
+  const [awUploadType,        setAwUploadType]        = useState<AwUploadType | null>(null);
 
   const brandData  = BRANDS.find((b) => b.key === brand);
   const theme      = brand ? BRAND_THEMES[brand] : null;
@@ -173,6 +191,7 @@ export default function SalesDashboard() {
     if (brand === 'bellavita' && bellavitaUploadType) return `Bellavita / Data Uploader / ${BELLAVITA_UPLOAD_TYPES.find(t => t.key === bellavitaUploadType)?.label}`;
     if (brand === 'gnc' && gncUploadType)             return `GNC / Data Uploader / ${GNC_UPLOAD_TYPES.find(t => t.key === gncUploadType)?.label}`;
     if (brand === 'neemans' && neemansUploadType)     return `Neemans / Data Uploader / ${NEEMANS_UPLOAD_TYPES.find(t => t.key === neemansUploadType)?.label ?? neemansUploadType}`;
+    if (brand === 'aw' && awUploadType)               return `AW / Data Uploader / ${AW_UPLOAD_TYPES.find(t => t.key === awUploadType)?.label ?? awUploadType}`;
     if (section) return `${brandData?.label} / ${SECTIONS.find((s) => s.key === section)?.label}`;
     return 'All brands';
   }
@@ -181,6 +200,7 @@ export default function SalesDashboard() {
     if (bellavitaUploadType) { setBellavitaUploadType(null); return; }
     if (gncUploadType)       { setGncUploadType(null);       return; }
     if (neemansUploadType)   { setNeemansUploadType(null);   return; }
+    if (awUploadType)        { setAwUploadType(null);        return; }
     if (section)             { setSection(null);             return; }
     setBrand(null);
   }
@@ -199,7 +219,7 @@ export default function SalesDashboard() {
       </div>
 
       <AnimatePresence mode="wait">
-        {(brand || section || bellavitaUploadType || gncUploadType || neemansUploadType) && (
+        {(brand || section || bellavitaUploadType || gncUploadType || neemansUploadType || awUploadType) && (
           <motion.button
             key="back"
             initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}
@@ -286,6 +306,18 @@ export default function SalesDashboard() {
         </div>
       )}
 
+      {/* AW upload type selector */}
+      {brand === 'aw' && section === 'uploader' && !awUploadType && (
+        <div className="mt-2">
+          <TileGrid cols={3}>
+            {AW_UPLOAD_TYPES.map((t) => (
+              <Tile key={t.key} icon={t.icon} label={t.label} desc={t.desc}
+                accent={accentColor} accent2={accentColor2} onClick={() => setAwUploadType(t.key)} />
+            ))}
+          </TileGrid>
+        </div>
+      )}
+
       {/* Upload pages */}
       <BrandAccentCtx.Provider value={accentColor}>
         {brand === 'bellavita' && section === 'uploader' && bellavitaUploadType === 'sale' && <div className="mt-6"><BellavitaUpload /></div>}
@@ -302,6 +334,11 @@ export default function SalesDashboard() {
         {brand === 'neemans'   && section === 'uploader' && neemansUploadType === 'sale'       && <div className="mt-6"><NeemansSaleUpload /></div>}
         {brand === 'neemans'   && section === 'uploader' && neemansUploadType === 'allocation' && <div className="mt-6"><NeemansAllocationUpload /></div>}
         {brand === 'neemans'   && section === 'uploader' && neemansUploadType === 'apr'        && <div className="mt-6"><NeemansAprUpload /></div>}
+        {brand === 'aw'        && section === 'uploader' && awUploadType === 'newCdr'  && <div className="mt-6"><AwNewCdrUpload /></div>}
+        {brand === 'aw'        && section === 'uploader' && awUploadType === 'out'     && <div className="mt-6"><AwOutUpload /></div>}
+        {brand === 'aw'        && section === 'uploader' && awUploadType === 'inbound' && <div className="mt-6"><AwInboundUpload /></div>}
+        {brand === 'aw'        && section === 'uploader' && awUploadType === 'mandate' && <div className="mt-6"><AwMandateUpload /></div>}
+        {brand === 'aw'        && section === 'uploader' && awUploadType === 'billing' && <div className="mt-6"><AwBillingUpload /></div>}
       </BrandAccentCtx.Provider>
 
       {/* Dashboards */}
@@ -315,6 +352,10 @@ export default function SalesDashboard() {
 
       {brand === 'neemans' && section === 'dashboards' && (
         <div className="mt-6"><NeemansDashboard /></div>
+      )}
+
+      {brand === 'aw' && section === 'dashboards' && (
+        <div className="mt-6"><AwDashboard /></div>
       )}
 
       {brand === 'gnc' && section === 'dashboards' && (

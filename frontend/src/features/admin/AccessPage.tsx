@@ -19,6 +19,7 @@ const SALE_BRANDS = [
   { key: 'bellavita', label: 'Bellavita', desc: 'Bellavita sales dashboard & data uploader', color: '#1A1A1A', bg: '#F0F0F0' },
   { key: 'gnc',       label: 'GNC',       desc: 'GNC sales dashboard & data uploader',       color: '#ED1C24', bg: '#FFE0E0' },
   { key: 'neemans',   label: 'Neemans',   desc: 'Neemans cart data uploader',                color: '#2D6A4F', bg: '#D8F3DC' },
+  { key: 'aw',        label: 'AW',        desc: 'AW sales dashboard & data uploader',        color: '#0F172A', bg: '#E0E7FF' },
 ];
 
 export default function AccessPage() {

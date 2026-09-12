@@ -93,20 +93,21 @@ function clientLabel(col: string, isClovia: boolean, fallback: string): string {
 }
 
 // ─── Fatal call definition ─────────────────────────────────────────────────────
-// A call is FATAL when ALL SIX of these compliance-critical parameters scored 0 at once (an AND
-// across all six — matching how Excel's multi-column AutoFilter compounds several "= 0" column
-// filters, which is how this definition was validated: 18 fatal calls for Bellavita in August
-// 2026, confirmed by both this AND query and the Excel filter independently). Replaces the
-// previous "quality_percentage equals 0" definition (which only caught calls whose average
-// happened to bottom out at exactly 0) everywhere a call is counted, filtered, or classified as
-// fatal.
+// A call is FATAL when ALL THREE of these compliance-critical parameters scored 0 at once (an AND
+// across all three) — per explicit instruction, applied across every inbound AI Quality process via
+// this one shared definition (fatalCheckSql/noFatalCheckSql are used ~54 places in this file: Fatal
+// Analysis, KPI fatal counts, Score Components' "no fatal" exclusions, etc. — changing this one
+// array reaches all of them). Narrowed from an earlier 6-parameter version (which additionally
+// required customer_concern_acknowledged/proper_hold_procedure/proper_transfer_and_language to all
+// be 0 too) to just these 3 — since these 3 are a subset of the old 6, this is strictly broader:
+// every call that was fatal under the old definition still is, plus any call that fails only these
+// 3 (regardless of the other three) now counts as fatal too. Replaces the older
+// "quality_percentage equals 0" definition (which only caught calls whose average happened to
+// bottom out at exactly 0) everywhere a call is counted, filtered, or classified as fatal.
 const FATAL_PARAM_COLS = [
+  'case_escalated_correctly',
   'address_recorded_completely',
   'correct_and_complete_information',
-  'case_escalated_correctly',
-  'customer_concern_acknowledged',
-  'proper_hold_procedure',
-  'proper_transfer_and_language',
 ];
 function fatalCheckSql(alias = 'q'): string {
   const p = alias ? `${alias}.` : '';
@@ -4250,13 +4251,10 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
   const clientFilter = clientId ? ' AND q.ClientId = ?' : '';
   const params: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
 
-  type RawRow = {
+  const rows = await querySource<{
     lead_id: string; agent_id: string; mobile_no: string; call_date: string;
-    scenario: string; scenario1: string; negative_words: string;
-    [key: string]: unknown;
-  };
-
-  const rows = await querySource<RawRow>(`
+    scenario: string; scenario1: string; negative_words: string; call_recording: string;
+  }>(`
     SELECT
       COALESCE(q.lead_id, '')                                     AS lead_id,
       COALESCE(NULLIF(TRIM(q.User), ''), 'Unknown')               AS agent_id,
@@ -4265,26 +4263,7 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
       COALESCE(NULLIF(TRIM(q.scenario),  ''), 'Unknown')          AS scenario,
       COALESCE(NULLIF(TRIM(q.scenario1), ''), 'Unknown')          AS scenario1,
       COALESCE(q.top_negative_words, '')                          AS negative_words,
-      COALESCE(q.call_recording, '')                              AS call_recording,
-      COALESCE(q.call_answered_within_5_seconds,     0) AS call_answered_within_5_seconds,
-      COALESCE(q.customer_concern_acknowledged,      0) AS customer_concern_acknowledged,
-      COALESCE(q.professionalism_maintained,         0) AS professionalism_maintained,
-      COALESCE(q.assurance_or_appreciation_provided, 0) AS assurance_or_appreciation_provided,
-      COALESCE(q.pronunciation_and_clarity,          0) AS pronunciation_and_clarity,
-      COALESCE(q.enthusiasm_and_no_fumbling,         0) AS enthusiasm_and_no_fumbling,
-      COALESCE(q.active_listening,                   0) AS active_listening,
-      COALESCE(q.politeness_and_no_sarcasm,          0) AS politeness_and_no_sarcasm,
-      COALESCE(q.proper_grammar,                     0) AS proper_grammar,
-      COALESCE(q.accurate_issue_probing,             0) AS accurate_issue_probing,
-      COALESCE(q.proper_hold_procedure,              0) AS proper_hold_procedure,
-      COALESCE(q.proper_transfer_and_language,       0) AS proper_transfer_and_language,
-      COALESCE(q.dead_air_under_10_seconds,          0) AS dead_air_under_10_seconds,
-      COALESCE(q.case_escalated_correctly,           0) AS case_escalated_correctly,
-      COALESCE(q.address_recorded_completely,        0) AS address_recorded_completely,
-      COALESCE(q.correct_and_complete_information,   0) AS correct_and_complete_information,
-      COALESCE(q.upselling_or_offers_suggested,      0) AS upselling_or_offers_suggested,
-      COALESCE(q.further_assistance_offered,         0) AS further_assistance_offered,
-      COALESCE(q.proper_call_closure,                0) AS proper_call_closure
+      COALESCE(q.call_recording, '')                              AS call_recording
     FROM db_audit.call_quality_assessment q
     WHERE q.CallDate BETWEEN ? AND ?
       AND ${fatalCheckSql('q')}
@@ -4294,24 +4273,24 @@ export async function getFatalCallsList(filters: InboundQualityFilters): Promise
     LIMIT 300
   `, params);
 
-  const paramKeys = Object.keys(FATAL_PARAM_LABELS);
+  // Every returned row matched fatalCheckSql, i.e. all of FATAL_PARAM_COLS scored 0 for it — so
+  // "why this call is fatal" is the same fixed 3 parameters for every row here, not something that
+  // needs recomputing per call against the full 19-parameter set (that used to show whichever of
+  // all 19 CQ parameters happened to also be 0 on a fatal call, which was misleading — most of
+  // those weren't what made the call fatal).
+  const failedParamLabels = FATAL_PARAM_COLS.map(k => clientLabel(k, isClovia, FATAL_PARAM_LABELS[k]));
 
-  return rows.map(r => {
-    const failed = paramKeys
-      .filter(k => Number(r[k]) === 0)
-      .map(k => clientLabel(k, isClovia, FATAL_PARAM_LABELS[k]));
-    return {
-      lead_id:        String(r.lead_id),
-      agent_id:       String(r.agent_id),
-      mobile_no:      String(r.mobile_no ?? ''),
-      call_date:      String(r.call_date),
-      scenario:       String(r.scenario),
-      scenario1:      String(r.scenario1),
-      failed_params:  failed,
-      negative_words: cleanNegativeWords(r.negative_words),
-      call_recording: String(r.call_recording ?? ''),
-    };
-  });
+  return rows.map(r => ({
+    lead_id:        String(r.lead_id),
+    agent_id:       String(r.agent_id),
+    mobile_no:      String(r.mobile_no ?? ''),
+    call_date:      String(r.call_date),
+    scenario:       String(r.scenario),
+    scenario1:      String(r.scenario1),
+    failed_params:  failedParamLabels,
+    negative_words: cleanNegativeWords(r.negative_words),
+    call_recording: String(r.call_recording ?? ''),
+  }));
 }
 
 // ── CLAP Customer Product Analysis ─────────────────────────────────────────

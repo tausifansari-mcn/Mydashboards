@@ -76,5 +76,11 @@ router.get   ('/nms-agent-details',       ctrl.listNmsAgentDetails);
 router.post  ('/nms-agent-details',       ctrl.createNmsAgentDetail);
 router.put   ('/nms-agent-details/:id',   ctrl.updateNmsAgentDetail);
 router.delete('/nms-agent-details/:id',   ctrl.deleteNmsAgentDetail);
+router.post('/upload-aw-new-cdr', upload.single('file'), ctrl.uploadAwNewCdr);
+router.post('/upload-aw-out',     upload.single('file'), ctrl.uploadAwOut);
+router.post('/upload-aw-inbound', upload.single('file'), ctrl.uploadAwInbound);
+router.post('/upload-aw-mandate', upload.single('file'), ctrl.uploadAwMandate);
+router.post('/upload-aw-billing', upload.single('file'), ctrl.uploadAwBilling);
+router.get('/aw-dashboard',       ctrl.getAwDashboard);
 
 export default router;

@@ -1247,3 +1247,45 @@ export async function deleteNmsAgentDetail(req: Request, res: Response) {
     res.status(500).json({ success: false, message: 'Failed to delete agent' });
   }
 }
+
+// ─── AW Process — 5 uploaders sharing one generic upload path ──────────────────
+
+function makeAwUploadHandler(table: string, columns: svc.AwColumnDef[]) {
+  return async function handler(req: Request, res: Response) {
+    try {
+      if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ success: false, message: 'User not authenticated' });
+
+      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rawRows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, { header: 1, defval: null, blankrows: false });
+
+      const batchId = svc.generateBatchId();
+      const inserted = await svc.uploadAwGeneric(table, columns, rawRows, userId, batchId);
+      await svc.logUpload(batchId, table, req.file.originalname, inserted, userId);
+      res.json({ success: true, data: { rowsInserted: inserted, totalRows: rawRows.length, batchId } });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`sales upload ${table} error:`, msg);
+      res.status(500).json({ success: false, message: `Upload failed: ${msg}` });
+    }
+  };
+}
+
+export const uploadAwNewCdr  = makeAwUploadHandler('aw_new_cdr', svc.AW_NEW_CDR_COLUMNS);
+export const uploadAwOut     = makeAwUploadHandler('aw_out',     svc.AW_OUT_COLUMNS);
+export const uploadAwInbound = makeAwUploadHandler('aw_inbound', svc.AW_INBOUND_COLUMNS);
+export const uploadAwMandate = makeAwUploadHandler('aw_mandate', svc.AW_MANDATE_COLUMNS);
+export const uploadAwBilling = makeAwUploadHandler('aw_billing', svc.AW_BILLING_COLUMNS);
+
+export async function getAwDashboard(req: Request, res: Response) {
+  try {
+    const month = (req.query.month as string) || null;
+    const data = await svc.getAwDashboard(month);
+    res.json({ success: true, data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, message: msg });
+  }
+}

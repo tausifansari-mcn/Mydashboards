@@ -1878,6 +1878,7 @@ const UPLOAD_BATCH_TABLES = new Set([
   'bb_sale', 'gnc_sale', 'gnc_apr', 'gnc_allocation', 'bb_apr', 'bb_chat',
   'neemans_sale_raw', 'neemans_allocation', 'neemans_cart', 'bb_cart', 'neemans_apr',
   'bvo_order_export', 'bvo_Repeat_cdr', 'bvo_repeat_allocation',
+  'aw_new_cdr', 'aw_out', 'aw_inbound', 'aw_mandate', 'aw_billing',
 ]);
 
 export async function deleteUploadBatch(batchId: string, tableName: string): Promise<{ deleted: number }> {
@@ -2369,4 +2370,287 @@ export async function getNeemansAprExport(startDate: string, endDate: string) {
     LIMIT 500000
   `, [startDate, endDate, startDate, endDate]);
   return rows;
+}
+
+// ─── AW Process — 5 uploaders sharing one generic, header-mapped upload path ───
+// Every AW table's columns are declared once here (header text as it appears in the source
+// file → db column name); the CREATE TABLE DDL and the upload row-mapping are both generated
+// from that single list, so adding/renaming a column never needs touching SQL by hand.
+
+export interface AwColumnDef { header: string; col: string; long?: boolean }
+
+export const AW_NEW_CDR_COLUMNS: AwColumnDef[] = [
+  { header: 'Call_ID', col: 'call_id' }, { header: 'Call_Type', col: 'call_type' },
+  { header: 'Campaign', col: 'campaign' }, { header: 'Location', col: 'location' },
+  { header: 'Caller_No', col: 'caller_no' }, { header: 'Skill', col: 'skill' },
+  { header: 'Call_Date', col: 'call_date' }, { header: 'Start_Time', col: 'start_time' },
+  { header: 'Time_to_Answer', col: 'time_to_answer' }, { header: 'End_Time', col: 'end_time' },
+  { header: 'Talk_Time', col: 'talk_time' }, { header: 'Hold_Time', col: 'hold_time' },
+  { header: 'Duration', col: 'duration' }, { header: 'Call_Flow', col: 'call_flow', long: true },
+  { header: 'Dialed_Number', col: 'dialed_number' }, { header: 'Agent', col: 'agent' },
+  { header: 'Disposition', col: 'disposition' }, { header: 'Wrapup_Duration', col: 'wrapup_duration' },
+  { header: 'Handling_Time', col: 'handling_time' }, { header: 'Status', col: 'status' },
+  { header: 'Dial_Status', col: 'dial_status' }, { header: 'Customer_Dial_Status', col: 'customer_dial_status' },
+  { header: 'Agent_Dial_Status', col: 'agent_dial_status' }, { header: 'Hangup_By', col: 'hangup_by' },
+  { header: 'Transfer_Details', col: 'transfer_details', long: true }, { header: 'UUI', col: 'uui' },
+  { header: 'Comments', col: 'comments', long: true }, { header: 'Feedback', col: 'feedback', long: true },
+  { header: 'Customer_Ring_Time', col: 'customer_ring_time' }, { header: 'Recording_URL', col: 'recording_url', long: true },
+  { header: 'Agent_ID', col: 'agent_id' }, { header: 'Ratings', col: 'ratings' },
+  { header: 'Rating_Comments', col: 'rating_comments', long: true }, { header: 'DynamicDid', col: 'dynamic_did' },
+  { header: 'DID', col: 'did' }, { header: 'Sub_LOB', col: 'sub_lob' },
+  { header: 'Partner', col: 'partner' }, { header: 'SLOT', col: 'slot' },
+];
+
+export const AW_INBOUND_COLUMNS: AwColumnDef[] = [
+  { header: 'Call_ID', col: 'call_id' }, { header: 'Call_Type', col: 'call_type' },
+  { header: 'Campaign', col: 'campaign' }, { header: 'Location', col: 'location' },
+  { header: 'Caller_No', col: 'caller_no' }, { header: 'Caller_E164', col: 'caller_e164' },
+  { header: 'Skill', col: 'skill' }, { header: 'Call_Date', col: 'call_date' },
+  { header: 'Queue_Time', col: 'queue_time' }, { header: 'Start_Time', col: 'start_time' },
+  { header: 'Time_to_Answer', col: 'time_to_answer' }, { header: 'End_Time', col: 'end_time' },
+  { header: 'Talk_Time', col: 'talk_time' }, { header: 'Hold_Time', col: 'hold_time' },
+  { header: 'Duration', col: 'duration' }, { header: 'Call_Flow', col: 'call_flow', long: true },
+  { header: 'Dialed_Number', col: 'dialed_number' }, { header: 'Agent', col: 'agent' },
+  { header: 'Disposition', col: 'disposition' }, { header: 'Wrapup_Duration', col: 'wrapup_duration' },
+  { header: 'Handling_Time', col: 'handling_time' }, { header: 'Status', col: 'status' },
+  { header: 'Dial_Status', col: 'dial_status' }, { header: 'Customer_Dial_Status', col: 'customer_dial_status' },
+  { header: 'Agent_Dial_Status', col: 'agent_dial_status' }, { header: 'Hangup_By', col: 'hangup_by' },
+  { header: 'Transfer_Details', col: 'transfer_details', long: true }, { header: 'UUI', col: 'uui' },
+  { header: 'Comments', col: 'comments', long: true }, { header: 'Feedback', col: 'feedback', long: true },
+  { header: 'Customer_Ring_Time', col: 'customer_ring_time' }, { header: 'Recording_URL', col: 'recording_url', long: true },
+  { header: 'Agent_ID', col: 'agent_id' }, { header: 'Ratings', col: 'ratings' },
+  { header: 'Rating_Comments', col: 'rating_comments', long: true }, { header: 'DynamicDid', col: 'dynamic_did' },
+  { header: 'DID', col: 'did' }, { header: 'Dial_Count', col: 'dial_count' },
+  { header: 'Dial_DID', col: 'dial_did' },
+];
+
+export const AW_OUT_COLUMNS: AwColumnDef[] = [
+  { header: 'CallDate', col: 'call_date' }, { header: 'AgentId', col: 'agent_id' },
+  { header: 'AgentName', col: 'agent_name' }, { header: 'TotalCalls', col: 'total_calls' },
+  { header: 'ConnectedCalls', col: 'connected_calls' }, { header: 'NotConnectedCalls', col: 'not_connected_calls' },
+  { header: 'TotalTalkTime', col: 'total_talk_time' }, { header: 'TotalWrapupTime', col: 'total_wrapup_time' },
+  { header: 'TotalPauseTime', col: 'total_pause_time' }, { header: 'TotalIdleTime', col: 'total_idle_time' },
+  { header: 'PickupTime', col: 'pickup_time' }, { header: 'TotalLoginTime', col: 'total_login_time' },
+  { header: 'FirstLoginTime', col: 'first_login_time' }, { header: 'LastLogoutTime', col: 'last_logout_time' },
+  { header: 'CustomerDisconnect', col: 'customer_disconnect' }, { header: 'UUID', col: 'uuid' },
+  { header: 'EMPID', col: 'emp_id' }, { header: 'LOB', col: 'lob' },
+  { header: 'SUBLOB', col: 'sub_lob' }, { header: 'CentreMCNorENSER', col: 'centre_mcn_or_enser' },
+  { header: 'Week', col: 'week' }, { header: 'Month', col: 'month' },
+  { header: 'CallDateAgentId', col: 'call_date_agent_id' }, { header: 'Bio', col: 'bio' },
+  { header: 'Lunch', col: 'lunch' }, { header: 'Tea', col: 'tea' },
+  { header: 'MeetingAUX', col: 'meeting_aux' }, { header: 'Training', col: 'training' },
+  { header: 'SIPdisconnected', col: 'sip_disconnected' }, { header: 'SIPUnRegistered', col: 'sip_unregistered' },
+  { header: 'TechnicalIssueDialer', col: 'technical_issue_dialer' }, { header: 'TechnicalIssueCC', col: 'technical_issue_cc' },
+  { header: 'changeMode', col: 'change_mode' }, { header: 'TechnicalIssueCRM', col: 'technical_issue_crm' },
+  { header: 'QAFeedback', col: 'qa_feedback' }, { header: 'null', col: 'unused_col' },
+  { header: 'NetLoginhrs', col: 'net_login_hrs' }, { header: 'ActaulMandays', col: 'actual_mandays' },
+  { header: 'ConversionTarget', col: 'conversion_target' }, { header: 'Conversion', col: 'conversion' },
+  { header: 'ShiftTime', col: 'shift_time' }, { header: 'RosterCount', col: 'roster_count' },
+  { header: 'ShiftStartTime', col: 'shift_start_time' }, { header: 'LateloginStatus', col: 'late_login_status' },
+  { header: 'OntimeloginStatus', col: 'ontime_login_status' }, { header: 'LateloginCount', col: 'late_login_count' },
+  { header: 'OntimeloginCount', col: 'ontime_login_count' }, { header: 'ACHTwithPickedUpTime', col: 'acht_with_picked_up_time' },
+  { header: 'ACHT', col: 'acht' }, { header: 'OccupancyOnCalls', col: 'occupancy_on_calls' },
+  { header: 'CallingTarget', col: 'calling_target' }, { header: 'BreakExceedcount', col: 'break_exceed_count' },
+  { header: 'NetOccupancy', col: 'net_occupancy' }, { header: 'IdleOnManual', col: 'idle_on_manual' },
+  { header: 'IdleOnBlended', col: 'idle_on_blended' }, { header: 'AgentDisconnect', col: 'agent_disconnect' },
+  { header: 'WrapExceedcount', col: 'wrap_exceed_count' }, { header: 'LRS_Target', col: 'lrs_target' },
+  { header: 'LRS_Count', col: 'lrs_count' }, { header: 'LRS_Amount', col: 'lrs_amount' },
+  { header: 'Trade_Target', col: 'trade_target' }, { header: 'Trade_Count', col: 'trade_count' },
+  { header: 'Trade_Amount', col: 'trade_amount' }, { header: 'MF_Target', col: 'mf_target' },
+  { header: 'MF_Count', col: 'mf_count' }, { header: 'MF_Amount', col: 'mf_amount' },
+];
+
+export const AW_MANDATE_COLUMNS: AwColumnDef[] = [
+  { header: 'Billing_Type', col: 'billing_type' }, { header: 'Mandate', col: 'mandate' },
+  { header: 'Per_FE_Rate', col: 'per_fe_rate' }, { header: 'Login Hours Per FTE', col: 'login_hours_per_fte' },
+  { header: 'Month', col: 'month' },
+];
+
+export const AW_BILLING_COLUMNS: AwColumnDef[] = [
+  { header: 'Call_Date', col: 'call_date' }, { header: 'Agent_Id', col: 'agent_id' },
+  { header: 'Agent_Name', col: 'agent_name' }, { header: 'Total_Calls', col: 'total_calls' },
+  { header: 'Connected_Calls', col: 'connected_calls' }, { header: 'Not_Connected_Calls', col: 'not_connected_calls' },
+  { header: 'Total_Talk_Time', col: 'total_talk_time' }, { header: 'Total_Wrapup_Time', col: 'total_wrapup_time' },
+  { header: 'Total_Pause_Time', col: 'total_pause_time' }, { header: 'Total_Idle_Time', col: 'total_idle_time' },
+  { header: 'Pickup_Time', col: 'pickup_time' }, { header: 'Total_Login_Time', col: 'total_login_time' },
+  { header: 'First_Login_Time', col: 'first_login_time' }, { header: 'Last_Logout_Time', col: 'last_logout_time' },
+  { header: 'Customer_Disconnect', col: 'customer_disconnect' }, { header: 'UUID', col: 'uuid' },
+  { header: 'EMP_ID', col: 'emp_id' }, { header: 'LOB', col: 'lob' },
+  { header: 'Week', col: 'week' }, { header: 'Month', col: 'month' },
+  { header: 'Call_DateAgent_Id', col: 'call_date_agent_id' }, { header: 'Bio', col: 'bio' },
+  { header: 'Bio_Break', col: 'bio_break' }, { header: 'Lunch', col: 'lunch' },
+  { header: 'Tea', col: 'tea' }, { header: 'Tea_Break', col: 'tea_break' },
+  { header: 'Inbound_Aux', col: 'inbound_aux' }, { header: 'Meeting_AUX', col: 'meeting_aux' },
+  { header: 'Meeting', col: 'meeting' }, { header: 'Ticket_work', col: 'ticket_work' },
+  { header: 'WhatsApp_Chat', col: 'whatsapp_chat' }, { header: 'Technical_CC', col: 'technical_cc' },
+  { header: 'Technical_Dialer', col: 'technical_dialer' }, { header: 'Email_work', col: 'email_work' },
+  { header: 'Training', col: 'training' }, { header: 'SIP_disconnected', col: 'sip_disconnected' },
+  { header: 'SIP_UnRegistered', col: 'sip_unregistered' }, { header: 'Technical_Issue_Dialer', col: 'technical_issue_dialer' },
+  { header: 'Technical_Issue_CC', col: 'technical_issue_cc' }, { header: 'changeMode', col: 'change_mode' },
+  { header: 'Technical_Issue_CRM', col: 'technical_issue_crm' }, { header: 'QA_Feedback', col: 'qa_feedback' },
+  { header: 'Video_KYC_Aux', col: 'video_kyc_aux' }, { header: 'Net_Login_hrs#', col: 'net_login_hrs' },
+  { header: 'Actaul_Mandays', col: 'actual_mandays' }, { header: 'Shift_Time', col: 'shift_time' },
+  { header: 'Roster_Count', col: 'roster_count' }, { header: 'Shift_Start_Time', col: 'shift_start_time' },
+  { header: 'Late_login_Status', col: 'late_login_status' }, { header: 'Ontime_login_Status', col: 'ontime_login_status' },
+  { header: 'Late_login_Count', col: 'late_login_count' }, { header: 'Ontime_login_Count', col: 'ontime_login_count' },
+  { header: 'ACHT_with_Picked_Up_Time', col: 'acht_with_picked_up_time' }, { header: 'ACHT', col: 'acht' },
+  { header: 'Occupancy%', col: 'occupancy_pct' }, { header: 'Calling_Target', col: 'calling_target' },
+  { header: 'Break_Exceed_count', col: 'break_exceed_count' }, { header: 'Net_Occupancy%', col: 'net_occupancy_pct' },
+  { header: 'LOB2', col: 'lob2' }, { header: 'Billing_Type', col: 'billing_type' },
+  { header: 'Actual_Versant', col: 'actual_versant' }, { header: 'Billing_in_Number', col: 'billing_in_number' },
+];
+
+const AW_TABLES: { table: string; columns: AwColumnDef[] }[] = [
+  { table: 'aw_new_cdr', columns: AW_NEW_CDR_COLUMNS },
+  { table: 'aw_out',     columns: AW_OUT_COLUMNS },
+  { table: 'aw_inbound', columns: AW_INBOUND_COLUMNS },
+  { table: 'aw_mandate', columns: AW_MANDATE_COLUMNS },
+  { table: 'aw_billing', columns: AW_BILLING_COLUMNS },
+];
+
+export async function initAwTables(): Promise<void> {
+  const pool = getMasmisPool();
+  for (const { table, columns } of AW_TABLES) {
+    try {
+      const colsSql = columns.map(c => `\`${c.col}\` ${c.long ? 'TEXT' : 'VARCHAR(100)'}`).join(',\n        ');
+      await pool.execute(`
+        CREATE TABLE IF NOT EXISTS db_masmis.${table} (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          ${colsSql},
+          uploaded_by INT, upload_batch_id VARCHAR(36),
+          inserted_at DATETIME DEFAULT NOW(),
+          INDEX idx_batch (upload_batch_id)
+        )
+      `);
+    } catch (err) {
+      console.error(`[sales] initAwTables warning (${table}):`, (err as Error).message);
+    }
+  }
+}
+
+function normalizeAwHeader(h: string): string {
+  return String(h ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Generic upload: locates the header row by best-match against the expected column headers
+// (so it tolerates a few leading title/blank rows), then maps by header name rather than
+// position — so the uploaded file's columns can be reordered without breaking the import.
+export async function uploadAwGeneric(
+  table: string, columns: AwColumnDef[], rawRows: (string | number | null)[][],
+  uploadedBy: number, batchId: string,
+): Promise<number> {
+  if (rawRows.length === 0) return 0;
+  const normExpected = columns.map(c => normalizeAwHeader(c.header));
+
+  let hdrIdx = 0;
+  let bestMatch = -1;
+  for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+    const norm = (rawRows[i] ?? []).map(c => normalizeAwHeader(String(c ?? '')));
+    const matches = normExpected.filter(h => norm.includes(h)).length;
+    if (matches > bestMatch) { bestMatch = matches; hdrIdx = i; }
+  }
+  const headerRow = (rawRows[hdrIdx] ?? []).map(c => normalizeAwHeader(String(c ?? '')));
+  const dataRows = rawRows.slice(hdrIdx + 1).filter(r => r.some(c => c != null && String(c).trim() !== ''));
+  if (dataRows.length === 0) return 0;
+
+  const colIndexes = normExpected.map(h => headerRow.indexOf(h));
+  const dbCols = columns.map(c => `\`${c.col}\``);
+  const sql = `INSERT INTO db_masmis.${table} (${dbCols.join(', ')}, uploaded_by, upload_batch_id) VALUES ?`;
+  const values = dataRows.map(r => {
+    const vals = colIndexes.map(idx => (idx >= 0 && r[idx] != null && String(r[idx]).trim() !== '') ? String(r[idx]).slice(0, 65000) : null);
+    return [...vals, uploadedBy, batchId];
+  });
+  const [result] = await getMasmisPool().query(sql, [values]);
+  return (result as mysql.ResultSetHeader).affectedRows;
+}
+
+// ─── AW Dashboard — reads aw_out (daily agent performance) ─────────────────────
+
+export interface AwDashboardData {
+  months: string[];
+  kpis: {
+    totalCalls: number; connectedCalls: number; notConnectedCalls: number; connectedPct: number;
+    activeAgents: number; totalLoginHrs: number; totalRevenue: number;
+    lrsAmount: number; tradeAmount: number; mfAmount: number;
+  };
+  agents: {
+    agentId: string; agentName: string; empId: string; lob: string;
+    totalCalls: number; connectedCalls: number; connectedPct: number;
+    netLoginHrs: number; acht: number; occupancy: string;
+    lrsAmount: number; tradeAmount: number; mfAmount: number;
+  }[];
+}
+
+export async function getAwMonths(): Promise<string[]> {
+  const [rows] = await getMasmisPool().query(`
+    SELECT DISTINCT month FROM db_masmis.aw_out WHERE month IS NOT NULL AND month != ''
+    ORDER BY STR_TO_DATE(CONCAT('01-', month), '%d-%b-%y') DESC
+  `);
+  return (rows as any[]).map(r => r.month);
+}
+
+export async function getAwDashboard(month: string | null): Promise<AwDashboardData> {
+  const months = await getAwMonths();
+  const effectiveMonth = month || months[0] || null;
+  const where = effectiveMonth ? 'WHERE month = ?' : '';
+  const params = effectiveMonth ? [effectiveMonth] : [];
+
+  const [kpiRows] = await getMasmisPool().query(`
+    SELECT
+      COALESCE(SUM(CAST(NULLIF(total_calls,'') AS DECIMAL(12,2))),0)          AS totalCalls,
+      COALESCE(SUM(CAST(NULLIF(connected_calls,'') AS DECIMAL(12,2))),0)      AS connectedCalls,
+      COALESCE(SUM(CAST(NULLIF(not_connected_calls,'') AS DECIMAL(12,2))),0)  AS notConnectedCalls,
+      COALESCE(SUM(CAST(NULLIF(net_login_hrs,'') AS DECIMAL(12,2))),0)        AS totalLoginHrs,
+      COALESCE(SUM(CAST(NULLIF(lrs_amount,'') AS DECIMAL(15,2))),0)           AS lrsAmount,
+      COALESCE(SUM(CAST(NULLIF(trade_amount,'') AS DECIMAL(15,2))),0)         AS tradeAmount,
+      COALESCE(SUM(CAST(NULLIF(mf_amount,'') AS DECIMAL(15,2))),0)            AS mfAmount,
+      COUNT(DISTINCT agent_id)                                                AS activeAgents
+    FROM db_masmis.aw_out ${where}
+  `, params);
+  const k = (kpiRows as any[])[0] ?? {};
+  const totalCalls = Number(k.totalCalls) || 0;
+  const connectedCalls = Number(k.connectedCalls) || 0;
+  const lrsAmount = Number(k.lrsAmount) || 0;
+  const tradeAmount = Number(k.tradeAmount) || 0;
+  const mfAmount = Number(k.mfAmount) || 0;
+
+  const [agentRows] = await getMasmisPool().query(`
+    SELECT
+      agent_id AS agentId,
+      MAX(agent_name) AS agentName, MAX(emp_id) AS empId, MAX(lob) AS lob,
+      COALESCE(SUM(CAST(NULLIF(total_calls,'') AS DECIMAL(12,2))),0)      AS totalCalls,
+      COALESCE(SUM(CAST(NULLIF(connected_calls,'') AS DECIMAL(12,2))),0)  AS connectedCalls,
+      COALESCE(SUM(CAST(NULLIF(net_login_hrs,'') AS DECIMAL(12,2))),0)    AS netLoginHrs,
+      COALESCE(AVG(CAST(NULLIF(acht,'') AS DECIMAL(12,2))),0)             AS acht,
+      MAX(occupancy_on_calls) AS occupancy,
+      COALESCE(SUM(CAST(NULLIF(lrs_amount,'') AS DECIMAL(15,2))),0)       AS lrsAmount,
+      COALESCE(SUM(CAST(NULLIF(trade_amount,'') AS DECIMAL(15,2))),0)     AS tradeAmount,
+      COALESCE(SUM(CAST(NULLIF(mf_amount,'') AS DECIMAL(15,2))),0)        AS mfAmount
+    FROM db_masmis.aw_out ${where}
+    GROUP BY agent_id
+    ORDER BY totalCalls DESC
+    LIMIT 500
+  `, params);
+
+  return {
+    months,
+    kpis: {
+      totalCalls, connectedCalls,
+      notConnectedCalls: Number(k.notConnectedCalls) || 0,
+      connectedPct: totalCalls > 0 ? Math.round((connectedCalls / totalCalls) * 1000) / 10 : 0,
+      activeAgents: Number(k.activeAgents) || 0,
+      totalLoginHrs: Number(k.totalLoginHrs) || 0,
+      totalRevenue: lrsAmount + tradeAmount + mfAmount,
+      lrsAmount, tradeAmount, mfAmount,
+    },
+    agents: (agentRows as any[]).map(r => ({
+      agentId: String(r.agentId ?? ''), agentName: String(r.agentName ?? ''),
+      empId: String(r.empId ?? ''), lob: String(r.lob ?? ''),
+      totalCalls: Number(r.totalCalls) || 0, connectedCalls: Number(r.connectedCalls) || 0,
+      connectedPct: Number(r.totalCalls) > 0 ? Math.round((Number(r.connectedCalls) / Number(r.totalCalls)) * 1000) / 10 : 0,
+      netLoginHrs: Number(r.netLoginHrs) || 0, acht: Number(r.acht) || 0,
+      occupancy: String(r.occupancy ?? ''),
+      lrsAmount: Number(r.lrsAmount) || 0, tradeAmount: Number(r.tradeAmount) || 0, mfAmount: Number(r.mfAmount) || 0,
+    })),
+  };
 }
