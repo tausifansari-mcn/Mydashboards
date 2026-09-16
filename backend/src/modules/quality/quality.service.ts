@@ -3347,10 +3347,22 @@ const HOUSING_OWNER_VALID_CALL_CLAUSE = `
   AND cd.Offered IS NOT NULL AND TRIM(cd.Offered) != ''
 `;
 
-function housingOwnerCQExpr(alias = 'cd'): string {
+// SoftSkill is blank on a portion of otherwise-gradable Housing Owner calls (same upstream data
+// gap as Opening — see HOUSING_OWNER_VALID_CALL_CLAUSE above). Per explicit instruction, a blank
+// SoftSkill should count as a pass (1), not a fail — unlike Opening/Offered/OfferUrgency/Product,
+// which stay "blank counts as 0" (the general convention used everywhere else in this file).
+function housingOwnerFlagPassExpr(alias: string, col: string): string {
   const p = alias ? `${alias}.` : '';
+  if (col === 'SoftSkill') {
+    return `CASE WHEN (${p}SoftSkill IS NULL OR TRIM(${p}SoftSkill) = '') THEN 1 WHEN ${p}SoftSkill = 1 THEN 1 ELSE 0 END`;
+  }
+  return `IF(${p}${col}=1,1,0)`;
+}
+
+function housingOwnerCQExpr(alias = 'cd'): string {
   const flagSum = ['Opening', 'Offered', 'OfferUrgency', 'Product', 'SoftSkill']
-    .map(c => `IF(${p}${c}=1,1,0)`).join(' + ');
+    .map(c => housingOwnerFlagPassExpr(alias, c)).join(' + ');
+  const p = alias ? `${alias}.` : '';
   const ohBlank = `(${p}ObjectionHandling IS NULL OR TRIM(${p}ObjectionHandling) = '')`;
   const ohNone = `LOWER(TRIM(${p}ObjectionHandling)) IN ('none','na','n/a','null')`;
   const ohScore = `CASE WHEN ${ohBlank} THEN 0 WHEN ${ohNone} THEN 0 ELSE 1 END`;
@@ -3455,7 +3467,7 @@ export async function getHousingOwnerCQScoreDetails(filters: QualityFilters): Pr
   const [summaryRow] = await querySource<{ total_calls: number } & Record<string, number>>(`
     SELECT
       COUNT(*) AS total_calls,
-      ${HOUSING_OWNER_FLAG_COLS.map(c => `ROUND(AVG(IF(cd.${c}=1,1,0)) * 100, 1) AS ${c.toLowerCase()}_rate`).join(',\n      ')},
+      ${HOUSING_OWNER_FLAG_COLS.map(c => `ROUND(AVG(${housingOwnerFlagPassExpr('cd', c)}) * 100, 1) AS ${c.toLowerCase()}_rate`).join(',\n      ')},
       ${ohRateExpr} AS objection_handling_rate
     FROM db_external.CallDetails cd
     WHERE ${baseWhere}
@@ -3466,7 +3478,7 @@ export async function getHousingOwnerCQScoreDetails(filters: QualityFilters): Pr
       cd.AgentName AS agent_id,
       COALESCE(am.AgentName, cd.AgentName) AS agent_name,
       COUNT(*) AS call_count,
-      ${HOUSING_OWNER_FLAG_COLS.map(c => `ROUND(AVG(IF(cd.${c}=1,1,0)) * 100, 1) AS ${c.toLowerCase()}_rate`).join(',\n      ')},
+      ${HOUSING_OWNER_FLAG_COLS.map(c => `ROUND(AVG(${housingOwnerFlagPassExpr('cd', c)}) * 100, 1) AS ${c.toLowerCase()}_rate`).join(',\n      ')},
       ${ohRateExpr} AS objection_handling_rate,
       ROUND(AVG(${perCallScore}) * 100, 1) AS overall_score
     FROM db_external.CallDetails cd
@@ -4028,6 +4040,14 @@ export async function getGncCQScoreDateWise(filters: QualityFilters): Promise<CQ
 // value rather than a made-up number.
 function exportSelectExpr(col: string, tableAlias: string): string {
   if (col === 'CallDate') return `DATE_FORMAT(${tableAlias}.CallDate, '%d-%m-%Y %H:%i:%s') AS CallDate`;
+  if (col === 'SoftSkill') {
+    // Displayed/exported value follows the same "blank counts as 1" rule as the CQ Score formula
+    // for Housing Owner (see housingOwnerFlagPassExpr above) — other clients' raw value is untouched.
+    return `(CASE
+      WHEN ${tableAlias}.client_id = ${HOUSING_OWNER_CLIENT_ID} AND (${tableAlias}.SoftSkill IS NULL OR TRIM(${tableAlias}.SoftSkill) = '') THEN 1
+      ELSE ${tableAlias}.SoftSkill
+    END) AS SoftSkill`;
+  }
   if (col === 'CQScore') {
     return `(CASE
       WHEN ${tableAlias}.client_id = ${HOUSING_OWNER_CLIENT_ID} THEN ROUND(${housingOwnerCQExpr(tableAlias)} * 100, 1)
