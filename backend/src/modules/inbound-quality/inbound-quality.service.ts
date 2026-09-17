@@ -5289,18 +5289,31 @@ const CQA_EXPORT_COLUMNS = [
 
 // CallDate needs an explicit SQL-side format (dd-mm-yyyy hh:mm:ss) rather than the raw DATETIME —
 // letting mysql2/CSV serialize a Date object directly produces a locale/timezone-dependent string.
-// A blank CQ parameter cell is exported as-is (blank) — the scoring formulas now exclude blanks
-// from the ratio entirely rather than treating them as a pass, so forcing the cell to show "1"
-// would misrepresent a parameter that was never actually graded on that call.
 // For a Clovia-scoped request, call_answered_within_5_seconds is aliased straight to its display
 // label (CLOVIA_LABEL_OVERRIDES — "Standard Call Opening", same rename already used in Score
 // Components/Quality Parameters/TNI) so the Raw Data table and the exported CSV both show the
 // renamed header, not just aggregate views. Only done when the export/table is scoped to Clovia
 // alone — a mixed/unrestricted multi-client export keeps the raw column name, since one CSV can
 // only have one header row and other clients' rows would be mislabeled otherwise.
+//
+// Displayed/exported cell value for the other CQ parameters, Clovia only: a blank cell on a call
+// where Standard Call Opening (call_answered_within_5_seconds) = 1 shows as 1 instead of blank, per
+// explicit instruction. This is a display/export-only substitution — it does NOT touch
+// CQ_SCORE_SQL/excludeBlankRatio/paramScorePct, which keep excluding blanks from every aggregate
+// (CQ Score, Score Components, Quality Parameters, TNI) exactly as before. Those two were
+// deliberately decoupled once already (see the CQ_SCORE_SQL comment above) after a blank-counts-as-
+// pass-when-Opening=1 rule applied to the *aggregate* score produced numbers that didn't match the
+// Quality Parameters table; doing it only at the per-row display/export layer here can't reintroduce
+// that inconsistency since it never feeds back into any score calculation.
+const CLOVIA_BLANK_AS_PASS_COLS = new Set(CQ_PARAM_COLS_CLOVIA.filter(c => c !== 'call_answered_within_5_seconds'));
+
 function exportSelectExpr(col: string, isClovia = false): string {
   if (col === 'CallDate') return `DATE_FORMAT(q.CallDate, '%d-%m-%Y %H:%i:%s') AS CallDate`;
   const label = clientLabel(col, isClovia, col);
+  if (isClovia && CLOVIA_BLANK_AS_PASS_COLS.has(col)) {
+    const expr = `(CASE WHEN q.call_answered_within_5_seconds = 1 AND q.${col} IS NULL THEN 1 ELSE q.${col} END)`;
+    return `${expr} AS \`${label}\``;
+  }
   if (label !== col) return `q.${col} AS \`${label}\``;
   return `q.${col}`;
 }

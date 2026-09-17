@@ -1029,6 +1029,7 @@ export async function getRawCallData(
   const rows = await querySource<Record<string, unknown>>(`
     SELECT ${CALL_DETAILS_EXPORT_COLUMNS.map(c => exportSelectExpr(c, 'cd')).join(', ')}
     FROM db_external.CallDetails cd ${mobileNo ? '' : 'FORCE INDEX (Index_3)'}
+    LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
     WHERE 1=1 ${dateClause} ${cf} ${mf} ${campF} ${cursorClause}
     ORDER BY cd.id DESC
     LIMIT ${limit}
@@ -4040,6 +4041,12 @@ export async function getGncCQScoreDateWise(filters: QualityFilters): Promise<CQ
 // value rather than a made-up number.
 function exportSelectExpr(col: string, tableAlias: string): string {
   if (col === 'CallDate') return `DATE_FORMAT(${tableAlias}.CallDate, '%d-%m-%Y %H:%i:%s') AS CallDate`;
+  if (col === 'AgentName') {
+    // CallDetails.AgentName actually stores the agent's MasId, not their name (same underlying gap
+    // fixed for Inbound's Fatal Calls list) — resolve it through AgentMaster like every other agent-
+    // wise query in this file does, falling back to the raw MasId only if it's not in AgentMaster yet.
+    return `COALESCE(am.AgentName, ${tableAlias}.AgentName) AS AgentName`;
+  }
   if (col === 'SoftSkill') {
     // Displayed/exported value follows the same "blank counts as 1" rule as the CQ Score formula
     // for Housing Owner (see housingOwnerFlagPassExpr above) — other clients' raw value is untouched.
@@ -4091,6 +4098,7 @@ export async function streamOutboundExportCsv(
     const rows = await querySource<Record<string, unknown>>(`
       SELECT ${CALL_DETAILS_EXPORT_COLUMNS.map(c => exportSelectExpr(c, 'cd')).join(', ')}
       FROM db_external.CallDetails cd FORCE INDEX (Index_3)
+      LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
       WHERE cd.id > ? AND cd.CallDate BETWEEN ? AND ? ${clientFilter}
       ORDER BY cd.id ASC
       LIMIT ${BATCH}

@@ -22,6 +22,7 @@ import {
   initOutboundDashboardCacheTables, startOutboundDashboardCacheJob,
 } from './modules/quality/quality.service';
 import { initHousingOwnerComplianceTables, startHousingOwnerComplianceJob } from './modules/quality/housingOwnerCompliance.service';
+import { initBellavitaComplianceTables } from './modules/quality/bellavitaCompliance.service';
 import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.routes';
 import { initVideoPhraseCache, startVideoPhraseJob } from './modules/inbound-quality/inbound-quality.service';
 import taskSchedulerRoutes from './modules/task-scheduler/task-scheduler.routes';
@@ -79,6 +80,7 @@ const server = app.listen(PORT, () => {
   initHousingOwnerComplianceTables()
     .then(() => startHousingOwnerComplianceJob())
     .catch(err => logger.error('[startup] initHousingOwnerComplianceTables failed:', err.message));
+  initBellavitaComplianceTables().catch(err => logger.error('[startup] initBellavitaComplianceTables failed:', err.message));
   startTaskSchedulerJob();
   initVideoPhraseCache()
     .then(() => startVideoPhraseJob())

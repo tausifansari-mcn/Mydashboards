@@ -18,6 +18,7 @@ import {
 import api from '@/lib/axios';
 import RawDataTab from './RawDataTab';
 import FraudCallTab from './FraudCallTab';
+import BellavitaComplianceDashboard from './BellavitaComplianceDashboard';
 
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 function downloadCSV(rows: Record<string, unknown>[], filename: string) {
@@ -1170,14 +1171,14 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
             <MSLine size={16} />
             <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞" onClick={onCallEndClick}>
               <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
-              <p className="text-base font-black tabular-nums text-white leading-none">{metrics.call_end.toLocaleString()}</p>
+              <p className="text-base font-black tabular-nums text-white leading-none">{metrics.call_end.toLocaleString()}/{metrics.total_in.toLocaleString()}</p>
             </MSMetricPill>
           </div>
           <div className="flex items-center">
             <MSLine size={16} />
             <MSMetricPill bg={MS_SUCCESS_GRADIENT} icon="📈">
-              <p className="text-[9px] font-bold text-white leading-tight">Success Rate ({metrics.success_rate}%)</p>
-              <p className="text-[9px] font-bold text-white leading-tight">Contribution% ({metrics.contribution_rate}%)</p>
+              <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Success Rate</p>
+              <p className="text-base font-black tabular-nums text-white leading-none">{metrics.success_rate}%</p>
             </MSMetricPill>
           </div>
         </div>
@@ -1379,13 +1380,14 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick, onCall
                   <MSLine size={16} />
                   <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞" onClick={() => onStageCallEndClick(stage.stage as 'op' | 'csp' | 'offer')}>
                     <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
-                    <p className="text-base font-black tabular-nums text-white leading-none">{stage.dropped.toLocaleString()}</p>
+                    <p className="text-base font-black tabular-nums text-white leading-none">{stage.dropped.toLocaleString()}/{stage.total_in.toLocaleString()}</p>
                   </MSMetricPill>
                 </div>
                 <div className="flex items-center">
                   <MSLine size={16} />
                   <MSMetricPill bg={MS_SUCCESS_GRADIENT} icon="📈">
-                    <p className="text-[9px] font-bold text-white leading-tight">Success Rate ({stage.success_rate}%)</p>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Success Rate</p>
+                    <p className="text-base font-black tabular-nums text-white leading-none">{stage.success_rate}%</p>
                   </MSMetricPill>
                 </div>
               </div>
@@ -2252,9 +2254,12 @@ export default function ProcessQualityDashboard() {
             { id: 2, label: 'Missed Opportunity' },
             { id: 3, label: 'NPS & CSAT' },
             { id: 4, label: 'Detail Analysis' },
-            { id: 5, label: 'Fraud Call' },
+            // Bellavita's Fraud Call insights moved into its "AI Compliance & SOP" page instead of
+            // a separate tab — every other client keeps the standalone tab unchanged.
+            ...(isBellavita ? [] : [{ id: 5, label: 'Fraud Call' }]),
             ...(isHousingOwner ? [{ id: 7, label: 'CQ Score Details' }] : []),
             ...(isBellavita ? [{ id: 8, label: 'CQ Score' }] : []),
+            ...(isBellavita ? [{ id: 11, label: 'AI Compliance & SOP' }] : []),
             ...(isHousingPremium ? [{ id: 9, label: 'CQ Score' }] : []),
             ...(isGnc ? [{ id: 10, label: 'CQ Score' }] : []),
             ...(canViewRawData ? [{ id: 6, label: 'Raw Data' }] : []),
@@ -4420,7 +4425,7 @@ export default function ProcessQualityDashboard() {
         )}
 
         {/* ─── Slide 5: Fraud Call ───────────────────────────────────────── */}
-        {activeSlide === 5 && clientId && (
+        {activeSlide === 5 && clientId && !isBellavita && (
           <FraudCallTab clientId={clientId} sd={sd} ed={ed} apiPath="/quality/fraud-calls"
             campaignId={selectedCampaign !== 'All' ? selectedCampaign : undefined} />
         )}
@@ -4621,7 +4626,6 @@ export default function ProcessQualityDashboard() {
             { key: 'objectionHandling', label: 'Objection Handling' },
             { key: 'prepaidPitch', label: 'Prepaid Pitch' },
             { key: 'upsellingEfforts', label: 'Upselling Efforts' },
-            { key: 'offerUrgency', label: 'Offer Urgency' },
           ];
           const filteredCqAgents = (bellavitaCQDetails?.byAgent ?? []).filter(a =>
             a.agentName.toLowerCase().includes(cqAgentSearch.trim().toLowerCase()));
@@ -4713,7 +4717,7 @@ export default function ProcessQualityDashboard() {
                       return {
                         Agent: a.agentName, Calls: a.callCount,
                         Opening: `${a.opening}%`, Offered: `${a.offered}%`, 'Objection Handling': `${a.objectionHandling}%`,
-                        'Prepaid Pitch': `${a.prepaidPitch}%`, 'Upselling Efforts': `${a.upsellingEfforts}%`, 'Offer Urgency': `${a.offerUrgency}%`,
+                        'Prepaid Pitch': `${a.prepaidPitch}%`, 'Upselling Efforts': `${a.upsellingEfforts}%`,
                         'Overall CQ %': `${a.overallScore}%`,
                         'Weakest Area': weak.min < 100 ? `${weak.labels.join(', ')} (${weak.min}%)` : '',
                       };
@@ -4793,6 +4797,11 @@ export default function ProcessQualityDashboard() {
             </div>
           );
         })()}
+
+        {/* ─── Slide 11: AI Compliance & SOP (BellaVita only) ──────────────── */}
+        {activeSlide === 11 && isBellavita && (
+          <BellavitaComplianceDashboard />
+        )}
 
         {/* ─── Slide 9: CQ Score (Housing Premium only) ────────────────────── */}
         {activeSlide === 9 && isHousingPremium && clientId && (() => {

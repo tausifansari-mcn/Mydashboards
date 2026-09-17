@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import * as svc from './quality.service';
 import * as complianceSvc from './housingOwnerCompliance.service';
+import * as bvComplianceSvc from './bellavitaCompliance.service';
 import { resolveUserScope } from '../call-master/call-master.service';
 import { getCaseActions as getCaseActionsFromLib, upsertCaseAction, type CaseActionFeature } from '../../lib/caseActions';
 
@@ -233,6 +234,123 @@ export async function getHousingOwnerComplianceDrill(req: Request, res: Response
     const data = await complianceSvc.getHousingOwnerComplianceDrill(
       filters, parameter as complianceSvc.ComplianceParamKey, pass, agentName,
     );
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+// ─── BellaVita Outbound — AI Compliance & SOP ──────────────────────────────────
+function parseComplianceFilters(req: Request): bvComplianceSvc.ComplianceFilters {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const defaultStart = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01 00:00`;
+  const defaultEnd   = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} 23:59`;
+  return {
+    startDate: (req.query.startDate as string) || defaultStart,
+    endDate:   (req.query.endDate   as string) || defaultEnd,
+    agentId:   (req.query.agentId as string | undefined)?.trim() || undefined,
+  };
+}
+
+export async function getBellavitaComplianceParameters(req: Request, res: Response) {
+  try {
+    const includeInactive = req.query.includeInactive === '1';
+    const data = await bvComplianceSvc.getComplianceParameters(includeInactive);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function upsertBellavitaComplianceParameter(req: Request, res: Response) {
+  try {
+    await bvComplianceSvc.upsertComplianceParameter(req.body);
+    res.json({ success: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(400).json({ message: msg });
+  }
+}
+
+export async function getBellavitaProductMaster(_req: Request, res: Response) {
+  try {
+    const data = await bvComplianceSvc.getProductMaster();
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function upsertBellavitaProductMaster(req: Request, res: Response) {
+  try {
+    const id = await bvComplianceSvc.upsertProductMaster(req.body);
+    res.json({ success: true, data: { id } });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(400).json({ message: msg });
+  }
+}
+
+export async function ingestBellavitaComplianceAudit(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) { res.status(401).json({ message: 'User not authenticated' }); return; }
+    const data = await bvComplianceSvc.ingestBellavitaCallAudit(req.body, userId);
+    res.json({ success: true, data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(400).json({ success: false, message: msg });
+  }
+}
+
+export async function getBellavitaComplianceMonthly(req: Request, res: Response) {
+  try {
+    const filters = parseComplianceFilters(req);
+    const data = await bvComplianceSvc.getBellavitaComplianceMonthly(filters);
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getBellavitaComplianceCalls(req: Request, res: Response) {
+  try {
+    const filters = parseComplianceFilters(req);
+    const status = (req.query.status as string | undefined) ?? 'all';
+    const cursor = req.query.cursor ? Number(req.query.cursor) : undefined;
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const data = await bvComplianceSvc.getBellavitaComplianceCalls(
+      filters, status as 'all' | 'compliant' | 'non_compliant' | 'critical' | 'review', cursor, limit,
+    );
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getBellavitaComplianceCallDetail(req: Request, res: Response) {
+  try {
+    const callId = req.params.callId;
+    const data = await bvComplianceSvc.getBellavitaComplianceCallDetail(callId);
+    if (!data) { res.status(404).json({ message: 'Call audit not found' }); return; }
+    res.json({ data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ message: msg });
+  }
+}
+
+export async function getBellavitaComplianceCallTranscript(req: Request, res: Response) {
+  try {
+    const callId = req.params.callId;
+    const data = await bvComplianceSvc.getBellavitaComplianceTranscript(callId);
+    if (!data) { res.status(404).json({ message: 'Transcript not found' }); return; }
     res.json({ data });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
