@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, Building2, LogOut,
   ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck,
   PhoneCall, Phone, ChevronDown, BarChart3, Package, X, CalendarClock,
-  UploadCloud,
+  UploadCloud, Activity,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -29,6 +29,10 @@ const TASK_SCHEDULER_LINK = { to: '/admin/task-scheduler', icon: CalendarClock, 
 // to anyone granted the 'call-rec' dashboard (via Access), same as Task Scheduler — not
 // hardcoded to super_admin.
 const CALL_REC_LINK = { to: '/callrec', icon: UploadCloud, label: 'Call Rec UI' };
+
+// Health of the AI audit pipeline itself — which processes are still being graded and which
+// have quietly stopped. Granted via the 'audit-monitor' dashboard, same as the two links above.
+const AUDIT_MONITOR_LINK = { to: '/monitoring/audit', icon: Activity, label: 'AI Audit Monitor' };
 
 const ALL_INBOUND_PROJECTS = [
   { to: '/inbound/gnc',          slug: 'gnc',          icon: '🛒', label: 'GNC' },
@@ -75,6 +79,7 @@ export default function Sidebar() {
   const inboundProjects = ALL_INBOUND_PROJECTS.filter((p) => canAccessInboundSlug(p.slug));
   const hasTaskScheduler = isSuperAdmin || dashboardSlugs.includes('task-scheduler');
   const hasCallRec = isSuperAdmin || dashboardSlugs.includes('call-rec');
+  const hasAuditMonitor = isSuperAdmin || dashboardSlugs.includes('audit-monitor');
   const hasInbound = isSuperAdmin || (dashboardSlugs.includes('inbound') && inboundProjects.length > 0);
 
   const mainLinks = BASE_LINKS
@@ -168,11 +173,12 @@ export default function Sidebar() {
           )}
         </SidebarSection>
 
-        {(isSuperAdmin || hasTaskScheduler || hasCallRec) && (
+        {(isSuperAdmin || hasTaskScheduler || hasCallRec || hasAuditMonitor) && (
           <SidebarSection label="ADMIN" expanded={desktopExpanded || isMobile}>
             {isSuperAdmin && adminLinks.map((l) => <SidebarLink key={l.to} {...l} expanded={desktopExpanded || isMobile} />)}
             {hasTaskScheduler && <SidebarLink {...TASK_SCHEDULER_LINK} expanded={desktopExpanded || isMobile} />}
             {hasCallRec && <SidebarLink {...CALL_REC_LINK} expanded={desktopExpanded || isMobile} />}
+            {hasAuditMonitor && <SidebarLink {...AUDIT_MONITOR_LINK} expanded={desktopExpanded || isMobile} />}
           </SidebarSection>
         )}
 

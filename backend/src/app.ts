@@ -24,6 +24,7 @@ import {
 import { initHousingOwnerComplianceTables, startHousingOwnerComplianceJob } from './modules/quality/housingOwnerCompliance.service';
 import { initBellavitaComplianceTables } from './modules/quality/bellavitaCompliance.service';
 import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.routes';
+import auditMonitorRoutes from './modules/audit-monitor/audit-monitor.routes';
 import { initVideoPhraseCache, startVideoPhraseJob } from './modules/inbound-quality/inbound-quality.service';
 import taskSchedulerRoutes from './modules/task-scheduler/task-scheduler.routes';
 import { startTaskSchedulerJob } from './modules/task-scheduler/task-scheduler.service';
@@ -52,6 +53,7 @@ app.use('/api/sales', salesRoutes);
 app.use('/api/inbound', inboundRoutes);
 app.use('/api/quality', qualityRoutes);
 app.use('/api/inbound-quality', inboundQualityRoutes);
+app.use('/api/audit-monitor', auditMonitorRoutes);
 app.use('/api/task-scheduler', taskSchedulerRoutes);
 app.use('/api/settings', settingsRoutes);
 

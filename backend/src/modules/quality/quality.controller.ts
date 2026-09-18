@@ -599,7 +599,7 @@ export async function getMagicalScriptConfig(req: Request, res: Response) {
 export async function saveMagicalScriptConfig(req: Request, res: Response) {
   try {
     const clientId = Number(req.body.clientId);
-    const { id, stage, stageTitle, objectionCategory, scriptText, displayOrder } = req.body;
+    const { id, stage, stageTitle, objectionCategory, scriptText, displayOrder, campaignId } = req.body;
     if (!clientId || !stage || !stageTitle || !scriptText) {
       res.status(400).json({ message: 'clientId, stage, stageTitle, and scriptText are required' });
       return;
@@ -611,6 +611,7 @@ export async function saveMagicalScriptConfig(req: Request, res: Response) {
       objectionCategory: objectionCategory ?? null,
       scriptText,
       displayOrder: Number(displayOrder ?? 0),
+      campaignId: campaignId ?? null,
     });
     res.json({ data });
   } catch (err: unknown) {

@@ -60,6 +60,7 @@ const dashboards = [
   { name: 'Operations Dashboard', slug: 'operations', icon: 'BarChart2', description: 'Operational metrics overview', sort_order: 6, is_active: false },
   { name: 'Agent Dashboard', slug: 'agent', icon: 'UserCheck', description: 'Agent scorecards and analytics', sort_order: 7, is_active: false },
   { name: 'Task Scheduler', slug: 'task-scheduler', icon: 'CalendarClock', description: 'Schedule automated email reports for Inbound, AI Quality and Sales', sort_order: 8, is_active: true },
+  { name: 'AI Audit Monitor', slug: 'audit-monitor', icon: 'Activity', description: 'Health of the AI audit pipeline — which processes are being audited and which have stopped', sort_order: 10, is_active: true },
 ];
 
 async function main() {

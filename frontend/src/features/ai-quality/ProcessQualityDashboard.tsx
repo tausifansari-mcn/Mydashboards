@@ -922,6 +922,8 @@ interface MagicalScriptConfigRow {
   objectionCategory: string | null;
   scriptText: string | null;
   displayOrder: number;
+  // null = the client default, shown whenever no campaign-specific script exists.
+  campaignId: string | null;
 }
 const EDIT_SCRIPT_ROLES = ['super_admin', 'manager', 'client_admin'];
 
@@ -1424,10 +1426,11 @@ const MS_STAGE_META: Record<'op' | 'csp' | 'offer', { defaultTitle: string; hint
   offer: { defaultTitle: 'Magical Offer', hint: 'The pitch used once the customer is engaged.' },
 };
 
-function MagicalScriptRowEditor({ row, savingId, objectionOptions, onChange, onSave, onDelete }: {
+function MagicalScriptRowEditor({ row, savingId, objectionOptions, campaigns, onChange, onSave, onDelete }: {
   row: MagicalScriptConfigRow;
   savingId: number | null;
   objectionOptions?: string[];
+  campaigns?: string[];
   onChange: (id: number, patch: Partial<MagicalScriptConfigRow>) => void;
   onSave: (row: MagicalScriptConfigRow) => void;
   onDelete?: (row: MagicalScriptConfigRow) => void;
@@ -1440,6 +1443,16 @@ function MagicalScriptRowEditor({ row, savingId, objectionOptions, onChange, onS
         <input value={row.stageTitle} onChange={e => onChange(row.id, { stageTitle: e.target.value })}
           placeholder="Title"
           className="flex-1 text-xs font-semibold px-2 py-1.5 rounded-md border border-slate-300 bg-white" />
+        {/* Only worth offering when the client actually runs more than one campaign — otherwise
+            every script is the default and the dropdown is noise. */}
+        {campaigns && campaigns.length > 1 && (
+          <select value={row.campaignId ?? ''} onChange={e => onChange(row.id, { campaignId: e.target.value || null })}
+            title="Which campaign this script applies to"
+            className="text-xs px-2 py-1.5 rounded-md border border-slate-300 bg-white text-slate-900">
+            <option value="">All campaigns (default)</option>
+            {campaigns.map(c => <option key={c} value={c}>Only {c}</option>)}
+          </select>
+        )}
         {row.stage === 'objection' && (
           <>
             <input value={row.objectionCategory ?? ''} onChange={e => onChange(row.id, { objectionCategory: e.target.value })}
@@ -1474,16 +1487,18 @@ function MagicalScriptRowEditor({ row, savingId, objectionOptions, onChange, onS
   );
 }
 
-function MagicalScriptEditorModal({ open, loading, rows, objectionOptions, savingId, onChange, onSave, onDelete, onAddObjection, onClose }: {
+function MagicalScriptEditorModal({ open, loading, rows, objectionOptions, campaigns, savingId, onChange, onSave, onDelete, onAddObjection, onAddStageVariant, onClose }: {
   open: boolean;
   loading: boolean;
   rows: MagicalScriptConfigRow[];
   objectionOptions: string[];
+  campaigns: string[];
   savingId: number | null;
   onChange: (id: number, patch: Partial<MagicalScriptConfigRow>) => void;
   onSave: (row: MagicalScriptConfigRow) => void;
   onDelete: (row: MagicalScriptConfigRow) => void;
   onAddObjection: () => void;
+  onAddStageVariant: (stage: 'op' | 'csp' | 'offer') => void;
   onClose: () => void;
 }) {
   if (!open) return null;
@@ -1508,13 +1523,31 @@ function MagicalScriptEditorModal({ open, loading, rows, objectionOptions, savin
           ) : (
             <>
               {(['op', 'csp', 'offer'] as const).map(stage => {
-                const row = rows.find(r => r.stage === stage);
-                if (!row) return null;
+                // A stage can hold several rows now: the client default plus one per campaign that
+                // needs its own script. Default first, campaign variants under it.
+                const stageRows = rows
+                  .filter(r => r.stage === stage)
+                  .sort((a, b) => Number(!!a.campaignId) - Number(!!b.campaignId));
+                if (stageRows.length === 0) return null;
                 return (
                   <div key={stage}>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">{MS_STAGE_META[stage].defaultTitle}</p>
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{MS_STAGE_META[stage].defaultTitle}</p>
+                      {campaigns.length > 1 && (
+                        <button onClick={() => onAddStageVariant(stage)}
+                          className="ml-auto flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold text-blue-600 hover:bg-blue-50 transition-colors">
+                          <Plus size={11} /> Add campaign variant
+                        </button>
+                      )}
+                    </div>
                     <p className="text-[10px] text-slate-400 mb-2">{MS_STAGE_META[stage].hint}</p>
-                    <MagicalScriptRowEditor row={row} savingId={savingId} onChange={onChange} onSave={onSave} />
+                    <div className="space-y-3">
+                      {stageRows.map(row => (
+                        <MagicalScriptRowEditor key={row.id} row={row} savingId={savingId} campaigns={campaigns}
+                          onChange={onChange} onSave={onSave}
+                          onDelete={row.campaignId ? onDelete : undefined} />
+                      ))}
+                    </div>
                   </div>
                 );
               })}
@@ -1532,7 +1565,7 @@ function MagicalScriptEditorModal({ open, loading, rows, objectionOptions, savin
                     <p className="text-xs text-slate-400 italic">No objection scripts yet — click "Add objection script" to create one.</p>
                   )}
                   {objectionRows.map(row => (
-                    <MagicalScriptRowEditor key={row.id} row={row} savingId={savingId} objectionOptions={objectionOptions}
+                    <MagicalScriptRowEditor key={row.id} row={row} savingId={savingId} objectionOptions={objectionOptions} campaigns={campaigns}
                       onChange={onChange} onSave={onSave} onDelete={onDelete} />
                   ))}
                 </div>
@@ -1600,23 +1633,15 @@ export default function ProcessQualityDashboard() {
   const sd = startDate.replace('T', ' ');
   const ed = endDate.replace('T', ' ');
 
-  // LOB filter (Bellavita only = clientId 375)
   const isBellavita = clientId === '375';
-  const [lobOptions, setLobOptions] = useState<{ lob: string; agent_ids: string[] }[]>([]);
-  const [selectedLob, setSelectedLob] = useState<string>('All');
-  const agentIdsParam = selectedLob === 'All' ? '' : (lobOptions.find(l => l.lob === selectedLob)?.agent_ids ?? []).join(',');
 
-  useEffect(() => {
-    if (!isBellavita) return;
-    api.get<{ data: { lob: string; agent_ids: string[] }[] }>(`/quality/lob-options?startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
-      .then(r => setLobOptions(r.data?.data ?? []))
-      .catch(() => setLobOptions([]));
-  }, [isBellavita, sd, ed, clientId]);
-
-  const agentQs = agentIdsParam ? `&agentIds=${encodeURIComponent(agentIdsParam)}` : '';
-
-  // Campaign filter — only meaningful for clients that run more than one campaign (e.g. Lawyer
-  // Panel's "regional" / "non_regional" split); the dropdown stays hidden otherwise.
+  // Campaign is the single data filter on this page. The old Bellavita-only LOB dropdown was
+  // removed: it selected a LOB by expanding it into that LOB's agent_ids and filtering on agent
+  // name, which only a couple of endpoints honoured, so the same page could show LOB-filtered
+  // numbers in one tab and all-agent numbers in the next. Campaign is a real column on every
+  // call row, so one selection now means the same thing everywhere.
+  // Only shown for clients that actually run more than one campaign (Bellavita's BELLA_O /
+  // SHELTER / CART_2, Lawyer Panel's regional / non_regional); hidden otherwise.
   const [campaigns, setCampaigns] = useState<string[]>([]);
   const [selectedCampaign, setSelectedCampaign] = useState<string>('All');
 
@@ -1825,14 +1850,14 @@ export default function ProcessQualityDashboard() {
     if (!clientId) return;
     setLoading(true);
     Promise.all([
-      api.get<{ data: KPIResponse }>(`/quality/kpis?startDate=${sd}&endDate=${ed}&clientId=${clientId}${agentQs}${campaignQs}`),
+      api.get<{ data: KPIResponse }>(`/quality/kpis?startDate=${sd}&endDate=${ed}&clientId=${clientId}${campaignQs}`),
       api.get<{ data: { client_id: number; client_name: string; calls: number }[] }>(`/quality/clients?startDate=${sd}&endDate=${ed}`),
     ]).then(([kR, cR]) => {
       setKpi(kR.data?.data ?? null);
       const match = (cR.data?.data ?? []).find(c => String(c.client_id) === clientId);
       setClientName(match?.client_name ?? `Process #${clientId}`);
     }).catch(() => {}).finally(() => setLoading(false));
-  }, [clientId, sd, ed, agentQs, campaignQs]);
+  }, [clientId, sd, ed, campaignQs]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -1842,15 +1867,15 @@ export default function ProcessQualityDashboard() {
     if (!clientId) return;
     setCustomerInsightsLoading(true);
     setCustomerInsightsError(false);
-    api.get<{ data: OutboundCustomerInsights }>(`/quality/customer-interaction-insights?startDate=${sd}&endDate=${ed}&clientId=${clientId}${agentQs}`)
+    api.get<{ data: OutboundCustomerInsights }>(`/quality/customer-interaction-insights?startDate=${sd}&endDate=${ed}&clientId=${clientId}${campaignQs}`)
       .then(r => setCustomerInsights(r.data?.data ?? null))
       .catch(() => { setCustomerInsights(null); setCustomerInsightsError(true); })
       .finally(() => setCustomerInsightsLoading(false));
-  }, [clientId, sd, ed, agentQs]);
+  }, [clientId, sd, ed, campaignQs]);
 
   const openCiDrill = (category: string, title: string) => {
     setCiDrill({ title, category, leads: [], loading: true });
-    api.get<{ data: { leads: OutboundInsightLead[] } }>(`/quality/customer-interaction-insights/drill?category=${encodeURIComponent(category)}&startDate=${sd}&endDate=${ed}&clientId=${clientId}`)
+    api.get<{ data: { leads: OutboundInsightLead[] } }>(`/quality/customer-interaction-insights/drill?category=${encodeURIComponent(category)}&startDate=${sd}&endDate=${ed}&clientId=${clientId}${campaignQs}`)
       .then(r => setCiDrill({ title, category, leads: r.data?.data?.leads ?? [], loading: false }))
       .catch(() => setCiDrill({ title, category, leads: [], loading: false }));
   };
@@ -1874,7 +1899,7 @@ export default function ProcessQualityDashboard() {
     if (!clientId) return;
     setMoCategoryDrill({ open: true, loading: true, category, subCategoryBreakdown: [], objectionBreakdown: [] });
     api.get<{ data: { category: string; subCategoryBreakdown: { subCategory: string; count: number }[]; objectionBreakdown: { objectionCategory: string; objectionSubCategory: string; count: number }[] } }>(
-      `/quality/missed-opportunity-category-detail?startDate=${sd}&endDate=${ed}&clientId=${clientId}&category=${encodeURIComponent(category)}${agentQs}${campaignQs}`
+      `/quality/missed-opportunity-category-detail?startDate=${sd}&endDate=${ed}&clientId=${clientId}&category=${encodeURIComponent(category)}${campaignQs}`
     )
       .then(r => setMoCategoryDrill({
         open: true, loading: false, category,
@@ -1921,11 +1946,11 @@ export default function ProcessQualityDashboard() {
   const refetchMagicalScript = useCallback(() => {
     if (!clientId || hideMagicalScript) return;
     setMagicalLoading(true);
-    api.get<{ data: MagicalScriptData }>(`/quality/magical-script?startDate=${sd}&endDate=${ed}&clientId=${clientId}${agentQs}`)
+    api.get<{ data: MagicalScriptData }>(`/quality/magical-script?startDate=${sd}&endDate=${ed}&clientId=${clientId}${campaignQs}`)
       .then(r => setMagicalScript(r.data?.data ?? null))
       .catch(() => setMagicalScript(null))
       .finally(() => setMagicalLoading(false));
-  }, [clientId, sd, ed, agentQs]);
+  }, [clientId, sd, ed, campaignQs]);
 
   // Magical Script is now the default landing slide (index 0), so it loads eagerly on mount just
   // like the header's client-name/KPI fetch, instead of waiting for its old lazy-load-on-visit trigger.
@@ -1971,7 +1996,7 @@ export default function ProcessQualityDashboard() {
         let tempId = -1;
         (['op', 'csp', 'offer'] as const).forEach(stage => {
           if (!withDefaults.some(row => row.stage === stage)) {
-            withDefaults.push({ id: tempId--, stage, stageTitle: MS_STAGE_META[stage].defaultTitle, objectionCategory: null, scriptText: '', displayOrder: 0 });
+            withDefaults.push({ id: tempId--, stage, stageTitle: MS_STAGE_META[stage].defaultTitle, objectionCategory: null, scriptText: '', displayOrder: 0, campaignId: null });
           }
         });
         setScriptEditorRows(withDefaults);
@@ -1992,8 +2017,29 @@ export default function ProcessQualityDashboard() {
       stageTitle: '',
       objectionCategory: '',
       scriptText: '',
+      // Adding a script while a campaign is selected writes it for that campaign — that is the
+      // case this exists for; switch it back to "All campaigns" in the dropdown to make it a default.
+      campaignId: selectedCampaign !== 'All' ? selectedCampaign : null,
       displayOrder: prev.filter(r => r.stage === 'objection').length,
     }]);
+  };
+
+  // A second (or third) script for an existing stage, scoped to one campaign. Defaults to the
+  // campaign currently being viewed, or the first campaign that doesn't have a variant yet.
+  const addStageVariantRow = (stage: 'op' | 'csp' | 'offer') => {
+    setScriptEditorRows(prev => {
+      const taken = new Set(prev.filter(r => r.stage === stage && r.campaignId).map(r => r.campaignId));
+      const preferred = selectedCampaign !== 'All' && !taken.has(selectedCampaign) ? selectedCampaign : undefined;
+      return [...prev, {
+        id: -(Date.now()),
+        stage,
+        stageTitle: MS_STAGE_META[stage].defaultTitle,
+        objectionCategory: null,
+        scriptText: '',
+        campaignId: preferred ?? campaigns.find(c => !taken.has(c)) ?? null,
+        displayOrder: prev.filter(r => r.stage === stage).length,
+      }];
+    });
   };
 
   const saveScriptRow = (row: MagicalScriptConfigRow) => {
@@ -2007,6 +2053,7 @@ export default function ProcessQualityDashboard() {
       objectionCategory: row.objectionCategory,
       scriptText: row.scriptText,
       displayOrder: row.displayOrder,
+      campaignId: row.campaignId,
     })
       .then(r => {
         const saved = r.data?.data;
@@ -2138,20 +2185,6 @@ export default function ProcessQualityDashboard() {
                 <option value="All" style={{ color: '#0f172a' }}>All Campaigns</option>
                 {campaigns.map(c => (
                   <option key={c} value={c} style={{ color: '#0f172a' }}>{c}</option>
-                ))}
-              </select>
-            </>
-          )}
-          {isBellavita && lobOptions.length > 0 && (
-            <>
-              <div className="w-px h-4 bg-slate-200 mx-0.5" />
-              <label className="text-[11px] text-slate-500 font-medium">LOB</label>
-              <select value={selectedLob} onChange={e => setSelectedLob(e.target.value)}
-                className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all"
-                style={{ color: '#0f172a' }}>
-                <option value="All" style={{ color: '#0f172a' }}>All LOBs</option>
-                {lobOptions.map(l => (
-                  <option key={l.lob} value={l.lob} style={{ color: '#0f172a' }}>{l.lob} ({l.agent_ids.length})</option>
                 ))}
               </select>
             </>
@@ -5177,11 +5210,13 @@ export default function ProcessQualityDashboard() {
           loading={scriptEditorLoading}
           rows={scriptEditorRows}
           objectionOptions={scriptEditorOptions}
+          campaigns={campaigns}
           savingId={scriptEditorSavingId}
           onChange={changeScriptRow}
           onSave={saveScriptRow}
           onDelete={deleteScriptRow}
           onAddObjection={addObjectionScriptRow}
+          onAddStageVariant={addStageVariantRow}
           onClose={() => setScriptEditorOpen(false)}
         />
 

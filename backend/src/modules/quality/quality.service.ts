@@ -2133,6 +2133,23 @@ const BELLAVITA_CATEGORY_SCRIPTS: Record<string, string> = {
 // a user is actually looking at right now — usually the current/last month — becomes fast almost
 // immediately) and eventually reaches every historical row.
 export async function initMagicalScriptCacheTables(): Promise<void> {
+  // The script *config* table lives in shivamgiri, not db_masmis, but it belongs to this same
+  // subsystem so its migration runs here. campaign_id lets one client hold a different script per
+  // campaign; NULL keeps a row as the client-wide default, which is what every existing row is.
+  try {
+    const existing = await querySource<{ COLUMN_NAME: string }>(
+      `SELECT COLUMN_NAME FROM information_schema.columns
+       WHERE TABLE_SCHEMA = 'shivamgiri' AND TABLE_NAME = 'md_magical_scripts' AND COLUMN_NAME = 'campaign_id'`,
+    );
+    if (existing.length === 0) {
+      await getSourcePool().execute(
+        `ALTER TABLE shivamgiri.md_magical_scripts ADD COLUMN campaign_id VARCHAR(20) NULL AFTER objection_category`,
+      );
+    }
+  } catch (err) {
+    console.error('[quality] md_magical_scripts campaign_id migration failed:', (err as Error).message);
+  }
+
   const pool = getMasmisPool();
   try {
     await pool.execute(`
@@ -2387,19 +2404,16 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
   const baseParams = [startDate, endDate];
   const pct = (n: number, d: number) => d > 0 ? Math.round((n / d) * 1000) / 10 : 0;
 
+  // An explicit pick from the page's Campaign dropdown wins; with nothing picked, fall back to the
+  // client's allowlist (empty today — it exists to exclude a stale campaign if one is ever
+  // confirmed). The agent_name clause that used to sit here belonged to the removed LOB filter.
   const allowedCampaigns = filters.clientId ? CAMPAIGN_ALLOWLIST[filters.clientId] : undefined;
-  const campaignClause = allowedCampaigns ? ` AND campaign_id IN (${allowedCampaigns.map(() => '?').join(',')})` : '';
-  const campaignParams: string[] = allowedCampaigns ?? [];
+  const campaignClause = filters.campaignId
+    ? ' AND campaign_id = ?'
+    : allowedCampaigns ? ` AND campaign_id IN (${allowedCampaigns.map(() => '?').join(',')})` : '';
+  const campaignParams: string[] = filters.campaignId ? [filters.campaignId] : (allowedCampaigns ?? []);
 
-  // LOB filter (Bellavita's "Repeat Customer LOB" / "Abandon Cart" selector, see getLOBOptions) —
-  // the frontend already sends the selected LOB's agent_ids as filters.agentIds; this was
-  // previously ignored entirely here (the cache had no agent column to filter on), so switching
-  // between LOBs silently kept showing the same all-agents numbers.
-  const agentIds = filters.agentIds && filters.agentIds.length > 0 ? filters.agentIds : undefined;
-  const agentClause = agentIds ? ` AND agent_name IN (${agentIds.map(() => '?').join(',')})` : '';
-  const agentParams: string[] = agentIds ?? [];
-
-  const params = [...baseParams, ...campaignParams, ...agentParams];
+  const params = [...baseParams, ...campaignParams];
 
   // All 5 reads come from the pre-classified db_masmis cache (see initMagicalScriptCacheTables /
   // processMagicalScriptBatch above) instead of scanning CallDetails live — that's what cut this
@@ -2414,7 +2428,7 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(CASE WHEN op_success = 1 THEN 1 ELSE 0 END) AS success,
         SUM(CASE WHEN op_success IS NOT NULL AND sale_done = 1 THEN 1 ELSE 0 END) AS sale_contrib
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${campaignClause}${agentClause}
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${campaignClause}
     `, params),
 
     // CSP: population = calls that passed Opening.
@@ -2430,7 +2444,7 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(CASE WHEN csp_variant = 'before' THEN 1 ELSE 0 END) AS feedback_before,
         SUM(CASE WHEN csp_variant = 'same' THEN 1 ELSE 0 END) AS feedback_same
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${skipOpGate ? '' : ' AND op_success = 1'}${campaignClause}${agentClause}
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${skipOpGate ? '' : ' AND op_success = 1'}${campaignClause}
     `, params),
 
     // Offer: population = calls that passed CSP (and OP, unless this client has no OP data).
@@ -2441,14 +2455,14 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
         SUM(offer_success) AS success,
         SUM(CASE WHEN offer_success = 1 AND sale_done = 1 THEN 1 ELSE 0 END) AS sale_contrib
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${skipOpGate ? '' : ' AND op_success = 1'} AND csp_success = 1${campaignClause}${agentClause}
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?${skipOpGate ? '' : ' AND op_success = 1'} AND csp_success = 1${campaignClause}
     `, params),
 
     queryMasmis<{ product: string; n: number }>(`
       SELECT product_offering AS product, COUNT(*) AS n
       FROM db_masmis.magical_script_cache
       WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?
-        AND offer_success = 1 AND product_offering IS NOT NULL${campaignClause}${agentClause}
+        AND offer_success = 1 AND product_offering IS NOT NULL${campaignClause}
       GROUP BY product_offering
       ORDER BY n DESC
     `, params),
@@ -2458,7 +2472,7 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
     queryMasmis<{ resolved_category: string; total: number; sales: number }>(`
       SELECT resolved_category, COUNT(*) AS total, SUM(sale_done) AS sales
       FROM db_masmis.magical_script_cache
-      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND resolved_category IS NOT NULL${campaignClause}${agentClause}
+      WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ? AND resolved_category IS NOT NULL${campaignClause}
       GROUP BY resolved_category
       ORDER BY total DESC
       LIMIT 20
@@ -2472,7 +2486,7 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
       SELECT resolved_category, offered_pitch_context AS context, COUNT(*) AS n
       FROM db_masmis.magical_script_cache
       WHERE client_id = ${dialdeskClientId} AND call_date BETWEEN ? AND ?
-        AND resolved_category IS NOT NULL AND offered_pitch_context IS NOT NULL${campaignClause}${agentClause}
+        AND resolved_category IS NOT NULL AND offered_pitch_context IS NOT NULL${campaignClause}
       GROUP BY resolved_category, offered_pitch_context
       ORDER BY resolved_category, n DESC
       LIMIT 2000
@@ -2480,10 +2494,12 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
 
     magicalScriptCacheStatus(),
 
-    // Bellavita's OP/CSP scripts stay hardcoded (below) — everyone else's come from
+    // Bellavita's client-level OP/CSP scripts stay hardcoded (below) — everyone else's come from
     // shivamgiri.md_magical_scripts, editable via the same "Edit Scripts" admin UI the generic
     // flow uses, so a new column-based client never needs a code change to get real script text.
-    isBellavita ? Promise.resolve([]) : getMagicalScriptConfig(dialdeskClientId),
+    // Bellavita still loads the table, because a campaign-specific row there overrides even the
+    // hardcoded text (see campaignScript below).
+    getMagicalScriptConfig(dialdeskClientId),
   ]);
   const [opRow] = opRows;
   const [cspRow] = cspRows;
@@ -2505,26 +2521,47 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
 
   const totalCategoryCalls = categoryRows.reduce((s, r) => s + Number(r.total), 0) || 1;
 
-  const opConfig    = configRows.find(r => r.stage === 'op');
-  const cspConfig    = configRows.find(r => r.stage === 'csp');
-  const offerConfig = configRows.find(r => r.stage === 'offer');
-  const objectionConfig = configRows.filter(r => r.stage === 'objection');
+  // A script written for the selected campaign beats everything else, including Bellavita's
+  // hardcoded text — that's the whole point of a campaign-specific script. With no campaign
+  // selected, or none written for it, the client's default (campaign_id NULL) applies as before.
+  const campaignScript = (stage: MagicalScriptConfigRow['stage']) =>
+    filters.campaignId
+      ? configRows.find(r => r.stage === stage && r.campaignId === filters.campaignId)
+      : undefined;
+
+  const opConfig    = configRows.find(r => r.stage === 'op'    && !r.campaignId);
+  const cspConfig   = configRows.find(r => r.stage === 'csp'   && !r.campaignId);
+  const offerConfig = configRows.find(r => r.stage === 'offer' && !r.campaignId);
+  // Objection rebuttals fall back per category: a campaign's own rebuttal for a category wins,
+  // otherwise the client default for it still shows rather than leaving the card blank.
+  const objectionConfig = configRows.filter(
+    r => r.stage === 'objection' && (!r.campaignId || r.campaignId === filters.campaignId),
+  ).sort((a, b) => Number(!!b.campaignId) - Number(!!a.campaignId));
+
+  const opCampaign    = campaignScript('op');
+  const cspCampaign   = campaignScript('csp');
+  const offerCampaign = campaignScript('offer');
 
   return {
     variant: 'bellavita',
     op: {
       ...stage(opRow),
-      script: isBellavita ? BELLAVITA_OP_SCRIPT : (opConfig?.scriptText ?? ''),
+      script: opCampaign?.scriptText ?? (isBellavita ? BELLAVITA_OP_SCRIPT : (opConfig?.scriptText ?? '')),
     },
     csp: {
       ...stage(cspRow),
-      scripts: isBellavita
-        ? BELLAVITA_CSP_SCRIPTS.map(s => ({
-            label: s.label,
-            text: s.text,
-            count: s.category === 'Feedback before Offer Pitch' ? Number(cspRow?.feedback_before ?? 0) : Number(cspRow?.feedback_same ?? 0),
-          }))
-        : (cspConfig ? [{ label: cspConfig.stageTitle, text: cspConfig.scriptText ?? '', count: Number(cspRow?.total ?? 0) }] : []),
+      // Bellavita's default CSP is a pair of scripts split by category count; a campaign-specific
+      // script replaces the pair with the single script written for that campaign, counted against
+      // the whole CSP population since the category split doesn't apply to it.
+      scripts: cspCampaign
+        ? [{ label: cspCampaign.stageTitle, text: cspCampaign.scriptText ?? '', count: Number(cspRow?.total ?? 0) }]
+        : isBellavita
+          ? BELLAVITA_CSP_SCRIPTS.map(s => ({
+              label: s.label,
+              text: s.text,
+              count: s.category === 'Feedback before Offer Pitch' ? Number(cspRow?.feedback_before ?? 0) : Number(cspRow?.feedback_same ?? 0),
+            }))
+          : (cspConfig ? [{ label: cspConfig.stageTitle, text: cspConfig.scriptText ?? '', count: Number(cspRow?.total ?? 0) }] : []),
     },
     offer: {
       ...stage(offerRow),
@@ -2532,7 +2569,7 @@ async function getColumnBasedMagicalScript(filters: QualityFilters): Promise<Bel
       // every column-based client, not just Bellavita — surface the top-contributing product + full
       // list here so the frontend's existing "click to view all products" modal works for GNC/Neemans
       // too. Falls back to the configured offer script only when there's no product data at all.
-      script: isBellavita ? '' : (offerConfig?.scriptText ?? ''),
+      script: offerCampaign?.scriptText ?? (isBellavita ? '' : (offerConfig?.scriptText ?? '')),
       topProduct: products[0]?.product ?? null,
       products: products.map(p => ({ product: p.product, count: Number(p.n) })),
     },
@@ -2572,8 +2609,15 @@ export async function getMagicalScript(filters: QualityFilters) {
 
   const { startDate, endDate, clientId } = filters;
   const cacheDateParams = [startDate, endDate];
-  const cacheClientFilter = clientId ? ' AND client_id = ?' : '';
-  const cacheParams = clientId ? [...cacheDateParams, Number(clientId)] : cacheDateParams;
+  // Client, then the page's Campaign selection — the cache carries campaign_id per call, so a
+  // picked campaign narrows the funnel here the same way it does on every other tab.
+  const cacheClientFilter =
+    (clientId ? ' AND client_id = ?' : '') + (filters.campaignId ? ' AND campaign_id = ?' : '');
+  const cacheParams: (string | number)[] = [
+    ...cacheDateParams,
+    ...(clientId ? [Number(clientId)] : []),
+    ...(filters.campaignId ? [filters.campaignId] : []),
+  ];
 
   // Resolve internal client id for the scripts config table
   const internalRow = clientId
@@ -2698,6 +2742,11 @@ export interface MagicalScriptConfigRow {
   objectionCategory: string | null;
   scriptText: string | null;
   displayOrder: number;
+  // NULL = the client's default script, used whenever no campaign-specific one exists. Set to a
+  // campaign_id to write a script that only shows while that campaign is selected — a client can
+  // run campaigns that need genuinely different pitches (Bellavita's SHELTER is abandoned-cart,
+  // BELLA_O is repeat-customer feedback), and one shared script is wrong for at least one of them.
+  campaignId: string | null;
 }
 
 async function resolveInternalClientId(dialdeskClientId: number, createIfMissing: boolean): Promise<number | null> {
@@ -2718,9 +2767,9 @@ export async function getMagicalScriptConfig(dialdeskClientId: number): Promise<
   if (!internalClientId) return [];
   const rows = await querySource<{
     id: number; stage: string; stage_title: string; objection_category: string | null;
-    script_text: string | null; display_order: number;
+    script_text: string | null; display_order: number; campaign_id: string | null;
   }>(`
-    SELECT id, stage, stage_title, objection_category, script_text, display_order
+    SELECT id, stage, stage_title, objection_category, script_text, display_order, campaign_id
     FROM shivamgiri.md_magical_scripts
     WHERE client_id = ? AND is_active = 1
     ORDER BY FIELD(stage, 'op', 'csp', 'offer', 'objection'), display_order, id
@@ -2732,6 +2781,7 @@ export async function getMagicalScriptConfig(dialdeskClientId: number): Promise<
     objectionCategory: r.objection_category,
     scriptText: r.script_text,
     displayOrder: Number(r.display_order),
+    campaignId: r.campaign_id,
   }));
 }
 
@@ -2746,28 +2796,30 @@ export async function getMagicalScriptObjectionOptions(dialdeskClientId: number)
 }
 
 export async function saveMagicalScriptConfig(dialdeskClientId: number, input: {
-  id?: number; stage: string; stageTitle: string; objectionCategory: string | null; scriptText: string; displayOrder: number;
+  id?: number; stage: string; stageTitle: string; objectionCategory: string | null;
+  scriptText: string; displayOrder: number; campaignId?: string | null;
 }): Promise<MagicalScriptConfigRow> {
   const internalClientId = await resolveInternalClientId(dialdeskClientId, true);
   const objectionCategory = input.stage === 'objection' ? (input.objectionCategory || null) : null;
+  const campaignId = input.campaignId?.trim() || null;
 
   if (input.id) {
     await getSourcePool().execute(
       `UPDATE shivamgiri.md_magical_scripts
-       SET stage = ?, stage_title = ?, objection_category = ?, script_text = ?, display_order = ?, updated_at = NOW()
+       SET stage = ?, stage_title = ?, objection_category = ?, script_text = ?, display_order = ?, campaign_id = ?, updated_at = NOW()
        WHERE id = ? AND client_id = ?`,
-      [input.stage, input.stageTitle, objectionCategory, input.scriptText, input.displayOrder, input.id, internalClientId],
+      [input.stage, input.stageTitle, objectionCategory, input.scriptText, input.displayOrder, campaignId, input.id, internalClientId],
     );
-    return { id: input.id, stage: input.stage as MagicalScriptConfigRow['stage'], stageTitle: input.stageTitle, objectionCategory, scriptText: input.scriptText, displayOrder: input.displayOrder };
+    return { id: input.id, stage: input.stage as MagicalScriptConfigRow['stage'], stageTitle: input.stageTitle, objectionCategory, scriptText: input.scriptText, displayOrder: input.displayOrder, campaignId };
   }
 
   const [result] = await getSourcePool().execute(
-    `INSERT INTO shivamgiri.md_magical_scripts (client_id, stage, stage_title, objection_category, script_text, display_order, is_active)
-     VALUES (?, ?, ?, ?, ?, ?, 1)`,
-    [internalClientId, input.stage, input.stageTitle, objectionCategory, input.scriptText, input.displayOrder],
+    `INSERT INTO shivamgiri.md_magical_scripts (client_id, stage, stage_title, objection_category, script_text, display_order, campaign_id, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    [internalClientId, input.stage, input.stageTitle, objectionCategory, input.scriptText, input.displayOrder, campaignId],
   );
   const id = (result as { insertId: number }).insertId;
-  return { id, stage: input.stage as MagicalScriptConfigRow['stage'], stageTitle: input.stageTitle, objectionCategory, scriptText: input.scriptText, displayOrder: input.displayOrder };
+  return { id, stage: input.stage as MagicalScriptConfigRow['stage'], stageTitle: input.stageTitle, objectionCategory, scriptText: input.scriptText, displayOrder: input.displayOrder, campaignId };
 }
 
 export async function deleteMagicalScriptConfig(dialdeskClientId: number, id: number): Promise<void> {
@@ -2939,6 +2991,7 @@ export async function initOutboundInsightsTables(): Promise<void> {
         lead_id             VARCHAR(100),
         agent_name          VARCHAR(100),
         mobile_no           VARCHAR(50),
+        campaign_id         VARCHAR(20) NULL,
         legal_flag          TINYINT(1) NOT NULL DEFAULT 0,
         social_flag         TINYINT(1) NOT NULL DEFAULT 0,
         scam_flag           TINYINT(1) NOT NULL DEFAULT 0,
@@ -2979,13 +3032,37 @@ export async function initOutboundInsightsTables(): Promise<void> {
       ['cancellation_flag', 'TINYINT(1) NOT NULL DEFAULT 0'],
       ['golden_buying',     'TINYINT(1) NOT NULL DEFAULT 0'],
       ['golden_trust',      'TINYINT(1) NOT NULL DEFAULT 0'],
+      // Added so the Campaign filter reaches this tab too. New rows get it from the batch below;
+      // rows already cached are backfilled once, right after the ALTER — without that, selecting a
+      // campaign would blank the tab for every historical call rather than filtering it.
+      ['campaign_id',       'VARCHAR(20) NULL'],
     ];
     let migrated = false;
+    let addedCampaignId = false;
     for (const [col, def] of newCols) {
       if (!colNames.has(col)) {
         await pool.execute(`ALTER TABLE db_masmis.outbound_call_insights ADD COLUMN ${col} ${def}`);
         migrated = true;
+        if (col === 'campaign_id') addedCampaignId = true;
       }
+    }
+    if (addedCampaignId) {
+      // One-off backfill from the source rows this cache was built from. Chunked by primary key so
+      // a single statement never holds a long write lock on a DB shared with the live pipeline.
+      const [maxRow] = await pool.execute(`SELECT COALESCE(MAX(call_id), 0) AS mx FROM db_masmis.outbound_call_insights`);
+      const maxId = Number((maxRow as { mx: number }[])[0]?.mx ?? 0);
+      for (let from = 0; from <= maxId; from += 50_000) {
+        await pool.execute(
+          `UPDATE db_masmis.outbound_call_insights i
+             JOIN db_external.CallDetails cd ON cd.id = i.call_id
+              SET i.campaign_id = cd.campaign_id
+            WHERE i.call_id > ? AND i.call_id <= ?`,
+          [from, from + 50_000],
+        );
+      }
+      try {
+        await pool.execute(`ALTER TABLE db_masmis.outbound_call_insights ADD INDEX idx_client_campaign (client_id, campaign_id)`);
+      } catch { /* index may already exist */ }
     }
     if (migrated) {
       for (const stmt of [
@@ -3035,13 +3112,13 @@ async function processOutboundInsightsBatch(batchSize = 300): Promise<number> {
 
   type Row = {
     id: number; client_id: number; CallDate: string; LeadID: string | null;
-    AgentName: string | null; MobileNo: string | null;
+    AgentName: string | null; MobileNo: string | null; campaign_id: string | null;
     legal: number; social: number; scam: number; refund: number; cancellation: number;
     critical_signal: string;
   } & Record<string, number>;
 
   const rows = await querySource<Row>(`
-    SELECT cd.id, cd.client_id, cd.CallDate, cd.LeadID, cd.AgentName, cd.MobileNo,
+    SELECT cd.id, cd.client_id, cd.CallDate, cd.LeadID, cd.AgentName, cd.MobileNo, cd.campaign_id,
       ${OUTBOUND_LEGAL_COND} AS legal,
       ${OUTBOUND_SOCIAL_COND} AS social,
       ${OUTBOUND_SCAM_COND} AS scam,
@@ -3060,7 +3137,7 @@ async function processOutboundInsightsBatch(batchSize = 300): Promise<number> {
   // Column list drives both the placeholder count and the ON DUPLICATE UPDATE clause — generated
   // rather than hand-counted, since a manual mismatch here has bitten this exact query before.
   const cols = [
-    'call_id', 'client_id', 'call_date', 'lead_id', 'agent_name', 'mobile_no',
+    'call_id', 'client_id', 'call_date', 'lead_id', 'agent_name', 'mobile_no', 'campaign_id',
     'legal_flag', 'social_flag', 'scam_flag', 'refund_flag', 'cancellation_flag',
     'golden_courtesy', 'golden_support', 'golden_ack', 'golden_positive', 'golden_satisfaction',
     'golden_buying', 'golden_trust',
@@ -3068,7 +3145,7 @@ async function processOutboundInsightsBatch(batchSize = 300): Promise<number> {
   ];
   const placeholders = rows.map(() => `(${cols.map(() => '?').join(',')},NOW())`).join(',');
   const flat = rows.flatMap(r => [
-    r.id, r.client_id, r.CallDate, r.LeadID, r.AgentName, r.MobileNo,
+    r.id, r.client_id, r.CallDate, r.LeadID, r.AgentName, r.MobileNo, r.campaign_id,
     r.legal, r.social, r.scam, r.refund, r.cancellation,
     r.golden_0, r.golden_1, r.golden_2, r.golden_3, r.golden_4, r.golden_5, r.golden_6,
     r.critical_signal,
@@ -3128,8 +3205,12 @@ export interface OutboundCustomerInsights {
 
 export async function getCustomerInteractionInsights(filters: QualityFilters): Promise<OutboundCustomerInsights> {
   const { startDate, endDate, clientId } = filters;
-  const cf = clientId ? ' AND client_id = ?' : '';
-  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [Number(clientId)] : [])];
+  const cf = (clientId ? ' AND client_id = ?' : '') + (filters.campaignId ? ' AND campaign_id = ?' : '');
+  const params: (string | number)[] = [
+    startDate, endDate,
+    ...(clientId ? [Number(clientId)] : []),
+    ...(filters.campaignId ? [filters.campaignId] : []),
+  ];
 
   const goldenSelect = GOLDEN_COLS.map((c, i) => `SUM(${c}) AS gw_${i}`).join(',\n      ');
 
@@ -3213,8 +3294,12 @@ function keywordsForCategory(category: string): string[] {
 // category: 'legal' | 'social' | 'scam' | 'refund' | 'cancellation' | 'golden:0'..'golden:6' | 'signal:Frustration'|'signal:Threat'|...
 export async function getOutboundInsightDrill(filters: QualityFilters, category: string): Promise<OutboundInsightDrillResponse> {
   const { startDate, endDate, clientId } = filters;
-  const cf = clientId ? ' AND client_id = ?' : '';
-  const params: (string | number)[] = [startDate, endDate, ...(clientId ? [Number(clientId)] : [])];
+  const cf = (clientId ? ' AND client_id = ?' : '') + (filters.campaignId ? ' AND campaign_id = ?' : '');
+  const params: (string | number)[] = [
+    startDate, endDate,
+    ...(clientId ? [Number(clientId)] : []),
+    ...(filters.campaignId ? [filters.campaignId] : []),
+  ];
 
   let whereExtra = '1=0';
   const extraParams: (string | number)[] = [];
@@ -4045,7 +4130,18 @@ function exportSelectExpr(col: string, tableAlias: string): string {
     // CallDetails.AgentName actually stores the agent's MasId, not their name (same underlying gap
     // fixed for Inbound's Fatal Calls list) — resolve it through AgentMaster like every other agent-
     // wise query in this file does, falling back to the raw MasId only if it's not in AgentMaster yet.
-    return `COALESCE(am.AgentName, ${tableAlias}.AgentName) AS AgentName`;
+    const resolved = `COALESCE(am.AgentName, ${tableAlias}.AgentName)`;
+    // Housing Owner's agents are Mass Call Net staff working the client's process, and the client
+    // asked to see that on the roster — so their name carries an " MCN" suffix here. Applied in this
+    // one expression so the Raw Data table and the CSV export can never disagree. Guarded so it
+    // never yields a bare " MCN" for a missing name, and never doubles up on a re-export.
+    return `(CASE
+      WHEN ${tableAlias}.client_id = ${HOUSING_OWNER_CLIENT_ID}
+       AND TRIM(COALESCE(${resolved}, '')) <> ''
+       AND ${resolved} NOT LIKE '%MCN'
+        THEN CONCAT(TRIM(${resolved}), ' MCN')
+      ELSE ${resolved}
+    END) AS AgentName`;
   }
   if (col === 'SoftSkill') {
     // Displayed/exported value follows the same "blank counts as 1" rule as the CQ Score formula

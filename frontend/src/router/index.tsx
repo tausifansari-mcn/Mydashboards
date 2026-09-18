@@ -22,6 +22,7 @@ const InboundQualityDashboard      = lazy(() => import('@/features/ai-quality/In
 const InboundDashboard        = lazy(() => import('@/features/inbound/InboundDashboard'));
 const InboundProjectDashboard = lazy(() => import('@/features/inbound/InboundProjectDashboard'));
 const CallRecEmbedPage        = lazy(() => import('@/features/callrec/CallRecEmbedPage'));
+const AuditMonitorPage        = lazy(() => import('@/features/monitoring/AuditMonitorPage'));
 
 const wrap = (C: React.ComponentType) => (
   <Suspense fallback={<PageLoader />}>
@@ -48,6 +49,7 @@ const router = createBrowserRouter(
             { path: '/inbound',             element: wrap(InboundDashboard) },
             { path: '/inbound/:projectKey', element: wrap(InboundProjectDashboard) },
             { path: '/admin/task-scheduler', element: wrap(TaskSchedulerPage) },
+            { path: '/monitoring/audit',     element: wrap(AuditMonitorPage) },
             { path: '/callrec',              element: wrap(CallRecEmbedPage) },
             { path: '/profile',             element: wrap(ProfilePage) },
             {
