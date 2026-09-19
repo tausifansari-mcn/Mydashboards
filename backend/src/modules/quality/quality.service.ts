@@ -411,7 +411,17 @@ export function startOutboundDashboardCacheJob(): void {
 export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
   const { startDate, endDate } = filters;
   const { sql: cf, params: cfParams } = clientClause(filters);
-  const { sql: af, params: afParams } = agentClause(filters);
+  // Most of this function reads from outbound_dashboard_cache, whose agent column is named
+  // agent_id (still holds the same AgentName/MasId values, just a different column name than
+  // CallDetails) — NOT agentClause()'s 'agent_name', which only matches CallDetails. Using
+  // agentClause() here silently 500'd on every LOB/agent filter, which the frontend's bare
+  // .catch(() => {}) swallowed, leaving stale unfiltered numbers on screen instead of surfacing
+  // the error. One query below (Category/SubCategory breakdown) queries CallDetails live instead
+  // of the cache and needs the original agent_name form — see afLive.
+  const agentIds = filters.agentIds && filters.agentIds.length > 0 ? filters.agentIds : undefined;
+  const af = agentIds ? ` AND cd.agent_id IN (${agentIds.map(() => '?').join(',')})` : '';
+  const afLive = agentIds ? ` AND cd.agent_name IN (${agentIds.map(() => '?').join(',')})` : '';
+  const afParams: string[] = agentIds ?? [];
   const campF = filters.campaignId ? ' AND cd.campaign_id = ?' : '';
   const campParams = filters.campaignId ? [filters.campaignId] : [];
   const params = [startDate, endDate, ...cfParams, ...afParams, ...campParams];
@@ -600,7 +610,7 @@ export async function getKPIs(filters: QualityFilters): Promise<KPIResponse> {
         cd.CustomerObjectionCategory AS objection_category,
         COUNT(*) AS cnt
       FROM db_external.CallDetails cd
-      WHERE cd.CallDate BETWEEN ? AND ? ${cf}${af}${campF}
+      WHERE cd.CallDate BETWEEN ? AND ? ${cf}${afLive}${campF}
         AND cd.MobileNo IS NOT NULL AND cd.MobileNo != '' AND cd.MobileNo != '0'
         AND COALESCE(cd.SaleDone, 0) = 0
         AND cd.Category IS NOT NULL AND cd.Category NOT IN ('', 'None')
@@ -1895,18 +1905,14 @@ export interface LOBAgent {
   agent_ids: string[];
 }
 
-// Bellavita LOB mapping — hardcoded because AgentMaster.Lob just says 'Outbound' for everyone.
-// When AgentMaster is updated with correct LOB values, switch back to the DB query below.
-const BELLAVITA_LOB_MAP: Record<string, string[]> = {
-  'Repeat Customer LOB': [
-    'MAS59391','MAS57009','MAS60695','MAS57081','MAS57075','MAS57102','MAS59390',
-    'MAS61125','MAS61112','MAS61714','MAS61110','MAS57104','MAS61107','MAS57101',
-    'MAS61392','MAS61692','MAS61700','MAS61395','MAS61713','MAS61393','MAS61685',
-    'MAS59063','MAS61699','MAS61717','MAS61108',
-  ],
-  'Abandon Cart': [
-    'MAS54531','MAS61389','MAS60705','MAS57076','MAS61111','MAS60702','MAS61113','MAS60701',
-  ],
+// Bellavita LOB mapping — was hardcoded per-agent, which went stale fast (agents move teams);
+// campaign_id is the real, always-current signal: every Bellavita call is tagged 'BELLA_O' for
+// the Repeat Customer LOB or 'SHELTER' for Abandon Cart (confirmed against live data — the two
+// campaigns never share an agent within the same period, so deriving each LOB's agent roster
+// from campaign_id and filtering by agent downstream, same as before, gives an exact partition).
+const BELLAVITA_LOB_CAMPAIGN_MAP: Record<string, string> = {
+  'Repeat Customer LOB': 'BELLA_O',
+  'Abandon Cart': 'SHELTER',
 };
 
 export async function getLOBOptions(filters: QualityFilters): Promise<LOBAgent[]> {
@@ -1914,22 +1920,28 @@ export async function getLOBOptions(filters: QualityFilters): Promise<LOBAgent[]
 
   // Only Bellavita (375) has the LOB split right now
   if (clientId && String(clientId) === '375') {
-    // Narrow to agents who actually appear in CallDetails for this date range
     const { sql: cf, params: cfParams } = clientClause(filters);
     const params = [startDate, endDate, ...cfParams];
-    const activeRows = await querySource<{ MasId: string }>(`
-      SELECT DISTINCT cd.AgentName AS MasId
+    const campaignRows = await querySource<{ campaign_id: string | null; agent: string }>(`
+      SELECT DISTINCT cd.campaign_id, cd.AgentName AS agent
       FROM db_external.CallDetails cd
       WHERE cd.CallDate BETWEEN ? AND ?
         AND cd.AgentName IS NOT NULL AND TRIM(cd.AgentName) != ''
+        AND cd.campaign_id IN ('BELLA_O', 'SHELTER')
         ${cf}
     `, params);
-    const activeSet = new Set(activeRows.map(r => String(r.MasId).trim()));
+    const agentsByCampaign = new Map<string, Set<string>>();
+    for (const r of campaignRows) {
+      if (!r.campaign_id) continue;
+      const key = String(r.campaign_id).trim().toUpperCase();
+      if (!agentsByCampaign.has(key)) agentsByCampaign.set(key, new Set());
+      agentsByCampaign.get(key)!.add(String(r.agent).trim());
+    }
 
     const result: LOBAgent[] = [];
-    for (const [lob, ids] of Object.entries(BELLAVITA_LOB_MAP)) {
-      const activeIds = ids.filter(id => activeSet.has(id));
-      if (activeIds.length > 0) result.push({ lob, agent_ids: activeIds });
+    for (const [lob, campaignId] of Object.entries(BELLAVITA_LOB_CAMPAIGN_MAP)) {
+      const agentIds = agentsByCampaign.get(campaignId);
+      if (agentIds && agentIds.size > 0) result.push({ lob, agent_ids: Array.from(agentIds) });
     }
     return result;
   }

@@ -690,9 +690,9 @@ export interface GncRow {
 
 export async function uploadGncSales(rows: GncRow[], uploadedBy: number, batchId: string): Promise<number> {
   const sql = `INSERT INTO db_masmis.gnc_sale (
-    week, \`Date\`, emp_id, emp_name, tl, t1, t3, customer_number,
+    week, sale_date, emp_id, emp_name, tl, t1, t3, customer_number,
     email_id, payment_status, gross_amount, sum_before_gst,
-    gnc_order_id, campaign, discount_code, sale_count, status,
+    order_id, campaign, discount_code, sale_count, status,
     line_item_name, sale_lob, target, sale_source, uploaded_by, upload_batch_id
   ) VALUES ?`;
   const values = rows.map(r => [
@@ -757,7 +757,7 @@ export async function uploadGncAllocation(rows: GncAllocationRow[], uploadedBy: 
     uid, alloc_date, helper, date_type, time_slot, store, customer_name,
     email, total, created_at, lineitem_name, lineitem_sku, shipping_name,
     shipping_street, shipping_city, shipping_zip, shipping_phone, emp_id,
-    calling_status, sub_scenarios1, callback_date, same_day_connect,
+    calling_status, sub_scenarios_1, callback_date, same_day_connect,
     nc_connect, uploaded_by, upload_batch_id
   ) VALUES ?`;
   const values = rows.map(r => [
@@ -1879,6 +1879,7 @@ const UPLOAD_BATCH_TABLES = new Set([
   'neemans_sale_raw', 'neemans_allocation', 'neemans_cart', 'bb_cart', 'neemans_apr',
   'bvo_order_export', 'bvo_Repeat_cdr', 'bvo_repeat_allocation',
   'aw_new_cdr', 'aw_out', 'aw_inbound', 'aw_mandate', 'aw_billing',
+  'CR_housing_owner', 'CR_housing_premium', 'CR_lp_feedback', 'CR_lp_regional', 'CR_lp_non_regional',
 ]);
 
 export async function deleteUploadBatch(batchId: string, tableName: string): Promise<{ deleted: number }> {

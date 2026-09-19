@@ -21,8 +21,9 @@ const ProcessQualityDashboard      = lazy(() => import('@/features/ai-quality/Pr
 const InboundQualityDashboard      = lazy(() => import('@/features/ai-quality/InboundQualityDashboard'));
 const InboundDashboard        = lazy(() => import('@/features/inbound/InboundDashboard'));
 const InboundProjectDashboard = lazy(() => import('@/features/inbound/InboundProjectDashboard'));
-const CallRecEmbedPage        = lazy(() => import('@/features/callrec/CallRecEmbedPage'));
+const CallRecUploadPage       = lazy(() => import('@/features/callrec/CallRecUploadPage'));
 const AuditMonitorPage        = lazy(() => import('@/features/monitoring/AuditMonitorPage'));
+const AIBotPage               = lazy(() => import('@/features/ai-bot/AIBotPage'));
 
 const wrap = (C: React.ComponentType) => (
   <Suspense fallback={<PageLoader />}>
@@ -50,7 +51,8 @@ const router = createBrowserRouter(
             { path: '/inbound/:projectKey', element: wrap(InboundProjectDashboard) },
             { path: '/admin/task-scheduler', element: wrap(TaskSchedulerPage) },
             { path: '/monitoring/audit',     element: wrap(AuditMonitorPage) },
-            { path: '/callrec',              element: wrap(CallRecEmbedPage) },
+            { path: '/callrec',              element: wrap(CallRecUploadPage) },
+            { path: '/ai-quality-copilot',   element: wrap(AIBotPage) },
             { path: '/profile',             element: wrap(ProfilePage) },
             {
               element: <PrivateRoute roles={['super_admin']} />,

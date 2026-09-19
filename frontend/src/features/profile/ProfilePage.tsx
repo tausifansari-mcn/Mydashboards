@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Loader2, KeyRound, User, Mail, CheckCircle2, XCircle, Camera, ServerCog } from 'lucide-react';
+import { Loader2, KeyRound, User, Mail, CheckCircle2, XCircle, Camera, ServerCog, Bot } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { getInitials, formatDate } from '@/lib/utils';
 import api from '@/lib/axios';
@@ -9,6 +9,17 @@ interface SmtpStatus {
   host: string | null;
   user: string | null;
   usingStoredPassword: boolean;
+  updatedByName: string | null;
+  updatedAt: string | null;
+}
+
+interface AiStatus {
+  provider: string;
+  model: string;
+  enabled: boolean;
+  keySource: 'stored' | 'env' | 'none';
+  keyPreview: string | null;
+  baseUrl: string | null;
   updatedByName: string | null;
   updatedAt: string | null;
 }
@@ -32,10 +43,38 @@ export default function ProfilePage() {
   const [smtpLoading, setSmtpLoading] = useState(false);
   const [smtpResult, setSmtpResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
+  const [aiProvider, setAiProvider] = useState<'anthropic' | 'openai-compatible'>('anthropic');
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [aiModel, setAiModel] = useState('');
+  const [aiBaseUrl, setAiBaseUrl] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   useEffect(() => {
     if (user?.role !== 'super_admin') return;
     api.get<SmtpStatus>('/settings/smtp-status').then((r) => setSmtpStatus(r.data)).catch(() => {});
+    api.get<AiStatus>('/settings/ai-status').then((r) => setAiStatus(r.data)).catch(() => {});
   }, [user?.role]);
+
+  const handleUpdateAiSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAiLoading(true); setAiResult(null);
+    try {
+      await api.put('/settings/ai-settings', {
+        provider: aiProvider,
+        apiKey: aiApiKey,
+        model: aiModel.trim() || undefined,
+        baseUrl: aiProvider === 'openai-compatible' ? aiBaseUrl.trim() : undefined,
+      });
+      setAiResult({ type: 'success', text: 'CAM BOT key updated and verified — it will use it for the next message.' });
+      setAiApiKey('');
+      api.get<AiStatus>('/settings/ai-status').then((r) => setAiStatus(r.data)).catch(() => {});
+    } catch (err: unknown) {
+      const m = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setAiResult({ type: 'error', text: m || 'Failed to update AI settings' });
+    } finally { setAiLoading(false); }
+  };
 
   const handleUpdateSmtpPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -253,6 +292,87 @@ export default function ProfilePage() {
               <motion.button type="submit" disabled={testLoading} whileTap={{ scale: 0.97 }}
                 className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-70">
                 {testLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Mail className="h-4 w-4" /> Send</>}
+              </motion.button>
+            </form>
+          </div>
+        )}
+
+        {/* CAM BOT API Key — super_admin only */}
+        {user?.role === 'super_admin' && (
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex items-center gap-2">
+              <Bot className="h-5 w-5 text-blue-600" />
+              <h3 className="font-bold text-slate-800">CAM BOT — AI Provider Key</h3>
+              <span className="ml-auto rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-600 border border-blue-200">Admin</span>
+            </div>
+            <p className="mb-4 text-xs text-slate-500">
+              CAM BOT (the AI Copilot) needs an API key to reason over your data. Update it here if the current key
+              is rotated, expired, or you want to switch providers — it takes effect immediately, no redeploy needed.
+            </p>
+            {aiStatus && (
+              <div className="mb-4 rounded-lg bg-slate-50 px-4 py-3 text-xs text-slate-600 space-y-0.5">
+                <p><span className="font-semibold text-slate-700">Provider:</span> {aiStatus.provider} &middot; <span className="font-semibold text-slate-700">Model:</span> {aiStatus.model}</p>
+                {aiStatus.baseUrl && <p><span className="font-semibold text-slate-700">Base URL:</span> {aiStatus.baseUrl}</p>}
+                <p>
+                  <span className="font-semibold text-slate-700">Status:</span>{' '}
+                  {aiStatus.enabled
+                    ? <span className="text-green-700">Active{aiStatus.keyPreview ? ` — key ending in ...${aiStatus.keyPreview}` : ''}</span>
+                    : <span className="text-red-600">No key configured — CAM BOT will only answer with raw data, no reasoning</span>}
+                </p>
+                <p><span className="font-semibold text-slate-700">Key source:</span> {aiStatus.keySource === 'stored' ? 'Saved from this page' : aiStatus.keySource === 'env' ? 'Server .env default' : 'None'}</p>
+                {aiStatus.updatedAt && (
+                  <p><span className="font-semibold text-slate-700">Last updated:</span> {formatDate(aiStatus.updatedAt)} by {aiStatus.updatedByName || '—'}</p>
+                )}
+              </div>
+            )}
+            {aiResult && (
+              <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+                className={`mb-4 flex items-start gap-2 rounded-lg px-4 py-3 text-sm ${aiResult.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                {aiResult.type === 'success'
+                  ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+                  : <XCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+                {aiResult.text}
+              </motion.div>
+            )}
+            <form onSubmit={handleUpdateAiSettings} className="space-y-3">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <select
+                  value={aiProvider}
+                  onChange={(e) => setAiProvider(e.target.value as 'anthropic' | 'openai-compatible')}
+                  className="sm:w-56 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                >
+                  <option value="anthropic">Anthropic</option>
+                  <option value="openai-compatible">OpenAI-compatible (custom)</option>
+                </select>
+                <input
+                  type="password"
+                  placeholder={aiProvider === 'anthropic' ? 'New API key (sk-ant-...)' : 'New API key'}
+                  value={aiApiKey}
+                  onChange={(e) => setAiApiKey(e.target.value)}
+                  required
+                  className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                />
+                <input
+                  type="text"
+                  placeholder={aiProvider === 'anthropic' ? 'Model (optional, e.g. claude-haiku-4-5-20251001)' : 'Model (e.g. gpt-4o-mini, llama-3.1-70b)'}
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                  className="sm:w-64 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                />
+              </div>
+              {aiProvider === 'openai-compatible' && (
+                <input
+                  type="text"
+                  placeholder="Base URL — the provider's API endpoint, e.g. https://api.example.com/v1"
+                  value={aiBaseUrl}
+                  onChange={(e) => setAiBaseUrl(e.target.value)}
+                  required
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                />
+              )}
+              <motion.button type="submit" disabled={aiLoading} whileTap={{ scale: 0.97 }}
+                className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-70">
+                {aiLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Bot className="h-4 w-4" /> Update</>}
               </motion.button>
             </form>
           </div>

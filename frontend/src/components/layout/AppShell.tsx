@@ -7,6 +7,7 @@ import api from '@/lib/axios';
 import { useAuthStore } from '@/store/authStore';
 import { useProcessStore } from '@/store/processStore';
 import { useUIStore } from '@/store/uiStore';
+import FloatingChatBot from '@/features/ai-bot/FloatingChatBot';
 
 export default function AppShell() {
   const location = useLocation();
@@ -98,6 +99,8 @@ export default function AppShell() {
           </AnimatePresence>
         </main>
       </div>
+
+      <FloatingChatBot />
     </div>
   );
 }
