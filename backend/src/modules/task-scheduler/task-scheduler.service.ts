@@ -12,6 +12,7 @@ import { streamOutboundExportCsv, getClients as getOutboundClients } from '../qu
 import { getSalesExport } from '../sales/sales.service';
 import { buildPageKpiHtml } from './kpi-email-templates';
 import { withQuartile } from '../../lib/quartile';
+import { runScamAlert, currentScamWatermark } from './scam-alert.service';
 
 // ─── Static / near-static target lists per module ─────────────────────────────
 
@@ -307,6 +308,7 @@ export async function runTask(task: md_scheduled_tasks): Promise<void> {
 
 export interface TaskInput {
   name:         string;
+  task_type?:   string;         // 'report' (default) | 'scam_alert'
   pages:        TaskPage[];
   frequency:    string;
   time_of_day:  string;
@@ -317,17 +319,73 @@ export interface TaskInput {
   is_active?:   boolean;
 }
 
+// Scam alerts are not scheduled reports — they are a watcher. Rather than a second job loop, they
+// ride the existing per-minute scheduler by simply re-arming a few minutes out each time, so a
+// flagged call reaches the process owner within minutes of being audited.
+export const SCAM_ALERT_INTERVAL_MINUTES = 5;
+
+export function isScamAlert(task: { task_type?: string | null }): boolean {
+  return task.task_type === 'scam_alert';
+}
+
+/** A scam alert's target process — the single inbound page picked when it was created. */
+function scamAlertTarget(task: md_scheduled_tasks): { clientId: string; label: string } {
+  const [page] = parsePages(task.pages);
+  if (!page) throw new Error('Alert has no inbound process selected');
+  return { clientId: String(page.target_key), label: page.target_label };
+}
+
+/**
+ * Runs one scam-alert task. Kept separate from runTask because nothing about a report applies:
+ * there is no date window, no CSV, and no KPI block — just "what has been flagged since last time".
+ */
+export async function runScamAlertTask(task: md_scheduled_tasks): Promise<string> {
+  const { clientId, label } = scamAlertTarget(task);
+  const recipients = task.recipients.split(',').map(s => s.trim()).filter(Boolean);
+
+  // A null cursor means this alert has never run. Start from the current newest audit row so
+  // switching it on watches from now on instead of mailing out months of history.
+  const cursor = task.alert_cursor ?? await currentScamWatermark(clientId);
+
+  const { alerted, newCursor } = await runScamAlert(clientId, label, recipients, cursor);
+
+  if (newCursor !== task.alert_cursor) {
+    await prisma.md_scheduled_tasks.update({ where: { id: task.id }, data: { alert_cursor: newCursor } });
+  }
+  return alerted > 0
+    ? `Sent ${alerted} scam alert${alerted === 1 ? '' : 's'} to ${recipients.length} recipient${recipients.length === 1 ? '' : 's'}`
+    : 'No new flagged calls';
+}
+
 export async function listTasks() {
   return prisma.md_scheduled_tasks.findMany({ orderBy: { id: 'desc' } });
 }
 
 export async function createTask(input: TaskInput, createdBy: number) {
+  const taskType = input.task_type === 'scam_alert' ? 'scam_alert' : 'report';
   const dayOfWeek = input.day_of_week ?? null;
   const dayOfMonth = input.day_of_month ?? null;
+
+  if (taskType === 'scam_alert') {
+    const [page] = input.pages;
+    if (!page) throw new Error('Pick the inbound process this alert should watch');
+    // Seed the watermark at creation, not at first run: between the two there could be minutes of
+    // newly audited calls that predate the alert, and mailing those would look like a false alarm.
+    const alert_cursor = await currentScamWatermark(String(page.target_key));
+    return prisma.md_scheduled_tasks.create({
+      data: {
+        name: input.name, task_type: taskType, pages: input.pages as unknown as Prisma.InputJsonValue,
+        frequency: 'realtime', time_of_day: '00:00', day_of_week: null, day_of_month: null, period: null,
+        recipients: input.recipients, is_active: input.is_active ?? true, created_by: createdBy,
+        next_run_at: new Date(), alert_cursor,
+      },
+    });
+  }
+
   const next_run_at = computeNextRun(input.frequency, input.time_of_day, dayOfWeek, dayOfMonth);
   return prisma.md_scheduled_tasks.create({
     data: {
-      name: input.name, pages: input.pages as unknown as Prisma.InputJsonValue,
+      name: input.name, task_type: taskType, pages: input.pages as unknown as Prisma.InputJsonValue,
       frequency: input.frequency, time_of_day: input.time_of_day, day_of_week: dayOfWeek, day_of_month: dayOfMonth,
       period: input.period ?? null,
       recipients: input.recipients, is_active: input.is_active ?? true, created_by: createdBy, next_run_at,
@@ -337,6 +395,27 @@ export async function createTask(input: TaskInput, createdBy: number) {
 
 export async function updateTask(id: number, input: Partial<TaskInput>) {
   const existing = await prisma.md_scheduled_tasks.findUniqueOrThrow({ where: { id } });
+
+  if (isScamAlert(existing)) {
+    // An alert has no schedule to recompute. If it is pointed at a different process, its old
+    // watermark refers to another client's row ids and would be meaningless — re-seed from the
+    // new target so the switch doesn't replay that process's history.
+    const nextPage = input.pages?.[0];
+    const currentPage = parsePages(existing.pages)[0];
+    const retarget = nextPage && String(nextPage.target_key) !== String(currentPage?.target_key);
+    return prisma.md_scheduled_tasks.update({
+      where: { id },
+      data: {
+        name: input.name,
+        pages: input.pages ? (input.pages as unknown as Prisma.InputJsonValue) : undefined,
+        recipients: input.recipients,
+        is_active: input.is_active,
+        ...(retarget ? { alert_cursor: await currentScamWatermark(String(nextPage.target_key)) } : {}),
+        next_run_at: new Date(),
+      },
+    });
+  }
+
   const frequency = input.frequency ?? existing.frequency;
   const timeOfDay = input.time_of_day ?? existing.time_of_day;
   const dayOfWeek = input.day_of_week !== undefined ? input.day_of_week : existing.day_of_week;
@@ -360,9 +439,9 @@ export async function deleteTask(id: number) {
 export async function runTaskNow(id: number): Promise<void> {
   const task = await prisma.md_scheduled_tasks.findUniqueOrThrow({ where: { id } });
   try {
-    await runTask(task);
+    const message = isScamAlert(task) ? await runScamAlertTask(task) : (await runTask(task), null);
     await prisma.md_scheduled_tasks.update({
-      where: { id }, data: { last_run_at: new Date(), last_run_status: 'success', last_run_message: null },
+      where: { id }, data: { last_run_at: new Date(), last_run_status: 'success', last_run_message: message },
     });
   } catch (err) {
     await prisma.md_scheduled_tasks.update({
@@ -379,12 +458,15 @@ export async function checkAndRunDueTasks(): Promise<void> {
     where: { is_active: true, next_run_at: { lte: new Date() } },
   });
   for (const task of due) {
-    const next_run_at = computeNextRun(task.frequency, task.time_of_day, task.day_of_week, task.day_of_month);
+    // Alerts re-arm a few minutes out rather than at a clock time — they are a watcher, not a report.
+    const next_run_at = isScamAlert(task)
+      ? new Date(Date.now() + SCAM_ALERT_INTERVAL_MINUTES * 60_000)
+      : computeNextRun(task.frequency, task.time_of_day, task.day_of_week, task.day_of_month);
     try {
-      await runTask(task);
+      const message = isScamAlert(task) ? await runScamAlertTask(task) : (await runTask(task), null);
       await prisma.md_scheduled_tasks.update({
         where: { id: task.id },
-        data: { last_run_at: new Date(), last_run_status: 'success', last_run_message: null, next_run_at },
+        data: { last_run_at: new Date(), last_run_status: 'success', last_run_message: message, next_run_at },
       });
     } catch (err) {
       await prisma.md_scheduled_tasks.update({

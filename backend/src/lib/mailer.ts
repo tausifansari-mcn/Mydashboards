@@ -236,3 +236,170 @@ export async function sendReportEmail(
     await sendWithAttachments(recipient, subject, html, text, attachments);
   }
 }
+
+// ─── Potential Scam alert (Inbound) ───────────────────────────────────────────
+
+export interface ScamAlertCall {
+  auditId: number;
+  processName: string;
+  callDate: string;
+  agentId: string;
+  agentName: string;
+  mobileNo: string;
+  leadId: string;
+  durationSec: number | null;
+  qualityPct: number | null;
+  scenario: string;
+  recordingUrl: string | null;
+  transcript: string;
+  socialInfo: string | null;
+  negativeWords: string | null;
+  fraudRisk: string | null;
+  fraudPct: string | null;
+  fraudNotes: string | null;
+  reason: string;
+  matchedTerms: string[];
+  severity: 'critical' | 'warning';
+}
+
+// A full transcript can run to tens of thousands of characters. Gmail silently clips a message
+// past ~102KB and hides the rest behind "View entire message", which would bury everything below
+// it — so the body carries a readable excerpt and the full text rides along as a .txt attachment.
+const TRANSCRIPT_EMAIL_LIMIT = 6000;
+
+function fmtDuration(sec: number | null): string {
+  if (sec === null || !Number.isFinite(sec)) return '—';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+function detailRow(label: string, value: string, mono = false): string {
+  return `<tr>
+    <td style="padding:9px 14px;border-bottom:1px solid #eef2f7;color:#64748b;font-size:12px;white-space:nowrap;vertical-align:top;">${escapeHtml(label)}</td>
+    <td style="padding:9px 14px;border-bottom:1px solid #eef2f7;color:#0f172a;font-size:13px;font-weight:600;${mono ? 'font-family:Consolas,Monaco,monospace;' : ''}">${escapeHtml(value)}</td>
+  </tr>`;
+}
+
+export interface BuiltEmail { subject: string; html: string; text: string; attachments: { filename: string; content: Buffer }[] }
+
+// Split from the send so the rendered alert can be inspected (and eyeballed in a browser) without
+// putting mail on the wire.
+export function buildScamAlertEmail(c: ScamAlertCall): BuiltEmail {
+  const critical = c.severity === 'critical';
+  const accent = critical ? '#B91C1C' : '#B45309';
+  const accentBg = critical ? '#FEF2F2' : '#FFFBEB';
+  const badge = critical ? 'FINANCIAL FRAUD' : 'POTENTIAL SCAM';
+
+  const transcriptClipped = c.transcript.length > TRANSCRIPT_EMAIL_LIMIT;
+  const transcriptShown = transcriptClipped
+    ? `${c.transcript.slice(0, TRANSCRIPT_EMAIL_LIMIT)}\n\n… transcript continues — see the attached .txt for the full text.`
+    : (c.transcript || 'No transcript was captured for this call.');
+
+  const terms = c.matchedTerms.length
+    ? `<div style="margin:10px 0 0;">${c.matchedTerms.map(t =>
+        `<span style="display:inline-block;margin:0 6px 6px 0;padding:3px 10px;border-radius:999px;background:#fff;border:1px solid ${accent}33;color:${accent};font-size:11px;font-weight:700;letter-spacing:.3px;">${escapeHtml(t.toUpperCase())}</span>`,
+      ).join('')}</div>`
+    : '';
+
+  const fraudMeta = [
+    c.fraudRisk ? `Risk score: <strong>${escapeHtml(c.fraudRisk)}</strong>` : '',
+    c.fraudPct ? `Fraud potential: <strong>${escapeHtml(c.fraudPct)}</strong>` : '',
+  ].filter(Boolean).join(' &nbsp;·&nbsp; ');
+
+  const body = `
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:${accentBg};border-left:4px solid ${accent};border-radius:6px;margin:0 0 22px;">
+      <tr><td style="padding:16px 18px;">
+        <span style="display:inline-block;padding:3px 10px;border-radius:999px;background:${accent};color:#fff;font-size:10px;font-weight:800;letter-spacing:.8px;">${badge}</span>
+        <p style="margin:12px 0 0;color:#0f172a;font-size:15px;font-weight:700;line-height:1.5;">${escapeHtml(c.reason)}</p>
+        ${fraudMeta ? `<p style="margin:8px 0 0;color:#475569;font-size:12px;">${fraudMeta}</p>` : ''}
+        ${terms}
+      </td></tr>
+    </table>
+
+    <p style="margin:0 0 10px;color:#0f172a;font-size:13px;font-weight:800;letter-spacing:.4px;">CALL DETAILS</p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin:0 0 22px;">
+      ${detailRow('Process', c.processName)}
+      ${detailRow('Call date', c.callDate)}
+      ${detailRow('Agent name', c.agentName)}
+      ${detailRow('Agent ID', c.agentId, true)}
+      ${detailRow('Customer number', c.mobileNo, true)}
+      ${detailRow('Lead ID', c.leadId, true)}
+      ${detailRow('Duration', fmtDuration(c.durationSec))}
+      ${detailRow('Quality score', c.qualityPct !== null ? `${c.qualityPct}%` : '—')}
+      ${detailRow('Scenario', c.scenario)}
+      ${c.socialInfo ? detailRow('Customer reference', c.socialInfo) : ''}
+      ${c.negativeWords ? detailRow('Flagged words', c.negativeWords) : ''}
+    </table>
+
+    ${c.recordingUrl ? `
+    <table cellpadding="0" cellspacing="0" style="margin:0 0 10px;">
+      <tr><td style="border-radius:8px;background:${accent};">
+        <a href="${escapeHtml(c.recordingUrl)}" style="display:inline-block;padding:12px 26px;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;">&#9654;&nbsp; Listen to the call recording</a>
+      </td></tr>
+    </table>
+    <p style="margin:0 0 22px;color:#94a3b8;font-size:11px;line-height:1.6;">Recording opens on the internal network. If the button does not work, copy this link:<br>
+      <span style="color:#64748b;word-break:break-all;">${escapeHtml(c.recordingUrl)}</span></p>` : `
+    <p style="margin:0 0 22px;color:#94a3b8;font-size:12px;font-style:italic;">No recording link was stored for this call.</p>`}
+
+    ${c.fraudNotes ? `
+    <p style="margin:0 0 8px;color:#0f172a;font-size:13px;font-weight:800;letter-spacing:.4px;">AUDITOR NOTES</p>
+    <div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;color:#334155;font-size:13px;line-height:1.65;margin:0 0 22px;">${escapeHtml(c.fraudNotes)}</div>` : ''}
+
+    <p style="margin:0 0 8px;color:#0f172a;font-size:13px;font-weight:800;letter-spacing:.4px;">CALL TRANSCRIPT</p>
+    <div style="padding:16px;background:#0f172a;border-radius:8px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word;">${escapeHtml(transcriptShown)}</div>
+    ${transcriptClipped ? `<p style="margin:8px 0 0;color:#94a3b8;font-size:11px;">Full transcript attached as a text file.</p>` : ''}
+
+    <p style="margin:24px 0 0;padding-top:16px;border-top:1px solid #e5e7eb;color:#94a3b8;font-size:11px;line-height:1.6;">
+      Sent automatically because this call tripped the Potential Scam check for <strong>${escapeHtml(c.processName)}</strong>.
+      Audit reference #${c.auditId}. Manage or switch off this alert under Task Scheduler in My Dashboard.
+    </p>`;
+
+  const subject = `[${badge}] ${c.processName} — ${c.agentName} — ${c.callDate}`;
+  const text = [
+    `${badge} — ${c.processName}`,
+    '',
+    c.reason,
+    '',
+    `Call date:        ${c.callDate}`,
+    `Agent name:       ${c.agentName}`,
+    `Agent ID:         ${c.agentId}`,
+    `Customer number:  ${c.mobileNo}`,
+    `Lead ID:          ${c.leadId}`,
+    `Duration:         ${fmtDuration(c.durationSec)}`,
+    `Quality score:    ${c.qualityPct !== null ? `${c.qualityPct}%` : '—'}`,
+    `Scenario:         ${c.scenario}`,
+    c.negativeWords ? `Flagged words:    ${c.negativeWords}` : '',
+    '',
+    `Recording: ${c.recordingUrl ?? 'not available'}`,
+    '',
+    c.fraudNotes ? `Auditor notes:\n${c.fraudNotes}\n` : '',
+    'Transcript:',
+    c.transcript || '(none captured)',
+    '',
+    `— My Dashboard (audit reference #${c.auditId})`,
+  ].filter(l => l !== '').join('\n');
+
+  const html = branded('Potential Scam Alert', body);
+
+  // Always attach the full transcript: the excerpt above is for reading at a glance, the file is
+  // what gets forwarded to HR or kept with a case.
+  const attachments = c.transcript
+    ? [{
+        filename: `transcript-${c.auditId}-${c.agentId.replace(/[^\w-]/g, '')}.txt`,
+        content: Buffer.from(
+          `${c.processName} — audit #${c.auditId}\nCall date: ${c.callDate}\nAgent: ${c.agentName} (${c.agentId})\nCustomer: ${c.mobileNo}\nReason: ${c.reason}\n\n${'-'.repeat(60)}\n\n${c.transcript}\n`,
+          'utf-8',
+        ),
+      }]
+    : [];
+
+  return { subject, html, text, attachments };
+}
+
+export async function sendScamAlertEmail(to: string[], c: ScamAlertCall): Promise<void> {
+  const { subject, html, text, attachments } = buildScamAlertEmail(c);
+  for (const recipient of to) {
+    await sendWithAttachments(recipient, subject, html, text, attachments);
+  }
+}

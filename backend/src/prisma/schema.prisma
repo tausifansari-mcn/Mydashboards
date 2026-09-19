@@ -132,6 +132,7 @@ model md_audit_logs {
 model md_scheduled_tasks {
   id               Int       @id @default(autoincrement())
   name             String    @db.VarChar(150)
+  task_type        String    @default("report") @db.VarChar(20) // 'report' = scheduled CSV/KPI email; 'scam_alert' = event-driven Potential Scam alert
   pages            Json                        // [{ module, target_key, target_label }] — one or more report pages to attach
   frequency        String    @db.VarChar(10)   // 'daily' | 'weekly' | 'monthly'
   time_of_day      String    @db.VarChar(5)    // "HH:mm"
@@ -146,6 +147,10 @@ model md_scheduled_tasks {
   last_run_at      DateTime?
   last_run_status  String?   @db.VarChar(10)   // 'success' | 'failed'
   last_run_message String?   @db.Text
+  // scam_alert only: highest call_quality_assessment.id already alerted on, so each flagged call
+  // mails exactly once. Seeded to the current max on activation so switching an alert on never
+  // replays the backlog.
+  alert_cursor     Int?
   creator          md_users  @relation(fields: [created_by], references: [id])
 
   @@map("md_scheduled_tasks")

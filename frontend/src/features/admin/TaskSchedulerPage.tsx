@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Play, CalendarClock, CheckCircle2, XCircle, FileText } from 'lucide-react';
+import { Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Play, CalendarClock, CheckCircle2, XCircle, FileText, ShieldAlert } from 'lucide-react';
 import api from '@/lib/axios';
 
 interface TaskPage { module: string; target_key: string; target_label: string; report_type?: string; }
@@ -8,6 +8,7 @@ interface TaskPage { module: string; target_key: string; target_label: string; r
 interface Task {
   id: number;
   name: string;
+  task_type: string;
   pages: TaskPage[];
   frequency: string;
   time_of_day: string;
@@ -49,9 +50,15 @@ const INBOUND_QUALITY_REPORT_TYPES: { key: string; label: string }[] = [
 ];
 const REPORT_TYPE_LABELS: Record<string, string> = Object.fromEntries(INBOUND_QUALITY_REPORT_TYPES.map(r => [r.key, r.label]));
 
+const TASK_TYPES = [
+  { key: 'report',     label: 'Scheduled Report', icon: FileText,    hint: 'Emails CSV exports and KPI summaries on a schedule' },
+  { key: 'scam_alert', label: 'Potential Scam Alert', icon: ShieldAlert, hint: 'Mails the process owner as soon as a call is flagged (Inbound only)' },
+] as const;
+
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function scheduleLabel(t: Task): string {
+  if (t.task_type === 'scam_alert') return 'Live — checks every 5 min';
   if (t.frequency === 'daily') return `Daily at ${t.time_of_day}`;
   if (t.frequency === 'weekly') return `Weekly · ${DOW_LABELS[t.day_of_week ?? 0]} · ${t.time_of_day}`;
   return `Monthly · Day ${t.day_of_month ?? 1} · ${t.time_of_day}`;
@@ -63,7 +70,7 @@ function fmtDateTime(s: string | null): string {
 }
 
 const emptyForm = {
-  name: '', pages: [] as TaskPage[],
+  name: '', task_type: 'report', pages: [] as TaskPage[],
   frequency: 'daily', time_of_day: '08:00', day_of_week: 1, day_of_month: 1,
   period: null as string | null,
   recipients: '', is_active: true,
@@ -88,6 +95,8 @@ export default function TaskSchedulerPage() {
   const [pickerTargets, setPickerTargets] = useState<TargetOption[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
 
+  const isAlert = form.task_type === 'scam_alert';
+
   const fetchTasks = async () => {
     setLoading(true);
     try {
@@ -97,6 +106,10 @@ export default function TaskSchedulerPage() {
   };
 
   useEffect(() => { fetchTasks(); }, []);
+
+  // An alert only ever targets an inbound process; keep the picker pinned there so switching the
+  // task type cannot leave a stale outbound/sales module selected behind the hidden dropdown.
+  useEffect(() => { if (isAlert) setNewPageModule('ai_quality_inbound'); }, [isAlert]);
 
   useEffect(() => {
     if (!modal) return;
@@ -118,7 +131,7 @@ export default function TaskSchedulerPage() {
   const openEdit = (t: Task) => {
     setSelected(t);
     setForm({
-      name: t.name, pages: t.pages,
+      name: t.name, task_type: t.task_type ?? 'report', pages: t.pages,
       frequency: t.frequency, time_of_day: t.time_of_day,
       day_of_week: t.day_of_week ?? 1, day_of_month: t.day_of_month ?? 1,
       period: t.period ?? null,
@@ -136,7 +149,9 @@ export default function TaskSchedulerPage() {
     const reportType = newPageModule === 'ai_quality_inbound' ? newPageReportType : undefined;
     // Avoid attaching the exact same module+target+report-shape twice
     if (form.pages.some(p => p.module === newPageModule && p.target_key === newPageTargetKey && (p.report_type ?? 'raw') === (reportType ?? 'raw'))) return;
-    setForm(f => ({ ...f, pages: [...f.pages, { module: newPageModule, target_key: newPageTargetKey, target_label: label, report_type: reportType }] }));
+    const entry = { module: newPageModule, target_key: newPageTargetKey, target_label: label, report_type: reportType };
+    // An alert watches exactly one process, so picking another replaces it rather than stacking.
+    setForm(f => ({ ...f, pages: isAlert ? [entry] : [...f.pages, entry] }));
     setNewPageTargetKey('');
   };
 
@@ -148,11 +163,13 @@ export default function TaskSchedulerPage() {
     setSaving(true); setError('');
     try {
       if (!form.name.trim()) throw new Error('Name is required');
-      if (form.pages.length === 0) throw new Error('Add at least one page to attach');
+      if (form.pages.length === 0) {
+        throw new Error(isAlert ? 'Pick the inbound process this alert should watch' : 'Add at least one page to attach');
+      }
       if (!form.recipients.trim()) throw new Error('At least one recipient email is required');
 
       const payload = {
-        name: form.name, pages: form.pages,
+        name: form.name, task_type: form.task_type, pages: form.pages,
         frequency: form.frequency, time_of_day: form.time_of_day,
         day_of_week: form.frequency === 'weekly' ? Number(form.day_of_week) : null,
         day_of_month: form.frequency === 'monthly' ? Number(form.day_of_month) : null,
@@ -229,7 +246,17 @@ export default function TaskSchedulerPage() {
             ) : tasks.map((t, i) => (
               <motion.tr key={t.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
                 className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                <td className="px-4 py-3 font-semibold text-slate-800 whitespace-nowrap">{t.name}</td>
+                <td className="px-4 py-3 font-semibold text-slate-800 whitespace-nowrap">
+                  <div className="flex items-center gap-2">
+                    {t.task_type === 'scam_alert' && (
+                      <span className="inline-flex items-center gap-1 rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700"
+                        title="Potential Scam alert — mails the moment a call is flagged">
+                        <ShieldAlert className="h-3 w-3" /> Alert
+                      </span>
+                    )}
+                    {t.name}
+                  </div>
+                </td>
                 <td className="px-4 py-3 text-slate-600">
                   <div className="flex flex-wrap gap-1 max-w-[260px]">
                     {t.pages.map((p, idx) => (
@@ -318,15 +345,55 @@ export default function TaskSchedulerPage() {
             {error && <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
             <div className="space-y-4">
+              {/* Type is fixed once created — an alert and a report store different things
+                  (a watermark vs a schedule), so switching would leave one of them meaningless. */}
+              {modal === 'create' && (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">Task Type</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {TASK_TYPES.map((t) => (
+                      <button key={t.key} type="button" onClick={() => setForm({ ...form, task_type: t.key, pages: [] })}
+                        className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                          form.task_type === t.key
+                            ? 'border-primary bg-primary/5'
+                            : 'border-slate-200 hover:bg-slate-50'
+                        }`}>
+                        <span className={`flex items-center gap-1.5 text-xs font-bold ${form.task_type === t.key ? 'text-primary' : 'text-slate-700'}`}>
+                          <t.icon className="h-3.5 w-3.5" /> {t.label}
+                        </span>
+                        <span className="mt-0.5 block text-[11px] leading-snug text-slate-400">{t.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">Task Name</label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Neeman's Daily Quality Report"
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  {isAlert ? 'Alert Name' : 'Task Name'}
+                </label>
+                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder={isAlert ? "e.g. Bellavita — Potential Scam Alert" : "e.g. Neeman's Daily Quality Report"}
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
               </div>
 
+              {isAlert && (
+                <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                  <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
+                  <p className="text-[11px] leading-relaxed text-amber-800">
+                    Watches this process continuously and mails the recipients within ~5 minutes of a call
+                    being flagged as a potential scam — with the agent, customer number, recording link,
+                    transcript and the reason it was flagged. Only calls audited <strong>after</strong> you
+                    save this are alerted on, so switching it on never replays old calls.
+                  </p>
+                </div>
+              )}
+
               {/* Pages to attach — multiple */}
               <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">Pages to Attach</label>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  {isAlert ? 'Inbound Process to Watch' : 'Pages to Attach'}
+                </label>
 
                 {form.pages.length > 0 && (
                   <div className="mb-2 space-y-1.5">
@@ -346,18 +413,21 @@ export default function TaskSchedulerPage() {
                 )}
 
                 <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <select value={newPageModule} onChange={(e) => setNewPageModule(e.target.value)}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-primary">
-                      {MODULES.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-                    </select>
+                  <div className={isAlert ? '' : 'grid grid-cols-2 gap-2'}>
+                    {/* An alert is Inbound-only, so there is no module to choose. */}
+                    {!isAlert && (
+                      <select value={newPageModule} onChange={(e) => setNewPageModule(e.target.value)}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-primary">
+                        {MODULES.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                      </select>
+                    )}
                     <select value={newPageTargetKey} onChange={(e) => setNewPageTargetKey(e.target.value)} disabled={pickerLoading}
                       className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-primary disabled:opacity-60">
                       <option value="">{pickerLoading ? 'Loading…' : '— Select Process —'}</option>
                       {pickerTargets.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
                     </select>
                   </div>
-                  {newPageModule === 'ai_quality_inbound' && (
+                  {!isAlert && newPageModule === 'ai_quality_inbound' && (
                     <select value={newPageReportType} onChange={(e) => setNewPageReportType(e.target.value)}
                       className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-primary">
                       {INBOUND_QUALITY_REPORT_TYPES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
@@ -365,12 +435,15 @@ export default function TaskSchedulerPage() {
                   )}
                   <button type="button" onClick={handleAddPage} disabled={!newPageTargetKey}
                     className="flex w-full items-center justify-center gap-1 rounded-lg bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 disabled:opacity-40">
-                    <Plus className="h-3.5 w-3.5" /> Add Page
+                    <Plus className="h-3.5 w-3.5" /> {isAlert ? 'Set Process' : 'Add Page'}
                   </button>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-400">Each page adds its own CSV attachment; AI Quality and Inbound pages also add a KPI summary to the email body.</p>
+                {!isAlert && (
+                  <p className="mt-1 text-[11px] text-slate-400">Each page adds its own CSV attachment; AI Quality and Inbound pages also add a KPI summary to the email body.</p>
+                )}
               </div>
 
+              {!isAlert && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">Frequency</label>
@@ -387,8 +460,9 @@ export default function TaskSchedulerPage() {
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-primary" />
                 </div>
               </div>
+              )}
 
-              {form.frequency === 'weekly' && (
+              {!isAlert && form.frequency === 'weekly' && (
                 <div>
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">Day of Week</label>
                   <select value={form.day_of_week} onChange={(e) => setForm({ ...form, day_of_week: Number(e.target.value) })}
@@ -398,7 +472,7 @@ export default function TaskSchedulerPage() {
                 </div>
               )}
 
-              {form.frequency === 'monthly' && (
+              {!isAlert && form.frequency === 'monthly' && (
                 <div>
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">Day of Month</label>
                   <input type="number" min={1} max={31} value={form.day_of_month}
@@ -407,6 +481,7 @@ export default function TaskSchedulerPage() {
                 </div>
               )}
 
+              {!isAlert && (
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">Report Period</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -425,6 +500,7 @@ export default function TaskSchedulerPage() {
                   {PERIODS.find((p) => p.key === form.period)?.hint}
                 </p>
               </div>
+              )}
 
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-600">Recipients</label>

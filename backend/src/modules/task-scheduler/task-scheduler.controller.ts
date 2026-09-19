@@ -10,10 +10,13 @@ const pageSchema = z.object({
   report_type:  z.enum(['raw', 'agent_wise', 'date_wise', 'week_wise']).optional(),
 });
 
-const taskSchema = z.object({
+const taskBase = z.object({
   name:          z.string().min(1).max(150),
+  task_type:     z.enum(['report', 'scam_alert']).optional(),
   pages:         z.array(pageSchema).min(1),
-  frequency:     z.enum(['daily', 'weekly', 'monthly']),
+  // A scam alert has no schedule of its own — it watches continuously — so these are only
+  // required for a report. The form still sends its defaults; they are simply ignored.
+  frequency:     z.enum(['daily', 'weekly', 'monthly', 'realtime']),
   time_of_day:   z.string().regex(/^\d{2}:\d{2}$/),
   day_of_week:   z.number().int().min(0).max(6).nullable().optional(),
   day_of_month:  z.number().int().min(1).max(31).nullable().optional(),
@@ -21,6 +24,16 @@ const taskSchema = z.object({
   recipients:    z.string().min(3),
   is_active:     z.boolean().optional(),
 });
+
+// Scam alerts are Inbound-only and watch exactly one process, so the mail can carry that
+// process's name and the watermark can be a single client's row ids. Applied to create and to
+// patch separately, because .refine() returns a ZodEffects that has no .partial().
+const inboundOnlyForAlerts = (t: { task_type?: string; pages?: { module: string }[] }): boolean =>
+  t.task_type !== 'scam_alert' || (t.pages?.length === 1 && t.pages[0].module === 'ai_quality_inbound');
+const ALERT_TARGET_MSG = { message: 'A Potential Scam alert must watch exactly one AI Quality — Inbound process' };
+
+const taskSchema = taskBase.refine(inboundOnlyForAlerts, ALERT_TARGET_MSG);
+const taskPatchSchema = taskBase.partial().refine(inboundOnlyForAlerts, ALERT_TARGET_MSG);
 
 export async function getTargets(req: Request, res: Response): Promise<void> {
   try {
@@ -48,7 +61,7 @@ export async function create(req: Request, res: Response): Promise<void> {
 
 export async function update(req: Request, res: Response): Promise<void> {
   try {
-    const input = taskSchema.partial().parse(req.body);
+    const input = taskPatchSchema.parse(req.body);
     const task = await svc.updateTask(Number(req.params.id), input);
     res.json({ data: task });
   } catch (err: unknown) {
