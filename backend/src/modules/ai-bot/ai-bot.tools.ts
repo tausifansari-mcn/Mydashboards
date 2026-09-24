@@ -230,8 +230,42 @@ export async function getAgentPerformance(scope: RequestScope, args: GetAgentPer
   return { available: true, direction: 'outbound' as const, process: cq.process, dateFrom: cq.dateFrom, dateTo: cq.dateTo, agentCount: agents.length, agents };
 }
 
-// ─── Tool: getCQScoreDateWise — day-by-day CQ trend, both directions ────────────────────────────
-export interface GetCqDateWiseArgs { clientId: number; direction?: 'inbound' | 'outbound'; dateFrom?: string; dateTo?: string }
+// ─── Tool: getCQScoreDateWise — day-by-day (or week-by-week) CQ trend, both directions ──────────
+export interface GetCqDateWiseArgs { clientId: number; direction?: 'inbound' | 'outbound'; dateFrom?: string; dateTo?: string; groupBy?: 'day' | 'week' }
+
+// Weekly rollup is computed here from the day-level rows rather than a separate SQL GROUP BY per
+// client formula — reuses the already-correct, already-tested day queries instead of duplicating
+// 5 separate week-aggregation queries (4 outbound formulas + 1 inbound). Weeks run Monday-Sunday.
+// cqScore is a call-count-weighted average, not a plain average of daily scores — a 500-call day
+// and a 5-call day must not count equally toward the week's number.
+function mondayOf(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  const day = d.getDay(); // 0=Sun..6=Sat
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+function groupDaysByWeek<T extends { date: string; cqScore: number; callCount: number }>(days: T[]) {
+  const buckets = new Map<string, { callCount: number; weightedScoreSum: number; dayCount: number }>();
+  for (const d of days) {
+    const weekStart = mondayOf(d.date);
+    const b = buckets.get(weekStart) ?? { callCount: 0, weightedScoreSum: 0, dayCount: 0 };
+    b.callCount += d.callCount;
+    b.weightedScoreSum += d.cqScore * d.callCount;
+    b.dayCount += 1;
+    buckets.set(weekStart, b);
+  }
+  return [...buckets.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([weekStart, b]) => {
+      const end = new Date(`${weekStart}T00:00:00`); end.setDate(end.getDate() + 6);
+      return {
+        weekStart, weekEnd: end.toISOString().slice(0, 10),
+        cqScore: b.callCount > 0 ? Math.round((b.weightedScoreSum / b.callCount) * 10) / 10 : 0,
+        callCount: b.callCount, daysWithData: b.dayCount,
+      };
+    });
+}
 const OUTBOUND_DATEWISE_FN: Record<number, (f: qualitySvc.QualityFilters) => Promise<qualitySvc.CQScoreDateWiseRow[]>> = {
   496: qualitySvc.getHousingOwnerCQScoreDateWise,
   419: qualitySvc.getHousingPremiumCQScoreDateWise,
@@ -246,20 +280,28 @@ export async function getCQScoreDateWise(scope: RequestScope, args: GetCqDateWis
   if (args.direction === 'inbound') {
     const rows = await inboundQualitySvc.getDailyScoresRange({ startDate, endDate, clientId: String(args.clientId) });
     if (rows.length === 0) return { available: false, reason: `No Inbound audit data found for client ${args.clientId} in this period.` };
+    const days = rows.map(r => ({ date: r.call_date, cqScore: r.avg_score, callCount: r.audit_count }));
+    if (args.groupBy === 'week') {
+      const weeks = groupDaysByWeek(days);
+      return { available: true, direction: 'inbound' as const, clientId: args.clientId, dateFrom: startDate.slice(0, 10), dateTo: endDate.slice(0, 10), groupBy: 'week' as const, weekCount: weeks.length, weeks };
+    }
     return {
       available: true, direction: 'inbound' as const, clientId: args.clientId,
-      dateFrom: startDate.slice(0, 10), dateTo: endDate.slice(0, 10), dayCount: rows.length,
-      days: rows.map(r => ({ date: r.call_date, cqScore: r.avg_score, callCount: r.audit_count })),
+      dateFrom: startDate.slice(0, 10), dateTo: endDate.slice(0, 10), groupBy: 'day' as const, dayCount: days.length, days,
     };
   }
 
   const fn = OUTBOUND_DATEWISE_FN[args.clientId];
   if (!fn) return { available: false, reason: `Outbound CQ Score is only defined for Housing Owner (496), Housing Premium (419), Bellavita (375), and GNC (409). Client ${args.clientId} doesn't have an Outbound CQ formula configured — if this client has Inbound calls, try direction: 'inbound' instead.` };
   const rows = await fn({ startDate, endDate, clientId: String(args.clientId) });
+  const days = rows.map(r => ({ date: r.date, cqScore: r.cqScore, callCount: r.auditCount }));
+  if (args.groupBy === 'week') {
+    const weeks = groupDaysByWeek(days);
+    return { available: true, direction: 'outbound' as const, clientId: args.clientId, dateFrom: startDate.slice(0, 10), dateTo: endDate.slice(0, 10), groupBy: 'week' as const, weekCount: weeks.length, weeks };
+  }
   return {
     available: true, direction: 'outbound' as const, clientId: args.clientId,
-    dateFrom: startDate.slice(0, 10), dateTo: endDate.slice(0, 10), dayCount: rows.length,
-    days: rows.map(r => ({ date: r.date, cqScore: r.cqScore, callCount: r.auditCount })),
+    dateFrom: startDate.slice(0, 10), dateTo: endDate.slice(0, 10), groupBy: 'day' as const, dayCount: days.length, days,
   };
 }
 
@@ -505,12 +547,13 @@ export const TOOL_DEFS = [
   },
   {
     name: 'getCQScoreDateWise',
-    description: "Get a day-by-day CQ score trend for a process (one row per calendar day: date, CQ score, call count) — use this for any 'date wise', 'day wise', 'daily trend', or 'show me the trend over September' style request. Same direction rules as getCQScore (outbound default; inbound for the audit-based pipeline).",
+    description: "Get a day-by-day OR week-by-week CQ score trend for a process — use this for any 'date wise', 'day wise', 'daily trend', 'week wise', 'weekly report', or 'show me the trend over September' style request. Pass groupBy='week' for a week-wise report (one row per Monday-Sunday week: weekStart, weekEnd, a call-count-weighted CQ score, and total calls — NOT a plain average of daily scores, so a high-volume day correctly counts for more than a low-volume day); omit it (or pass 'day') for the default day-by-day rows. Same direction rules as getCQScore (outbound default; inbound for the audit-based pipeline).",
     parameters: {
       type: 'object' as const,
       properties: {
         clientId: { type: 'integer' },
         direction: { type: 'string', enum: ['outbound', 'inbound'], description: "Defaults to 'outbound' if omitted" },
+        groupBy: { type: 'string', enum: ['day', 'week'], description: "Defaults to 'day'. Use 'week' for any week-wise/weekly request." },
         dateFrom: { type: 'string' },
         dateTo: { type: 'string' },
       },

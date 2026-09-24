@@ -656,7 +656,8 @@ export async function exportAllCsv(req: Request, res: Response) {
       const requested = Number(clientId);
       clientIds = (scope.clientIds === null || scope.clientIds.includes(requested)) ? [requested] : [];
     }
-    await svc.streamOutboundExportCsv(res, startDate, endDate, clientIds);
+    const mode = req.query.mode === 'required' ? 'required' as const : undefined;
+    await svc.streamOutboundExportCsv(res, startDate, endDate, clientIds, mode);
   } catch (err: unknown) {
     if (!res.headersSent) {
       const msg = err instanceof Error ? err.message : 'Export failed';

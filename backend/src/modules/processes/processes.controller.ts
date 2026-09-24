@@ -13,14 +13,25 @@ const createSchema = z.object({
 const assignSchema = z.object({ user_id: z.number(), process_id: z.number() });
 
 export async function list(req: Request, res: Response): Promise<void> {
-  const clientId = req.query.client_id ? Number(req.query.client_id) : undefined;
-  res.json(await svc.getAllProcesses(clientId));
+  try {
+    const rawClientId = req.query.client_id ? Number(req.query.client_id) : undefined;
+    const clientId = rawClientId !== undefined && Number.isFinite(rawClientId) ? rawClientId : undefined;
+    res.json(await svc.getAllProcesses(clientId));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch processes' });
+  }
 }
 
 export async function getOne(req: Request, res: Response): Promise<void> {
-  const p = await svc.getProcessById(Number(req.params.id));
-  if (!p) { res.status(404).json({ message: 'Process not found' }); return; }
-  res.json(p);
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ message: 'Invalid process id' }); return; }
+    const p = await svc.getProcessById(id);
+    if (!p) { res.status(404).json({ message: 'Process not found' }); return; }
+    res.json(p);
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch process' });
+  }
 }
 
 export async function create(req: Request, res: Response): Promise<void> {
@@ -46,10 +57,15 @@ export async function update(req: Request, res: Response): Promise<void> {
 }
 
 export async function remove(req: Request, res: Response): Promise<void> {
-  const id = Number(req.params.id);
-  await svc.deleteProcess(id);
-  await writeAuditLog({ userId: req.user!.id, action: 'DELETE_PROCESS', entityType: 'process', entityId: id });
-  res.json({ message: 'Process deactivated' });
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ message: 'Invalid process id' }); return; }
+    await svc.deleteProcess(id);
+    await writeAuditLog({ userId: req.user!.id, action: 'DELETE_PROCESS', entityType: 'process', entityId: id });
+    res.json({ message: 'Process deactivated' });
+  } catch {
+    res.status(400).json({ message: 'Failed to deactivate process' });
+  }
 }
 
 export async function assignUser(req: Request, res: Response): Promise<void> {
@@ -74,16 +90,25 @@ export async function unassignUser(req: Request, res: Response): Promise<void> {
 }
 
 export async function getUserProcesses(req: Request, res: Response): Promise<void> {
-  const userId = Number(req.params.userId);
-  res.json(await svc.getUserProcesses(userId));
+  try {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) { res.status(400).json({ message: 'Invalid user id' }); return; }
+    res.json(await svc.getUserProcesses(userId));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch user processes' });
+  }
 }
 
 export async function myProcesses(req: Request, res: Response): Promise<void> {
-  const isSuperAdmin = req.user!.role === 'super_admin';
-  if (isSuperAdmin) {
-    res.json(await svc.getAllProcesses());
-    return;
+  try {
+    const isSuperAdmin = req.user!.role === 'super_admin';
+    if (isSuperAdmin) {
+      res.json(await svc.getAllProcesses());
+      return;
+    }
+    const mapped = await svc.getUserProcesses(req.user!.id);
+    res.json(mapped.map((m) => m.process));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch processes' });
   }
-  const mapped = await svc.getUserProcesses(req.user!.id);
-  res.json(mapped.map((m) => m.process));
 }

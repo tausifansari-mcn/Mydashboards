@@ -5770,7 +5770,13 @@ function matchesVideoPhrase(text: string, patterns: readonly string[]): { matche
   return { matched: false, context: '' };
 }
 
-async function processVideoPhraseBatch(clientId: string, batchSize = 30): Promise<number> {
+// Returns { processed, inserted } rather than just a match count — the caller's loop must be able
+// to tell "this batch had rows but none matched a phrase" (processed > 0, inserted === 0, keep
+// going) apart from "no more rows past the cursor" (processed === 0, stop). Phrase matches are rare
+// relative to call volume, so collapsing these into a single count previously made the job stop
+// after one batch on almost every tick — advancing the cursor by only ~30 rows every 15 minutes
+// instead of up to 150 — which meant a large backlog effectively never caught up.
+async function processVideoPhraseBatch(clientId: string, batchSize = 30): Promise<{ processed: number; inserted: number }> {
   const [cursorRow] = await queryMasmis<{ last_qa_id: number }>(
     `SELECT last_qa_id FROM ${VIDEO_CURSOR_TABLE} WHERE id = 1`
   );
@@ -5784,7 +5790,7 @@ async function processVideoPhraseBatch(clientId: string, batchSize = 30): Promis
     [lastId, clientId]
   );
 
-  if (rows.length === 0) return 0;
+  if (rows.length === 0) return { processed: 0, inserted: 0 };
 
   let inserted = 0;
   for (const row of rows) {
@@ -5815,7 +5821,7 @@ async function processVideoPhraseBatch(clientId: string, batchSize = 30): Promis
     [rows[rows.length - 1].id]
   );
 
-  return inserted;
+  return { processed: rows.length, inserted };
 }
 
 let _videoJobRunning = false;
@@ -5826,11 +5832,13 @@ export function startVideoPhraseJob(clientId = '375'): void {
     _videoJobRunning = true;
     try {
       let total = 0;
-      // Process up to 5 batches per tick to stay gentle on the source DB
+      // Process up to 5 batches per tick to stay gentle on the source DB. Keep going as long as a
+      // batch actually had rows past the cursor (processed > 0) — an empty-matches batch (inserted
+      // === 0) still means real progress was made and there may be more backlog left to scan.
       for (let i = 0; i < 5; i++) {
-        const n = await processVideoPhraseBatch(clientId, 30);
-        total += n;
-        if (n === 0) break;
+        const { processed, inserted } = await processVideoPhraseBatch(clientId, 30);
+        total += inserted;
+        if (processed === 0) break;
         await new Promise(r => setTimeout(r, 2000)); // 2s pause between batches
       }
       if (total > 0) console.log(`[video-phrase] cached ${total} phrase hits`);

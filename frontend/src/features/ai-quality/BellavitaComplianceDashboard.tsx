@@ -48,6 +48,7 @@ interface TranscriptData {
 interface BellavitaCQParamSummary {
   opening: number; offered: number; objectionHandling: number;
   prepaidPitch: number; upsellingEfforts: number; offerUrgency: number;
+  bellacash: number | null;
 }
 interface BellavitaCQAgentRow extends BellavitaCQParamSummary {
   agentId: string; agentName: string; callCount: number; overallScore: number;
@@ -130,12 +131,13 @@ function KpiCard({ label, value, color, icon: Icon, sub }: {
   );
 }
 
-function LiveParamCard({ label, pct, highlight }: { label: string; pct: number; highlight?: boolean }) {
-  const color = pct >= 80 ? GREEN : pct >= 60 ? AMBER : RED;
+function LiveParamCard({ label, pct, highlight }: { label: string; pct: number | null; highlight?: boolean }) {
+  const hasData = pct != null;
+  const color = !hasData ? SLATE : pct >= 80 ? GREEN : pct >= 60 ? AMBER : RED;
   return (
     <div className={`rounded-xl p-3 ${highlight ? 'border-2' : 'border'}`} style={{ borderColor: highlight ? NAVY : '#E2E8F0', background: highlight ? `${NAVY}08` : '#fff' }}>
       <p className="text-[10px] font-semibold text-slate-500 mb-1">{label}</p>
-      <p className="text-lg font-black tabular-nums" style={{ color }}>{pct}%</p>
+      <p className="text-lg font-black tabular-nums" style={{ color }}>{hasData ? `${pct}%` : '—'}</p>
     </div>
   );
 }
@@ -462,6 +464,7 @@ export default function BellavitaComplianceDashboard() {
               <LiveParamCard label="Prepaid Pitch" pct={cqDetails.paramPassRate.prepaidPitch} highlight />
               <LiveParamCard label="Objection Handling" pct={cqDetails.paramPassRate.objectionHandling} />
               <LiveParamCard label="Upselling Efforts" pct={cqDetails.paramPassRate.upsellingEfforts} />
+              <LiveParamCard label="Bellacash" pct={cqDetails.paramPassRate.bellacash} />
             </div>
             <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-100">
               <table className="w-full text-xs">
@@ -472,20 +475,25 @@ export default function BellavitaComplianceDashboard() {
                     <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Opening</th>
                     <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Offered</th>
                     <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Prepaid</th>
+                    <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Bellacash</th>
                     <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Overall</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {cqDetails.byAgent.slice(0, 25).map(a => (
-                    <tr key={a.agentId} className="border-t border-slate-50 hover:bg-slate-50/50">
-                      <td className="px-3 py-1.5 text-slate-700">{a.agentName}</td>
-                      <td className="px-3 py-1.5 text-right text-slate-500 tabular-nums">{a.callCount}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: a.opening >= 80 ? GREEN : a.opening >= 60 ? AMBER : RED }}>{a.opening}%</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: a.offered >= 80 ? GREEN : a.offered >= 60 ? AMBER : RED }}>{a.offered}%</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: a.prepaidPitch >= 80 ? GREEN : a.prepaidPitch >= 60 ? AMBER : RED }}>{a.prepaidPitch}%</td>
-                      <td className="px-3 py-1.5 text-right font-bold tabular-nums" style={{ color: a.overallScore >= 80 ? GREEN : a.overallScore >= 60 ? AMBER : RED }}>{a.overallScore}%</td>
-                    </tr>
-                  ))}
+                  {cqDetails.byAgent.slice(0, 25).map(a => {
+                    const hasBellacash = a.bellacash != null;
+                    return (
+                      <tr key={a.agentId} className="border-t border-slate-50 hover:bg-slate-50/50">
+                        <td className="px-3 py-1.5 text-slate-700">{a.agentName}</td>
+                        <td className="px-3 py-1.5 text-right text-slate-500 tabular-nums">{a.callCount}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: a.opening >= 80 ? GREEN : a.opening >= 60 ? AMBER : RED }}>{a.opening}%</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: a.offered >= 80 ? GREEN : a.offered >= 60 ? AMBER : RED }}>{a.offered}%</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: a.prepaidPitch >= 80 ? GREEN : a.prepaidPitch >= 60 ? AMBER : RED }}>{a.prepaidPitch}%</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: !hasBellacash ? SLATE : a.bellacash! >= 80 ? GREEN : a.bellacash! >= 60 ? AMBER : RED }}>{hasBellacash ? `${a.bellacash}%` : '—'}</td>
+                        <td className="px-3 py-1.5 text-right font-bold tabular-nums" style={{ color: a.overallScore >= 80 ? GREEN : a.overallScore >= 60 ? AMBER : RED }}>{a.overallScore}%</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

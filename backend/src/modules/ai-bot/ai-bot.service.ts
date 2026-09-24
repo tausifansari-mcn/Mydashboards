@@ -42,8 +42,13 @@ function sourcesFromTools(calls: ToolCallRecord[]): ChatSource[] {
       }
       case 'getCallCount':
         return { label: 'Call count', detail: `${r.dateFrom} to ${r.dateTo}` };
-      case 'getCQScoreDateWise':
-        return { label: `Date-wise CQ trend${r.direction ? ` (${r.direction === 'inbound' ? 'Inbound' : 'Outbound'})` : ''}`, detail: `${r.dayCount ?? '?'} days · ${r.dateFrom} to ${r.dateTo}` };
+      case 'getCQScoreDateWise': {
+        const isWeekly = r.groupBy === 'week';
+        return {
+          label: `${isWeekly ? 'Week-wise' : 'Date-wise'} CQ trend${r.direction ? ` (${r.direction === 'inbound' ? 'Inbound' : 'Outbound'})` : ''}`,
+          detail: `${isWeekly ? `${r.weekCount ?? '?'} weeks` : `${r.dayCount ?? '?'} days`} · ${r.dateFrom} to ${r.dateTo}`,
+        };
+      }
       case 'getObjectionAnalysis':
         return { label: 'Objection analysis', detail: `${r.dateFrom} to ${r.dateTo}` };
       case 'getCallTranscript':

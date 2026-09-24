@@ -16,6 +16,7 @@ import salesRoutes from './modules/sales/sales.routes';
 import { initNeemansTables, initBellavitaRepeatAllocationTable, initAwTables } from './modules/sales/sales.service';
 import callRecUploadRoutes from './modules/call-rec-upload/call-rec-upload.routes';
 import aiBotRoutes from './modules/ai-bot/ai-bot.routes';
+import callAuditRoutes from './modules/call-audit/call-audit.routes';
 import inboundRoutes from './modules/inbound/inbound.routes';
 import qualityRoutes from './modules/quality/quality.routes';
 import {
@@ -33,6 +34,7 @@ import { startTaskSchedulerJob } from './modules/task-scheduler/task-scheduler.s
 import settingsRoutes from './modules/settings/settings.routes';
 import { initSmtpFromDb } from './lib/mailer';
 import { initAiSettingsFromDb } from './lib/aiSettings';
+import { initDeepgramSettingsFromDb } from './lib/deepgramSettings';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -55,6 +57,7 @@ app.use('/api/call-master', callMasterRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/call-rec-upload', callRecUploadRoutes);
 app.use('/api/ai-bot', aiBotRoutes);
+app.use('/api/call-audit', callAuditRoutes);
 app.use('/api/inbound', inboundRoutes);
 app.use('/api/quality', qualityRoutes);
 app.use('/api/inbound-quality', inboundQualityRoutes);
@@ -73,6 +76,7 @@ const server = app.listen(PORT, () => {
   logger.info(`Backend running on port ${PORT}`);
   initSmtpFromDb().catch(err => logger.error('[startup] initSmtpFromDb failed:', err.message));
   initAiSettingsFromDb().catch(err => logger.error('[startup] initAiSettingsFromDb failed:', err.message));
+  initDeepgramSettingsFromDb().catch(err => logger.error('[startup] initDeepgramSettingsFromDb failed:', err.message));
   initNeemansTables().catch(err => logger.error('[startup] initNeemansTables failed:', err.message));
   initBellavitaRepeatAllocationTable().catch(err => logger.error('[startup] initBellavitaRepeatAllocationTable failed:', err.message));
   initAwTables().catch(err => logger.error('[startup] initAwTables failed:', err.message));

@@ -24,6 +24,7 @@ const InboundProjectDashboard = lazy(() => import('@/features/inbound/InboundPro
 const CallRecUploadPage       = lazy(() => import('@/features/callrec/CallRecUploadPage'));
 const AuditMonitorPage        = lazy(() => import('@/features/monitoring/AuditMonitorPage'));
 const AIBotPage               = lazy(() => import('@/features/ai-bot/AIBotPage'));
+const CallAuditPage           = lazy(() => import('@/features/call-audit/CallAuditPage'));
 
 const wrap = (C: React.ComponentType) => (
   <Suspense fallback={<PageLoader />}>
@@ -53,6 +54,7 @@ const router = createBrowserRouter(
             { path: '/monitoring/audit',     element: wrap(AuditMonitorPage) },
             { path: '/callrec',              element: wrap(CallRecUploadPage) },
             { path: '/ai-quality-copilot',   element: wrap(AIBotPage) },
+            { path: '/call-audit',           element: wrap(CallAuditPage) },
             { path: '/profile',             element: wrap(ProfilePage) },
             {
               element: <PrivateRoute roles={['super_admin']} />,

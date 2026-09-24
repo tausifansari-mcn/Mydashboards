@@ -136,6 +136,7 @@ export interface ScamAlertRunResult {
   alerted: number;
   newCursor: number;
   recipients: string[];
+  error?: string;
 }
 
 /**
@@ -181,7 +182,19 @@ export async function runScamAlert(
       severity:     reason.severity,
     };
 
-    await sendScamAlertEmail(recipients, call);
+    try {
+      await sendScamAlertEmail(recipients, call);
+    } catch (err) {
+      // Stop here rather than throwing straight out: everything before this row already sent
+      // and must not be replayed on the next check. Returning the cursor as far as it got (instead
+      // of leaving it at the pre-loop value) lets the caller persist that partial progress even
+      // though this run is reported as failed; this row and anything after it stays unsent and
+      // will be retried five minutes from now.
+      return {
+        alerted, newCursor, recipients,
+        error: err instanceof Error ? err.message : 'Failed to send scam alert email',
+      };
+    }
     alerted += 1;
     newCursor = r.id;
   }

@@ -46,7 +46,11 @@ export async function getTargets(req: Request, res: Response): Promise<void> {
 }
 
 export async function list(_req: Request, res: Response): Promise<void> {
-  res.json({ data: await svc.listTasks() });
+  try {
+    res.json({ data: await svc.listTasks() });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to load tasks' });
+  }
 }
 
 export async function create(req: Request, res: Response): Promise<void> {

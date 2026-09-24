@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Loader2, KeyRound, User, Mail, CheckCircle2, XCircle, Camera, ServerCog, Bot } from 'lucide-react';
+import { Loader2, KeyRound, User, Mail, CheckCircle2, XCircle, Camera, ServerCog, Bot, FileSearch } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { getInitials, formatDate } from '@/lib/utils';
 import api from '@/lib/axios';
@@ -20,6 +20,14 @@ interface AiStatus {
   keySource: 'stored' | 'env' | 'none';
   keyPreview: string | null;
   baseUrl: string | null;
+  updatedByName: string | null;
+  updatedAt: string | null;
+}
+
+interface DeepgramStatus {
+  enabled: boolean;
+  keySource: 'stored' | 'env' | 'none';
+  keyPreview: string | null;
   updatedByName: string | null;
   updatedAt: string | null;
 }
@@ -51,10 +59,16 @@ export default function ProfilePage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const [deepgramStatus, setDeepgramStatus] = useState<DeepgramStatus | null>(null);
+  const [deepgramApiKey, setDeepgramApiKey] = useState('');
+  const [deepgramLoading, setDeepgramLoading] = useState(false);
+  const [deepgramResult, setDeepgramResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   useEffect(() => {
     if (user?.role !== 'super_admin') return;
     api.get<SmtpStatus>('/settings/smtp-status').then((r) => setSmtpStatus(r.data)).catch(() => {});
     api.get<AiStatus>('/settings/ai-status').then((r) => setAiStatus(r.data)).catch(() => {});
+    api.get<DeepgramStatus>('/settings/deepgram-status').then((r) => setDeepgramStatus(r.data)).catch(() => {});
   }, [user?.role]);
 
   const handleUpdateAiSettings = async (e: React.FormEvent) => {
@@ -74,6 +88,20 @@ export default function ProfilePage() {
       const m = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
       setAiResult({ type: 'error', text: m || 'Failed to update AI settings' });
     } finally { setAiLoading(false); }
+  };
+
+  const handleUpdateDeepgramSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDeepgramLoading(true); setDeepgramResult(null);
+    try {
+      await api.put('/settings/deepgram-settings', { apiKey: deepgramApiKey });
+      setDeepgramResult({ type: 'success', text: 'Deepgram key updated and verified — Call Audit will use it for the next transcription.' });
+      setDeepgramApiKey('');
+      api.get<DeepgramStatus>('/settings/deepgram-status').then((r) => setDeepgramStatus(r.data)).catch(() => {});
+    } catch (err: unknown) {
+      const m = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setDeepgramResult({ type: 'error', text: m || 'Failed to update Deepgram key' });
+    } finally { setDeepgramLoading(false); }
   };
 
   const handleUpdateSmtpPassword = async (e: React.FormEvent) => {
@@ -373,6 +401,58 @@ export default function ProfilePage() {
               <motion.button type="submit" disabled={aiLoading} whileTap={{ scale: 0.97 }}
                 className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-70">
                 {aiLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Bot className="h-4 w-4" /> Update</>}
+              </motion.button>
+            </form>
+          </div>
+        )}
+
+        {/* Call Audit Deepgram Key — super_admin only */}
+        {user?.role === 'super_admin' && (
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex items-center gap-2">
+              <FileSearch className="h-5 w-5 text-blue-600" />
+              <h3 className="font-bold text-slate-800">Call Audit — Transcription Key (Deepgram)</h3>
+              <span className="ml-auto rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-600 border border-blue-200">Admin</span>
+            </div>
+            <p className="mb-4 text-xs text-slate-500">
+              Call Audit Instant uses Deepgram to transcribe call recordings before CAM BOT audits them. Update the key
+              here if it's rotated or expired — it takes effect immediately, no redeploy needed.
+            </p>
+            {deepgramStatus && (
+              <div className="mb-4 rounded-lg bg-slate-50 px-4 py-3 text-xs text-slate-600 space-y-0.5">
+                <p>
+                  <span className="font-semibold text-slate-700">Status:</span>{' '}
+                  {deepgramStatus.enabled
+                    ? <span className="text-green-700">Active{deepgramStatus.keyPreview ? ` — key ending in ...${deepgramStatus.keyPreview}` : ''}</span>
+                    : <span className="text-red-600">No key configured — Call Audit transcription will fail until one is set</span>}
+                </p>
+                <p><span className="font-semibold text-slate-700">Key source:</span> {deepgramStatus.keySource === 'stored' ? 'Saved from this page' : deepgramStatus.keySource === 'env' ? 'Server .env default' : 'None'}</p>
+                {deepgramStatus.updatedAt && (
+                  <p><span className="font-semibold text-slate-700">Last updated:</span> {formatDate(deepgramStatus.updatedAt)} by {deepgramStatus.updatedByName || '—'}</p>
+                )}
+              </div>
+            )}
+            {deepgramResult && (
+              <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+                className={`mb-4 flex items-start gap-2 rounded-lg px-4 py-3 text-sm ${deepgramResult.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                {deepgramResult.type === 'success'
+                  ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+                  : <XCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+                {deepgramResult.text}
+              </motion.div>
+            )}
+            <form onSubmit={handleUpdateDeepgramSettings} className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="password"
+                placeholder="New Deepgram API key"
+                value={deepgramApiKey}
+                onChange={(e) => setDeepgramApiKey(e.target.value)}
+                required
+                className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+              />
+              <motion.button type="submit" disabled={deepgramLoading} whileTap={{ scale: 0.97 }}
+                className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-70">
+                {deepgramLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FileSearch className="h-4 w-4" /> Update</>}
               </motion.button>
             </form>
           </div>

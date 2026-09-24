@@ -14,12 +14,20 @@ const revokeSchema = z.object({
 });
 
 export async function list(_req: Request, res: Response): Promise<void> {
-  res.json(await svc.getAllDashboards());
+  try {
+    res.json(await svc.getAllDashboards());
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch dashboards' });
+  }
 }
 
 export async function myDashboards(req: Request, res: Response): Promise<void> {
-  const isSuperAdmin = req.user!.role === 'super_admin';
-  res.json(await svc.getMyDashboards(req.user!.id, isSuperAdmin));
+  try {
+    const isSuperAdmin = req.user!.role === 'super_admin';
+    res.json(await svc.getMyDashboards(req.user!.id, isSuperAdmin));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch dashboards' });
+  }
 }
 
 export async function grant(req: Request, res: Response): Promise<void> {
@@ -43,5 +51,11 @@ export async function revoke(req: Request, res: Response): Promise<void> {
 }
 
 export async function userAccess(req: Request, res: Response): Promise<void> {
-  res.json(await svc.getUserAccess(Number(req.params.userId)));
+  try {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) { res.status(400).json({ message: 'Invalid user id' }); return; }
+    res.json(await svc.getUserAccess(userId));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch user access' });
+  }
 }

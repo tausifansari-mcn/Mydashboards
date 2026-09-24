@@ -347,10 +347,16 @@ export async function runScamAlertTask(task: md_scheduled_tasks): Promise<string
   // switching it on watches from now on instead of mailing out months of history.
   const cursor = task.alert_cursor ?? await currentScamWatermark(clientId);
 
-  const { alerted, newCursor } = await runScamAlert(clientId, label, recipients, cursor);
+  const { alerted, newCursor, error } = await runScamAlert(clientId, label, recipients, cursor);
 
+  // Persist however far the watermark got even when a send failed partway through — otherwise
+  // the throw below (needed to mark this run as failed) would also lose the progress on the
+  // calls that already sent successfully, and the next check would re-mail those.
   if (newCursor !== task.alert_cursor) {
     await prisma.md_scheduled_tasks.update({ where: { id: task.id }, data: { alert_cursor: newCursor } });
+  }
+  if (error) {
+    throw new Error(alerted > 0 ? `Sent ${alerted} alert(s), then failed: ${error}` : error);
   }
   return alerted > 0
     ? `Sent ${alerted} scam alert${alerted === 1 ? '' : 's'} to ${recipients.length} recipient${recipients.length === 1 ? '' : 's'}`
@@ -453,27 +459,41 @@ export async function runTaskNow(id: number): Promise<void> {
 }
 
 // ─── Background job — runs every minute, executes anything due ────────────────
+// A single run can outlast the 60s tick (a report with several heavy CSV pages, or an SMTP
+// hiccup blocking on retries) — `next_run_at` is only pushed forward once a task actually
+// finishes, so without this guard an overlapping tick would re-select the same still-in-flight
+// task and fire its report/scam-alert email a second time concurrently. Skipping a whole tick
+// while one is already in progress costs nothing: the next tick a minute later still catches
+// anything left due.
+let isRunning = false;
+
 export async function checkAndRunDueTasks(): Promise<void> {
-  const due = await prisma.md_scheduled_tasks.findMany({
-    where: { is_active: true, next_run_at: { lte: new Date() } },
-  });
-  for (const task of due) {
-    // Alerts re-arm a few minutes out rather than at a clock time — they are a watcher, not a report.
-    const next_run_at = isScamAlert(task)
-      ? new Date(Date.now() + SCAM_ALERT_INTERVAL_MINUTES * 60_000)
-      : computeNextRun(task.frequency, task.time_of_day, task.day_of_week, task.day_of_month);
-    try {
-      const message = isScamAlert(task) ? await runScamAlertTask(task) : (await runTask(task), null);
-      await prisma.md_scheduled_tasks.update({
-        where: { id: task.id },
-        data: { last_run_at: new Date(), last_run_status: 'success', last_run_message: message, next_run_at },
-      });
-    } catch (err) {
-      await prisma.md_scheduled_tasks.update({
-        where: { id: task.id },
-        data: { last_run_at: new Date(), last_run_status: 'failed', last_run_message: err instanceof Error ? err.message : 'Unknown error', next_run_at },
-      });
+  if (isRunning) return;
+  isRunning = true;
+  try {
+    const due = await prisma.md_scheduled_tasks.findMany({
+      where: { is_active: true, next_run_at: { lte: new Date() } },
+    });
+    for (const task of due) {
+      // Alerts re-arm a few minutes out rather than at a clock time — they are a watcher, not a report.
+      const next_run_at = isScamAlert(task)
+        ? new Date(Date.now() + SCAM_ALERT_INTERVAL_MINUTES * 60_000)
+        : computeNextRun(task.frequency, task.time_of_day, task.day_of_week, task.day_of_month);
+      try {
+        const message = isScamAlert(task) ? await runScamAlertTask(task) : (await runTask(task), null);
+        await prisma.md_scheduled_tasks.update({
+          where: { id: task.id },
+          data: { last_run_at: new Date(), last_run_status: 'success', last_run_message: message, next_run_at },
+        });
+      } catch (err) {
+        await prisma.md_scheduled_tasks.update({
+          where: { id: task.id },
+          data: { last_run_at: new Date(), last_run_status: 'failed', last_run_message: err instanceof Error ? err.message : 'Unknown error', next_run_at },
+        });
+      }
     }
+  } finally {
+    isRunning = false;
   }
 }
 

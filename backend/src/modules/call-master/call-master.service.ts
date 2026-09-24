@@ -161,8 +161,14 @@ export async function getKPIs(filters: CallMasterFilters) {
     }
   }
 
-  // Platform stats
-  const activeClients = await prisma.md_clients.count({ where: { is_active: true } });
+  // Platform stats — scoped to the user's allowed clients so a restricted user's "Active Clients"
+  // KPI doesn't leak the total count of clients on the platform (super admins pass no clientIds
+  // and still see the unrestricted total).
+  const activeClients = await prisma.md_clients.count({
+    where: clientIds?.length
+      ? { is_active: true, dialdesk_client_id: { in: clientIds } }
+      : { is_active: true },
+  });
 
   // Active agents — LOB-aware: inbound=db_audit User, outbound=CallDetails AgentName, all=union
   let activeAgents = 0;

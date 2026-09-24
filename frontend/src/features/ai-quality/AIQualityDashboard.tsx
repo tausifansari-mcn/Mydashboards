@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import api from '@/lib/axios';
 import { useProcessStore } from '@/store/processStore';
+import { useUIStore } from '@/store/uiStore';
 
 function toLocalDT(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -116,7 +117,11 @@ export default function AIQualityDashboard() {
   const navigate = useNavigate();
   const { canAccessInboundClient, canAccessOutboundClient } = useProcessStore();
   const now = new Date();
-  const [activeSlide, setActiveSlide] = useState(0);
+  // Persisted (not local useState) so this survives opening a process (a separate route,
+  // /quality/:clientId) and coming back — this page fully unmounts/remounts on that round trip,
+  // and local state would otherwise always reset to Inbound.
+  const activeSlide = useUIStore(s => s.aiQualityActiveSlide);
+  const setActiveSlide = useUIStore(s => s.setAiQualityActiveSlide);
 
   const defaultStart = toLocalDT(new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0));
   const defaultEnd   = toLocalDT(now);

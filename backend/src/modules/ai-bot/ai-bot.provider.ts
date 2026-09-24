@@ -33,10 +33,16 @@ export interface ProviderTurn {
   stopReason: string;
 }
 
+// Both fields optional and default to CAM BOT's original behavior (1500 tokens, tools included) —
+// callers outside CAM BOT's own tool-calling loop (e.g. Call Audit, which wants a long structured
+// JSON reply and has no handler for a tool_use it can't execute) opt out explicitly instead of every
+// existing call site needing to change.
+export interface ChatOptions { maxTokens?: number; includeTools?: boolean }
+
 export interface AIProvider {
   readonly model: string;
   readonly enabled: boolean;
-  chat(system: string, messages: AIMessage[]): Promise<ProviderTurn>;
+  chat(system: string, messages: AIMessage[], opts?: ChatOptions): Promise<ProviderTurn>;
 }
 
 const ANTHROPIC_TOOLS = TOOL_DEFS.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters }));
@@ -46,7 +52,7 @@ class AnthropicProvider implements AIProvider {
   constructor(private apiKey: string, public model: string) {}
   readonly enabled = true;
 
-  async chat(system: string, messages: AIMessage[]): Promise<ProviderTurn> {
+  async chat(system: string, messages: AIMessage[], opts?: ChatOptions): Promise<ProviderTurn> {
     const wireMessages = messages.map(m => {
       if (m.role === 'assistant') {
         const content: unknown[] = [];
@@ -63,7 +69,10 @@ class AnthropicProvider implements AIProvider {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: this.model, max_tokens: 1500, system, messages: wireMessages, tools: ANTHROPIC_TOOLS }),
+      body: JSON.stringify({
+        model: this.model, max_tokens: opts?.maxTokens ?? 1500, system, messages: wireMessages,
+        ...(opts?.includeTools === false ? {} : { tools: ANTHROPIC_TOOLS }),
+      }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -89,7 +98,7 @@ class OpenAICompatibleProvider implements AIProvider {
   constructor(private apiKey: string, public model: string, private baseUrl: string) {}
   readonly enabled = true;
 
-  async chat(system: string, messages: AIMessage[]): Promise<ProviderTurn> {
+  async chat(system: string, messages: AIMessage[], opts?: ChatOptions): Promise<ProviderTurn> {
     const wireMessages: unknown[] = [{ role: 'system', content: system }];
     for (const m of messages) {
       if (m.role === 'assistant') {
@@ -111,7 +120,10 @@ class OpenAICompatibleProvider implements AIProvider {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({ model: this.model, max_tokens: 1500, messages: wireMessages, tools: OPENAI_TOOLS }),
+      body: JSON.stringify({
+        model: this.model, max_tokens: opts?.maxTokens ?? 1500, messages: wireMessages,
+        ...(opts?.includeTools === false ? {} : { tools: OPENAI_TOOLS }),
+      }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -135,7 +147,7 @@ class OpenAICompatibleProvider implements AIProvider {
 class NoKeyProvider implements AIProvider {
   readonly model = 'none';
   readonly enabled = false;
-  async chat(): Promise<ProviderTurn> {
+  async chat(_system?: string, _messages?: AIMessage[], _opts?: ChatOptions): Promise<ProviderTurn> {
     return { text: '', toolUses: [], stopReason: 'no_provider' };
   }
 }
@@ -162,6 +174,12 @@ let activeKeyPreview: string | null = null;
 let activeSource: 'stored' | 'env' | 'none' = 'none';
 let activeProviderName = 'anthropic';
 let activeBaseUrl: string | undefined;
+// The real key, kept only in this module-private variable — never returned by
+// getAIProviderStatus() (that's the masked-preview version for the Profile page). Other
+// server-side modules that need to call something the AIProvider interface doesn't expose (Call
+// Audit's audio transcription, which isn't a chat() call) read it via getActiveProviderConfig()
+// below; it must never be wired into an HTTP response.
+let activeApiKey: string | undefined;
 
 export function getAIProvider(): AIProvider {
   if (cached) return cached;
@@ -173,6 +191,7 @@ export function getAIProvider(): AIProvider {
   activeSource = apiKey ? 'env' : 'none';
   activeProviderName = providerName;
   activeBaseUrl = baseUrl;
+  activeApiKey = apiKey;
   return cached;
 }
 
@@ -185,6 +204,15 @@ export function setActiveProvider(provider: AIProvider, cfg: ProviderConfig, sou
   activeSource = source;
   activeProviderName = cfg.provider;
   activeBaseUrl = cfg.baseUrl;
+  activeApiKey = cfg.apiKey;
+}
+
+// Server-internal only — the real config, for modules that need to make a non-chat call (e.g.
+// audio transcription) against the exact same account CAM BOT is already configured with. Never
+// expose this over an API route.
+export function getActiveProviderConfig(): ProviderConfig {
+  getAIProvider(); // ensures the lazy env-based init above has run at least once
+  return { provider: activeProviderName, apiKey: activeApiKey, model: cached?.model, baseUrl: activeBaseUrl };
 }
 
 export function getAIProviderStatus(): {

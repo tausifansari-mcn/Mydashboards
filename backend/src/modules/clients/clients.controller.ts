@@ -10,16 +10,26 @@ const createSchema = z.object({
 });
 
 export async function list(req: Request, res: Response): Promise<void> {
-  const page = Number(req.query.page) || 1;
-  const limit = Number(req.query.limit) || 20;
-  const search = String(req.query.search || '');
-  res.json(await svc.getAllClients(page, limit, search));
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.max(1, Number(req.query.limit) || 20);
+    const search = String(req.query.search || '');
+    res.json(await svc.getAllClients(page, limit, search));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch clients' });
+  }
 }
 
 export async function getOne(req: Request, res: Response): Promise<void> {
-  const client = await svc.getClientById(Number(req.params.id));
-  if (!client) { res.status(404).json({ message: 'Client not found' }); return; }
-  res.json(client);
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ message: 'Invalid client id' }); return; }
+    const client = await svc.getClientById(id);
+    if (!client) { res.status(404).json({ message: 'Client not found' }); return; }
+    res.json(client);
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch client' });
+  }
 }
 
 export async function create(req: Request, res: Response): Promise<void> {
@@ -46,8 +56,13 @@ export async function update(req: Request, res: Response): Promise<void> {
 }
 
 export async function remove(req: Request, res: Response): Promise<void> {
-  const id = Number(req.params.id);
-  await svc.deleteClient(id);
-  await writeAuditLog({ userId: req.user!.id, action: 'DELETE_CLIENT', entityType: 'client', entityId: id });
-  res.json({ message: 'Client deactivated' });
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ message: 'Invalid client id' }); return; }
+    await svc.deleteClient(id);
+    await writeAuditLog({ userId: req.user!.id, action: 'DELETE_CLIENT', entityType: 'client', entityId: id });
+    res.json({ message: 'Client deactivated' });
+  } catch {
+    res.status(400).json({ message: 'Failed to deactivate client' });
+  }
 }

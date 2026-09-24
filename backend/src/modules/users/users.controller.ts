@@ -12,18 +12,28 @@ const createSchema = z.object({
 });
 
 export async function list(req: Request, res: Response): Promise<void> {
-  const page = Number(req.query.page) || 1;
-  const limit = Number(req.query.limit) || 20;
-  const search = String(req.query.search || '');
-  const roleFilter = req.query.role as string | undefined;
-  const clientFilter = req.query.client_id ? Number(req.query.client_id) : undefined;
-  res.json(await svc.getAllUsers(page, limit, roleFilter, clientFilter, search));
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.max(1, Number(req.query.limit) || 20);
+    const search = String(req.query.search || '');
+    const roleFilter = req.query.role as string | undefined;
+    const clientFilter = req.query.client_id ? Number(req.query.client_id) : undefined;
+    res.json(await svc.getAllUsers(page, limit, roleFilter, clientFilter, search));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch users' });
+  }
 }
 
 export async function getOne(req: Request, res: Response): Promise<void> {
-  const user = await svc.getUserById(Number(req.params.id));
-  if (!user) { res.status(404).json({ message: 'User not found' }); return; }
-  res.json(user);
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ message: 'Invalid user id' }); return; }
+    const user = await svc.getUserById(id);
+    if (!user) { res.status(404).json({ message: 'User not found' }); return; }
+    res.json(user);
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch user' });
+  }
 }
 
 export async function create(req: Request, res: Response): Promise<void> {
@@ -56,10 +66,15 @@ export async function update(req: Request, res: Response): Promise<void> {
 }
 
 export async function remove(req: Request, res: Response): Promise<void> {
-  const id = Number(req.params.id);
-  await svc.deleteUser(id);
-  await writeAuditLog({ userId: req.user!.id, action: 'DELETE_USER', entityType: 'user', entityId: id });
-  res.json({ message: 'User deactivated' });
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ message: 'Invalid user id' }); return; }
+    await svc.deleteUser(id);
+    await writeAuditLog({ userId: req.user!.id, action: 'DELETE_USER', entityType: 'user', entityId: id });
+    res.json({ message: 'User deactivated' });
+  } catch {
+    res.status(400).json({ message: 'Failed to deactivate user' });
+  }
 }
 
 export async function permanentDelete(req: Request, res: Response): Promise<void> {
@@ -85,23 +100,39 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
 }
 
 export async function getSaleBrands(req: Request, res: Response): Promise<void> {
-  res.json(await svc.getSaleBrands(Number(req.params.id)));
+  try {
+    res.json(await svc.getSaleBrands(Number(req.params.id)));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch sale brands' });
+  }
 }
 
 export async function setSaleBrands(req: Request, res: Response): Promise<void> {
-  const { brands } = z.object({ brands: z.array(z.string()) }).parse(req.body);
-  await svc.setSaleBrands(Number(req.params.id), brands);
-  res.json({ ok: true });
+  try {
+    const { brands } = z.object({ brands: z.array(z.string()) }).parse(req.body);
+    await svc.setSaleBrands(Number(req.params.id), brands);
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    res.status(400).json({ message: err instanceof Error ? err.message : 'Failed to update sale brands' });
+  }
 }
 
 export async function getSaleUploaderBrands(req: Request, res: Response): Promise<void> {
-  res.json(await svc.getSaleUploaderBrands(Number(req.params.id)));
+  try {
+    res.json(await svc.getSaleUploaderBrands(Number(req.params.id)));
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to fetch sale uploader brands' });
+  }
 }
 
 export async function setSaleUploaderBrands(req: Request, res: Response): Promise<void> {
-  const { brands } = z.object({ brands: z.array(z.string()) }).parse(req.body);
-  await svc.setSaleUploaderBrands(Number(req.params.id), brands);
-  res.json({ ok: true });
+  try {
+    const { brands } = z.object({ brands: z.array(z.string()) }).parse(req.body);
+    await svc.setSaleUploaderBrands(Number(req.params.id), brands);
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    res.status(400).json({ message: err instanceof Error ? err.message : 'Failed to update sale uploader brands' });
+  }
 }
 
 export async function getCallRecProcessCatalog(_req: Request, res: Response): Promise<void> {

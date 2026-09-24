@@ -69,14 +69,22 @@ function fmtDateShort(s: string) {
   const d = new Date(s + 'T00:00:00');
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
-function CQDateWiseTrendChart({ data, loading, color }: {
-  data: { date: string; auditCount: number; cqScore: number }[]; loading: boolean; color: string;
+function CQDateWiseTrendChart({ data, loading, color, filename }: {
+  data: { date: string; auditCount: number; cqScore: number }[]; loading: boolean; color: string; filename: string;
 }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
       <div className="px-5 py-3 flex items-center gap-2 border-b border-slate-200">
         <BarChart3 size={14} className="text-slate-500" />
         <span className="text-[11px] font-bold uppercase tracking-widest text-slate-600">Date-wise Audit Count &amp; CQ Score</span>
+        {!loading && data.length > 0 && (
+          <div className="ml-auto">
+            <ExportBtn onClick={() => downloadCSV(
+              data.map(d => ({ Date: d.date, 'Audit Count': d.auditCount, 'CQ Score %': `${d.cqScore}%` })),
+              filename,
+            )} title="Export date-wise CSV" />
+          </div>
+        )}
       </div>
       <div className="p-4">
         {loading ? (
@@ -959,9 +967,25 @@ function categoryIcon(category: string): string {
 const MS_LINE_COLOR = MS_COLORS.primary;
 const MS_CALLEND_GRADIENT = `linear-gradient(135deg, ${MS_COLORS.primary}, ${MS_COLORS.primaryDark})`;
 const MS_SUCCESS_GRADIENT = `linear-gradient(135deg, ${MS_COLORS.success}, ${MS_COLORS.successDark})`;
+const MS_CONTRIB_GRADIENT = `linear-gradient(135deg, #7C3AED, #5B21B6)`;
+const MS_WARNING_GRADIENT = `linear-gradient(135deg, ${MS_COLORS.warning}, #B45309)`;
+const MS_DANGER_GRADIENT = `linear-gradient(135deg, ${MS_COLORS.danger}, #B91C1C)`;
 // Kept for callers still passing a flat color into MSMetricPill's `bg` prop.
 const MS_CALLEND_BG = MS_CALLEND_GRADIENT;
 const MS_SUCCESS_BG = MS_SUCCESS_GRADIENT;
+
+// Threshold-based color so a pill's color reflects whether the number behind it is actually good or
+// bad, instead of every "rate" pill using the same static green regardless of value — a 20% success
+// rate shown in a "success" gradient reads as good when it isn't. `good`/`ok` are the two cutoffs
+// (>= good → green, >= ok → amber, below → red); callers pass thresholds appropriate to what the
+// percentage actually measures (a pass-rate and a sale-conversion rate mean very different things at
+// the same number).
+function pctColor(value: number, good: number, ok: number): string {
+  return value >= good ? MS_COLORS.success : value >= ok ? MS_COLORS.warning : MS_COLORS.danger;
+}
+function pctGradient(value: number, good: number, ok: number): string {
+  return value >= good ? MS_SUCCESS_GRADIENT : value >= ok ? MS_WARNING_GRADIENT : MS_DANGER_GRADIENT;
+}
 // Shared glass-card surface — the "premium SaaS" look: translucent white, blurred, soft shadow,
 // faint border. Reused for every card in the flow (stage boxes, KPI tiles, category cards).
 const MS_GLASS = 'backdrop-blur-xl border border-white/60 shadow-[0_4px_24px_-8px_rgba(15,23,42,0.12)]';
@@ -1076,11 +1100,15 @@ function MSFlowHeader({ cachedThrough, right }: { cachedThrough: string | null; 
 // preview) and expands on click to show the full script plus its Call End / Sale Done pills. Keeps
 // the tree scannable at a glance while still surfacing full detail on demand, per the "expandable
 // cards, not text boxes" ask.
-function MSBranchCard({ accent, icon, title, contributionPct, script, fallback, metrics, onMetricClick, onCallEndClick, delay, grown }: {
+function MSBranchCard({ accent, icon, title, contributionPct, script, fallback, metrics, onMetricClick, onCallEndClick, delay, grown, flagLabel }: {
   accent: string; icon: string; title: string; contributionPct: number;
   script: React.ReactNode; fallback?: React.ReactNode;
   metrics: { callEnd: number; saleDone: number; convPct: number };
   onMetricClick: () => void; onCallEndClick?: () => void; delay: number; grown: boolean;
+  // Set only on the single weakest-converting card among those visible, above a minimum volume
+  // floor — calls out where coaching would matter most instead of leaving the manager to compare
+  // every card's numbers themselves to spot it.
+  flagLabel?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -1088,8 +1116,13 @@ function MSBranchCard({ accent, icon, title, contributionPct, script, fallback, 
       style={{ opacity: grown ? 1 : 0, transform: grown ? 'translateY(0)' : 'translateY(12px)', transitionDuration: '500ms', transitionDelay: `${delay}ms` }}>
       <MSLine orientation="v" size={18} />
       <button onClick={() => setExpanded(v => !v)}
-        className={`w-full rounded-[20px] px-4 py-3 text-center transition-all duration-300 hover:-translate-y-0.5 ${MS_GLASS}`}
+        className={`relative w-full rounded-[20px] px-4 py-3 text-center transition-all duration-300 hover:-translate-y-0.5 ${MS_GLASS}`}
         style={{ background: `linear-gradient(135deg, ${accent}1c, ${accent}08)`, boxShadow: `0 4px 16px -6px ${accent}40` }}>
+        {flagLabel && (
+          <span className="absolute -top-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-red-500 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white shadow-sm">
+            ⚠ {flagLabel}
+          </span>
+        )}
         <div className="flex items-center justify-center gap-1.5">
           <span className="text-sm leading-none">{icon}</span>
           <p className="text-[11px] font-bold leading-tight" style={{ color: accent }}>{title}</p>
@@ -1114,7 +1147,7 @@ function MSBranchCard({ accent, icon, title, contributionPct, script, fallback, 
         </div>
         <div className="flex-1 flex flex-col items-center">
           <MSLine orientation="v" size={12} />
-          <MSMetricPill bg={MS_SUCCESS_GRADIENT} icon="💰" onClick={onMetricClick}>
+          <MSMetricPill bg={pctGradient(metrics.convPct, 15, 5)} icon="💰" onClick={onMetricClick}>
             <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Sale Done</p>
             <p className="text-sm font-black tabular-nums text-white leading-none">{metrics.saleDone.toLocaleString()} ({metrics.convPct}%)</p>
           </MSMetricPill>
@@ -1171,24 +1204,33 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
         <div className="flex flex-col gap-3 shrink-0" style={{ borderLeft: `2px solid ${MS_COLORS.primary}30`, minWidth: 220 }}>
           <div className="flex items-center">
             <MSLine size={16} />
-            <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞" onClick={onCallEndClick}>
+            <MSMetricPill bg={pctGradient(metrics.total_in > 0 ? 100 - Math.round((metrics.call_end / metrics.total_in) * 100) : 100, 70, 40)} icon="📞" onClick={onCallEndClick}>
               <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
               <p className="text-base font-black tabular-nums text-white leading-none">{metrics.call_end.toLocaleString()}/{metrics.total_in.toLocaleString()}</p>
             </MSMetricPill>
           </div>
           <div className="flex items-center">
             <MSLine size={16} />
-            <MSMetricPill bg={MS_SUCCESS_GRADIENT} icon="📈">
+            <MSMetricPill bg={pctGradient(metrics.success_rate, 70, 40)} icon="📈">
               <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Success Rate</p>
               <p className="text-base font-black tabular-nums text-white leading-none">{metrics.success_rate}%</p>
+            </MSMetricPill>
+          </div>
+          {/* Not just "did calls pass this stage" but "did passing this stage actually lead to a
+              sale" — the backend already computes this (contribution/contribution_rate) but it was
+              never surfaced, so a stage with a great pass rate but poor revenue payoff looked
+              identical to one that actually drives sales. */}
+          <div className="flex items-center">
+            <MSLine size={16} />
+            <MSMetricPill bg={MS_CONTRIB_GRADIENT} icon="💵">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Sales Contribution</p>
+              <p className="text-base font-black tabular-nums text-white leading-none">{metrics.contribution.toLocaleString()} ({metrics.contribution_rate}%)</p>
             </MSMetricPill>
           </div>
         </div>
       </div>
     </div>
   );
-
-  const CARD_ACCS = ['#1D4ED8', '#7C3AED', '#0891B2', '#D97706'];
 
   return (
     <>
@@ -1236,6 +1278,14 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
           {ms.categories.length > 0 && (() => {
             const visibleCategories = showAllCategories ? ms.categories : ms.categories.slice(0, 4);
             const hasMore = ms.categories.length > 4;
+            // Cards are ranked by call volume (unchanged), but the weakest-converting one among them
+            // is the one worth coaching against — flag it explicitly rather than relying on someone
+            // to spot the lowest number while scanning left to right. Floored at 5% contribution so
+            // a near-zero-volume category doesn't win the flag on a single unlucky call.
+            const flagWorthy = visibleCategories.filter(c => c.contribution_pct >= 5);
+            const focusCategory = flagWorthy.length > 0
+              ? flagWorthy.reduce((a, b) => (b.conv_pct < a.conv_pct ? b : a))
+              : null;
             return (
               <div className="mt-2">
                 <div className="flex justify-center"><MSLine orientation="v" size={22} /></div>
@@ -1246,8 +1296,9 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
                   style={showAllCategories ? undefined : { gridTemplateColumns: `repeat(${visibleCategories.length}, minmax(0, 1fr))` }}>
                   {visibleCategories.map((cat, i) => (
                     <MSBranchCard key={cat.category} delay={450 + i * 100} grown={grown}
-                      accent={CARD_ACCS[i % CARD_ACCS.length]} icon={categoryIcon(cat.category)}
+                      accent={pctColor(cat.conv_pct, 15, 5)} icon={categoryIcon(cat.category)}
                       title={cat.category} contributionPct={cat.contribution_pct}
+                      flagLabel={focusCategory?.category === cat.category ? 'Focus Area' : undefined}
                       script={cat.script ? <span style={{ whiteSpace: 'pre-line' }}>{cat.script}</span> : null}
                       fallback={cat.topContext ? (
                         <div>
@@ -1590,6 +1641,9 @@ export default function ProcessQualityDashboard() {
       navigate('/dashboard', { replace: true });
     }
   }, [processLoaded, clientId, canAccessOutboundClient, navigate]);
+  // Page-wide default: month-to-date. (The Agent-wise Parameters Score table on the Housing
+  // Premium CQ Score tab has its own independent "today by default" date range — see
+  // hpAgentStartDate/hpAgentEndDate below — so it doesn't need this one changed too.)
   const [startDate, setStartDate] = useState(
     toLocalDT(new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0))
   );
@@ -1697,7 +1751,9 @@ export default function ProcessQualityDashboard() {
       .catch(() => setBellavitaCQ(null));
   }, [isBellavita, clientId, sd, ed, campaignQs]);
 
-  type BellavitaParamRates = { opening: number; offered: number; objectionHandling: number; prepaidPitch: number; upsellingEfforts: number; offerUrgency: number };
+  // bellacash: null = no applicable data (this agent/period has no calls on/after the date Bellacash
+  // started being scored) — distinct from a real 0% rate.
+  type BellavitaParamRates = { opening: number; offered: number; objectionHandling: number; prepaidPitch: number; upsellingEfforts: number; offerUrgency: number; bellacash: number | null };
   const [bellavitaCQDetails, setBellavitaCQDetails] = useState<{
     totalCalls: number;
     paramPassRate: BellavitaParamRates;
@@ -1720,7 +1776,8 @@ export default function ProcessQualityDashboard() {
       .catch(() => setHousingPremiumCQ(null));
   }, [isHousingPremium, clientId, sd, ed, campaignQs]);
 
-  type HousingPremiumParamRates = { opening: number; offered: number; objectionHandling: number; prepaidPitch: number; upsellingEfforts: number; offerUrgency: number };
+  // prepaidPitch removed: excluded from Housing Premium's CQ Score per explicit instruction.
+  type HousingPremiumParamRates = { opening: number; offered: number; objectionHandling: number; upsellingEfforts: number; offerUrgency: number };
   const [housingPremiumCQDetails, setHousingPremiumCQDetails] = useState<{
     totalCalls: number;
     paramPassRate: HousingPremiumParamRates;
@@ -1729,6 +1786,15 @@ export default function ProcessQualityDashboard() {
   const [housingPremiumCQDetailsLoading, setHousingPremiumCQDetailsLoading] = useState(false);
   const [housingPremiumCQDateWise, setHousingPremiumCQDateWise] = useState<CQDateWiseRow[]>([]);
   const [housingPremiumCQDateWiseLoading, setHousingPremiumCQDateWiseLoading] = useState(false);
+  // Independent of the page-wide date filter above — lets a manager check today's agent-wise
+  // breakdown specifically without also changing the CQ Score Overview/trend chart's range.
+  // Defaults to today, same as the page-wide filter.
+  const [hpAgentStartDate, setHpAgentStartDate] = useState(
+    toLocalDT(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0))
+  );
+  const [hpAgentEndDate, setHpAgentEndDate] = useState(toLocalDT(now));
+  const hpAgentSd = hpAgentStartDate.replace('T', ' ');
+  const hpAgentEd = hpAgentEndDate.replace('T', ' ');
 
   // GNC (clientId 409) CQ Score — same 6-parameter shape as Bellavita's/Housing Premium's.
   const isGnc = clientId === '409';
@@ -1743,7 +1809,9 @@ export default function ProcessQualityDashboard() {
       .catch(() => setGncCQ(null));
   }, [isGnc, clientId, sd, ed, campaignQs]);
 
-  type GncParamRates = { opening: number; offered: number; objectionHandling: number; prepaidPitch: number; upsellingEfforts: number; offerUrgency: number };
+  // offerUrgency deliberately excluded: same thing as offered for this client's process.
+  // rewardPoint: null = no applicable data — see BellavitaParamRates.bellacash for why.
+  type GncParamRates = { opening: number; offered: number; objectionHandling: number; prepaidPitch: number; upsellingEfforts: number; rewardPoint: number | null };
   const [gncCQDetails, setGncCQDetails] = useState<{
     totalCalls: number;
     paramPassRate: GncParamRates;
@@ -1754,19 +1822,19 @@ export default function ProcessQualityDashboard() {
   const [gncCQDateWiseLoading, setGncCQDateWiseLoading] = useState(false);
 
   const [exportingProcess, setExportingProcess] = useState(false);
-  const handleExportProcess = async () => {
+  const handleExportProcess = async (mode?: 'required') => {
     if (!clientId) return;
     setExportingProcess(true);
     try {
       const res = await api.get(
-        `/quality/export-all-csv?clientId=${clientId}&startDate=${encodeURIComponent(sd)}&endDate=${encodeURIComponent(ed)}`,
+        `/quality/export-all-csv?clientId=${clientId}&startDate=${encodeURIComponent(sd)}&endDate=${encodeURIComponent(ed)}${mode ? `&mode=${mode}` : ''}`,
         { responseType: 'blob' },
       );
       const blob = new Blob([res.data as BlobPart], { type: 'text/csv' });
       const objUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = objUrl;
-      a.download = `outbound-${clientId}-export-${sd.slice(0, 10)}_to_${ed.slice(0, 10)}.csv`;
+      a.download = `outbound-${mode === 'required' ? 'required-' : ''}${clientId}-export-${sd.slice(0, 10)}_to_${ed.slice(0, 10)}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1816,10 +1884,14 @@ export default function ProcessQualityDashboard() {
   useEffect(() => {
     if (!isHousingPremium || !clientId || activeSlide !== 9) return;
     setHousingPremiumCQDetailsLoading(true);
-    api.get<{ data: typeof housingPremiumCQDetails }>(`/quality/housing-premium-cq-score/details?startDate=${sd}&endDate=${ed}${campaignQs}`)
+    api.get<{ data: typeof housingPremiumCQDetails }>(`/quality/housing-premium-cq-score/details?startDate=${hpAgentSd}&endDate=${hpAgentEd}${campaignQs}`)
       .then(r => setHousingPremiumCQDetails(r.data?.data ?? null))
       .catch(() => setHousingPremiumCQDetails(null))
       .finally(() => setHousingPremiumCQDetailsLoading(false));
+  }, [isHousingPremium, clientId, activeSlide, hpAgentSd, hpAgentEd, campaignQs]);
+
+  useEffect(() => {
+    if (!isHousingPremium || !clientId || activeSlide !== 9) return;
     setHousingPremiumCQDateWiseLoading(true);
     api.get<{ data: CQDateWiseRow[] }>(`/quality/housing-premium-cq-score/date-wise?startDate=${sd}&endDate=${ed}${campaignQs}`)
       .then(r => setHousingPremiumCQDateWise(r.data?.data ?? []))
@@ -1828,12 +1900,18 @@ export default function ProcessQualityDashboard() {
   }, [isHousingPremium, clientId, activeSlide, sd, ed, campaignQs]);
 
   useEffect(() => {
-    if (!isGnc || !clientId || activeSlide !== 10) return;
+    // Also needed on slide 11 (AI Compliance & SOP's Live SOP Compliance section), which reuses
+    // this same data instead of fetching its own copy.
+    if (!isGnc || !clientId || (activeSlide !== 10 && activeSlide !== 11)) return;
     setGncCQDetailsLoading(true);
     api.get<{ data: typeof gncCQDetails }>(`/quality/gnc-cq-score/details?startDate=${sd}&endDate=${ed}${campaignQs}`)
       .then(r => setGncCQDetails(r.data?.data ?? null))
       .catch(() => setGncCQDetails(null))
       .finally(() => setGncCQDetailsLoading(false));
+  }, [isGnc, clientId, activeSlide, sd, ed, campaignQs]);
+
+  useEffect(() => {
+    if (!isGnc || !clientId || activeSlide !== 10) return;
     setGncCQDateWiseLoading(true);
     api.get<{ data: CQDateWiseRow[] }>(`/quality/gnc-cq-score/date-wise?startDate=${sd}&endDate=${ed}${campaignQs}`)
       .then(r => setGncCQDateWise(r.data?.data ?? []))
@@ -2190,13 +2268,26 @@ export default function ProcessQualityDashboard() {
             </>
           )}
           <div className="ml-auto flex items-center gap-3">
-            <button onClick={handleExportProcess} disabled={exportingProcess}
+            <button onClick={() => handleExportProcess()} disabled={exportingProcess}
               title="Export all columns for this process and date range"
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-wait"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', color: '#fff' }}>
               {exportingProcess ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
               {exportingProcess ? 'Exporting…' : 'Export Data'}
             </button>
+            {/* "Required columns" is only a defined, correct export for Bellavita and GNC — each has
+                its own dedicated column list matching its own CQ formula (see
+                BELLAVITA_REQUIRED_EXPORT_COLUMNS/GNC_REQUIRED_EXPORT_COLUMNS backend-side). Other
+                clients used to silently get Bellavita's list mislabeled onto their own data. */}
+            {(isBellavita || isGnc) && (
+              <button onClick={() => handleExportProcess('required')} disabled={exportingProcess}
+                title="Export only required columns (Agent, Mobile, params, CQ Score, Call Closing, Transcript, AOI)"
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-wait"
+                style={{ backgroundColor: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', color: '#fff' }}>
+                {exportingProcess ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                {exportingProcess ? 'Exporting…' : 'Export Required Columns'}
+              </button>
+            )}
             {(loading || magicalLoading || customerInsightsLoading) && (
               <div className="flex items-center gap-2">
                 <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
@@ -2295,6 +2386,7 @@ export default function ProcessQualityDashboard() {
             ...(isBellavita ? [{ id: 11, label: 'AI Compliance & SOP' }] : []),
             ...(isHousingPremium ? [{ id: 9, label: 'CQ Score' }] : []),
             ...(isGnc ? [{ id: 10, label: 'CQ Score' }] : []),
+            ...(isGnc ? [{ id: 11, label: 'AI Compliance & SOP' }] : []),
             ...(canViewRawData ? [{ id: 6, label: 'Raw Data' }] : []),
           ];
           const SLIDES = hideMagicalScript ? ALL_SLIDES.filter(s => s.id !== 0) : ALL_SLIDES;
@@ -4549,7 +4641,7 @@ export default function ProcessQualityDashboard() {
                 </div>
               </div>
 
-              <CQDateWiseTrendChart data={housingOwnerCQDateWise} loading={housingOwnerCQDateWiseLoading} color="#1565C0" />
+              <CQDateWiseTrendChart data={housingOwnerCQDateWise} loading={housingOwnerCQDateWiseLoading} color="#1565C0" filename="housing-owner-date-wise-cq-score.csv" />
 
               {/* Agent-wise Parameters Score */}
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
@@ -4659,6 +4751,7 @@ export default function ProcessQualityDashboard() {
             { key: 'objectionHandling', label: 'Objection Handling' },
             { key: 'prepaidPitch', label: 'Prepaid Pitch' },
             { key: 'upsellingEfforts', label: 'Upselling Efforts' },
+            { key: 'bellacash', label: 'Bellacash' },
           ];
           const filteredCqAgents = (bellavitaCQDetails?.byAgent ?? []).filter(a =>
             a.agentName.toLowerCase().includes(cqAgentSearch.trim().toLowerCase()));
@@ -4673,8 +4766,11 @@ export default function ProcessQualityDashboard() {
             return { text: `rgb(${r},${g},${b})`, bg: `rgba(${r},${g},${b},0.14)` };
           };
           const weakestParams = (a: (typeof filteredCqAgents)[number]) => {
-            const min = Math.min(...PARAM_LABELS.map(p => a[p.key]));
-            return { min, labels: PARAM_LABELS.filter(p => a[p.key] === min).map(p => p.label) };
+            // Null (no applicable data, e.g. Bellacash for a pre-cutover period) never counts toward
+            // "weakest" — it isn't a bad score, there's simply nothing scored yet.
+            const applicable = PARAM_LABELS.filter(p => a[p.key] != null) as { key: typeof PARAM_LABELS[number]['key']; label: string }[];
+            const min = applicable.length ? Math.min(...applicable.map(p => a[p.key] as number)) : 100;
+            return { min, labels: applicable.filter(p => a[p.key] === min).map(p => p.label) };
           };
           return (
             <div className="flex flex-col gap-4">
@@ -4684,7 +4780,7 @@ export default function ProcessQualityDashboard() {
                   <Target size={14} className="text-white" />
                   <span className="text-[11px] font-bold uppercase tracking-widest text-white">CQ Score Overview</span>
                   <span className="ml-auto text-[9px] text-white/75 font-semibold">
-                    (Opening + Offered + ObjectionHandling + PrepaidPitch + UpsellingEfforts + OfferUrgency) ÷ 6
+                    (Opening + Offered + ObjectionHandling + PrepaidPitch + UpsellingEfforts + OfferUrgency + Bellacash*) ÷ 7 · *from Sep 24, 2026
                   </span>
                 </div>
                 <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
@@ -4713,16 +4809,17 @@ export default function ProcessQualityDashboard() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
                       {PARAM_LABELS.map(({ key, label }) => {
-                        const pct = bellavitaCQDetails?.paramPassRate[key] ?? 0;
-                        const color = pct >= 85 ? '#22b990' : pct >= 60 ? '#eea12b' : '#e8607d';
+                        const pct = bellavitaCQDetails?.paramPassRate[key];
+                        const hasData = pct != null;
+                        const color = !hasData ? '#94A3B8' : pct >= 85 ? '#22b990' : pct >= 60 ? '#eea12b' : '#e8607d';
                         return (
                           <div key={key}>
                             <div className="flex items-center justify-between mb-1">
                               <span className="text-[11px] font-semibold text-slate-700">{label}</span>
-                              <span className="text-[11px] font-black" style={{ color }}>{pct}%</span>
+                              <span className="text-[11px] font-black" style={{ color }}>{hasData ? `${pct}%` : '—'}</span>
                             </div>
                             <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
-                              <div className="h-full rounded-full" style={{ width: `${Math.min(100, pct)}%`, background: color }} />
+                              <div className="h-full rounded-full" style={{ width: hasData ? `${Math.min(100, pct)}%` : '0%', background: color }} />
                             </div>
                           </div>
                         );
@@ -4732,7 +4829,7 @@ export default function ProcessQualityDashboard() {
                 </div>
               </div>
 
-              <CQDateWiseTrendChart data={bellavitaCQDateWise} loading={bellavitaCQDateWiseLoading} color="#7C3AED" />
+              <CQDateWiseTrendChart data={bellavitaCQDateWise} loading={bellavitaCQDateWiseLoading} color="#7C3AED" filename="bellavita-date-wise-cq-score.csv" />
 
               {/* Agent-wise Parameters Score */}
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
@@ -4751,6 +4848,7 @@ export default function ProcessQualityDashboard() {
                         Agent: a.agentName, Calls: a.callCount,
                         Opening: `${a.opening}%`, Offered: `${a.offered}%`, 'Objection Handling': `${a.objectionHandling}%`,
                         'Prepaid Pitch': `${a.prepaidPitch}%`, 'Upselling Efforts': `${a.upsellingEfforts}%`,
+                        Bellacash: a.bellacash != null ? `${a.bellacash}%` : '',
                         'Overall CQ %': `${a.overallScore}%`,
                         'Weakest Area': weak.min < 100 ? `${weak.labels.join(', ')} (${weak.min}%)` : '',
                       };
@@ -4793,12 +4891,13 @@ export default function ProcessQualityDashboard() {
                             <td className="px-3 py-2.5 text-right text-slate-500 tabular-nums border-b border-slate-100">{a.callCount}</td>
                             {PARAM_LABELS.map(({ key }) => {
                               const pct = a[key];
-                              const c = heatColor(pct);
+                              const hasData = pct != null;
+                              const c = hasData ? heatColor(pct) : { text: '#94A3B8', bg: 'rgba(148,163,184,0.14)' };
                               return (
                                 <td key={key} className="px-2 py-2 text-center border-b border-slate-100">
                                   <span className="inline-block min-w-[46px] px-1.5 py-0.5 rounded-md text-[10.5px] font-bold tabular-nums"
                                     style={{ color: c.text, backgroundColor: c.bg }}>
-                                    {pct}%
+                                    {hasData ? `${pct}%` : '—'}
                                   </span>
                                 </td>
                               );
@@ -4836,13 +4935,85 @@ export default function ProcessQualityDashboard() {
           <BellavitaComplianceDashboard />
         )}
 
+        {/* ─── Slide 11: AI Compliance & SOP (GNC only) ────────────────────────
+            Deliberately just the "Live SOP Compliance" section, not the full Bellavita compliance
+            page — GNC has no ingestion-based 50-parameter audit system, fraud-call insights or
+            payment-pitch tracking behind it (per explicit scope decision). Reuses gncCQDetails,
+            already fetched for the CQ Score tab — no separate data fetch needed. */}
+        {activeSlide === 11 && isGnc && (() => {
+          const fmtN = (n: number) => n.toLocaleString('en-IN');
+          const tierColor = (pct: number | null | undefined) =>
+            pct == null ? '#94A3B8' : pct >= 80 ? '#16A34A' : pct >= 60 ? '#D97706' : '#DC2626';
+          return (
+            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 border-b border-slate-100">
+                <ListChecks size={13} className="text-amber-600" />
+                <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500 flex-1">Live SOP Compliance (real graded calls)</p>
+                <span className="text-[10px] text-slate-400">
+                  {gncCQDetails ? `${fmtN(gncCQDetails.totalCalls)} calls in SOP` : ''}
+                </span>
+              </div>
+              {gncCQDetailsLoading && !gncCQDetails ? (
+                <div className="flex items-center justify-center py-10"><Loader2 size={20} className="animate-spin text-slate-400" /></div>
+              ) : !gncCQDetails || gncCQDetails.totalCalls === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400">No graded calls in this period yet.</div>
+              ) : (
+                <div className="p-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                    {[
+                      { label: 'Opening', pct: gncCQDetails.paramPassRate.opening },
+                      { label: 'Offered', pct: gncCQDetails.paramPassRate.offered },
+                      { label: 'Objection Handling', pct: gncCQDetails.paramPassRate.objectionHandling },
+                      { label: 'Prepaid Pitch', pct: gncCQDetails.paramPassRate.prepaidPitch },
+                      { label: 'Upselling Efforts', pct: gncCQDetails.paramPassRate.upsellingEfforts },
+                      { label: 'Reward Point', pct: gncCQDetails.paramPassRate.rewardPoint },
+                    ].map(({ label, pct }) => (
+                      <div key={label} className="rounded-xl p-3 border border-slate-200">
+                        <p className="text-[10px] font-semibold text-slate-500 mb-1">{label}</p>
+                        <p className="text-lg font-black tabular-nums" style={{ color: tierColor(pct) }}>{pct != null ? `${pct}%` : '—'}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-100">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-slate-50">
+                        <tr>
+                          <th className="text-left px-3 py-1.5 text-slate-400 font-semibold">Agent</th>
+                          <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Calls</th>
+                          <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Opening</th>
+                          <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Offered</th>
+                          <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Prepaid</th>
+                          <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Reward Point</th>
+                          <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Overall</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gncCQDetails.byAgent.slice(0, 25).map(a => (
+                          <tr key={a.agentId} className="border-t border-slate-50 hover:bg-slate-50/50">
+                            <td className="px-3 py-1.5 text-slate-700">{a.agentName}</td>
+                            <td className="px-3 py-1.5 text-right text-slate-500 tabular-nums">{a.callCount}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: tierColor(a.opening) }}>{a.opening}%</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: tierColor(a.offered) }}>{a.offered}%</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: tierColor(a.prepaidPitch) }}>{a.prepaidPitch}%</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: tierColor(a.rewardPoint) }}>{a.rewardPoint != null ? `${a.rewardPoint}%` : '—'}</td>
+                            <td className="px-3 py-1.5 text-right font-bold tabular-nums" style={{ color: tierColor(a.overallScore) }}>{a.overallScore}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* ─── Slide 9: CQ Score (Housing Premium only) ────────────────────── */}
         {activeSlide === 9 && isHousingPremium && clientId && (() => {
           const PARAM_LABELS: { key: keyof NonNullable<typeof housingPremiumCQDetails>['paramPassRate']; label: string }[] = [
             { key: 'opening', label: 'Opening' },
             { key: 'offered', label: 'Offered' },
             { key: 'objectionHandling', label: 'Objection Handling' },
-            { key: 'prepaidPitch', label: 'Prepaid Pitch' },
             { key: 'upsellingEfforts', label: 'Upselling Efforts' },
             { key: 'offerUrgency', label: 'Offer Urgency' },
           ];
@@ -4870,7 +5041,7 @@ export default function ProcessQualityDashboard() {
                   <Target size={14} className="text-white" />
                   <span className="text-[11px] font-bold uppercase tracking-widest text-white">CQ Score Overview</span>
                   <span className="ml-auto text-[9px] text-white/75 font-semibold">
-                    (Opening + Offered + ObjectionHandling + PrepaidPitch + UpsellingEfforts + OfferUrgency) ÷ 6
+                    (Opening + Offered + ObjectionHandling + UpsellingEfforts + OfferUrgency) ÷ 5
                   </span>
                 </div>
                 <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
@@ -4918,12 +5089,20 @@ export default function ProcessQualityDashboard() {
                 </div>
               </div>
 
-              <CQDateWiseTrendChart data={housingPremiumCQDateWise} loading={housingPremiumCQDateWiseLoading} color="#0891B2" />
+              <CQDateWiseTrendChart data={housingPremiumCQDateWise} loading={housingPremiumCQDateWiseLoading} color="#0891B2" filename="housing-premium-date-wise-cq-score.csv" />
 
               {/* Agent-wise Parameters Score */}
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-                <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200">
+                <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200 flex-wrap">
                   <span className="text-[11px] font-bold uppercase tracking-widest text-slate-600">Agent-wise Parameters Score</span>
+                  <div className="flex items-center gap-1.5 ml-2">
+                    <label className="text-[10px] text-slate-500 font-medium">From</label>
+                    <input type="datetime-local" value={hpAgentStartDate} onChange={e => setHpAgentStartDate(e.target.value)}
+                      className="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-[11px] text-slate-900 font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all" />
+                    <label className="text-[10px] text-slate-500 font-medium">To</label>
+                    <input type="datetime-local" value={hpAgentEndDate} onChange={e => setHpAgentEndDate(e.target.value)}
+                      className="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-[11px] text-slate-900 font-medium focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all" />
+                  </div>
                   <div className="relative ml-2">
                     <input value={cqAgentSearch} onChange={e => setCqAgentSearch(e.target.value)}
                       placeholder="Filter by agent name…"
@@ -4936,12 +5115,12 @@ export default function ProcessQualityDashboard() {
                       return {
                         Agent: a.agentName, Calls: a.callCount,
                         Opening: `${a.opening}%`, Offered: `${a.offered}%`, 'Objection Handling': `${a.objectionHandling}%`,
-                        'Prepaid Pitch': `${a.prepaidPitch}%`, 'Upselling Efforts': `${a.upsellingEfforts}%`, 'Offer Urgency': `${a.offerUrgency}%`,
+                        'Upselling Efforts': `${a.upsellingEfforts}%`, 'Offer Urgency': `${a.offerUrgency}%`,
                         'Overall CQ %': `${a.overallScore}%`,
                         'Weakest Area': weak.min < 100 ? `${weak.labels.join(', ')} (${weak.min}%)` : '',
                       };
                     }),
-                    'housing-premium-agent-wise-parameters-score.csv',
+                    `housing-premium-agent-wise-parameters-score-${hpAgentSd.slice(0, 10)}_to_${hpAgentEd.slice(0, 10)}.csv`,
                   )} />
                 </div>
                 <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
@@ -4959,11 +5138,11 @@ export default function ProcessQualityDashboard() {
                     </thead>
                     <tbody>
                       {housingPremiumCQDetailsLoading ? (
-                        <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-400 border-b border-slate-100">
+                        <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-400 border-b border-slate-100">
                           <Loader2 size={16} className="inline animate-spin mr-2" /> Loading...
                         </td></tr>
                       ) : filteredCqAgents.length === 0 ? (
-                        <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-400 border-b border-slate-100">No agents match this period/filter.</td></tr>
+                        <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-400 border-b border-slate-100">No agents match this period/filter.</td></tr>
                       ) : filteredCqAgents.map((a, i) => {
                         const overallC = heatColor(a.overallScore);
                         const weak = weakestParams(a);
@@ -5025,7 +5204,7 @@ export default function ProcessQualityDashboard() {
             { key: 'objectionHandling', label: 'Objection Handling' },
             { key: 'prepaidPitch', label: 'Prepaid Pitch' },
             { key: 'upsellingEfforts', label: 'Upselling Efforts' },
-            { key: 'offerUrgency', label: 'Offer Urgency' },
+            { key: 'rewardPoint', label: 'Reward Point' },
           ];
           const filteredCqAgents = (gncCQDetails?.byAgent ?? []).filter(a =>
             a.agentName.toLowerCase().includes(cqAgentSearch.trim().toLowerCase()));
@@ -5040,8 +5219,11 @@ export default function ProcessQualityDashboard() {
             return { text: `rgb(${r},${g},${b})`, bg: `rgba(${r},${g},${b},0.14)` };
           };
           const weakestParams = (a: (typeof filteredCqAgents)[number]) => {
-            const min = Math.min(...PARAM_LABELS.map(p => a[p.key]));
-            return { min, labels: PARAM_LABELS.filter(p => a[p.key] === min).map(p => p.label) };
+            // Null (no applicable data, e.g. Reward Point for a pre-cutover period) never counts
+            // toward "weakest" — it isn't a bad score, there's simply nothing scored yet.
+            const applicable = PARAM_LABELS.filter(p => a[p.key] != null) as { key: typeof PARAM_LABELS[number]['key']; label: string }[];
+            const min = applicable.length ? Math.min(...applicable.map(p => a[p.key] as number)) : 100;
+            return { min, labels: applicable.filter(p => a[p.key] === min).map(p => p.label) };
           };
           return (
             <div className="flex flex-col gap-4">
@@ -5051,7 +5233,7 @@ export default function ProcessQualityDashboard() {
                   <Target size={14} className="text-white" />
                   <span className="text-[11px] font-bold uppercase tracking-widest text-white">CQ Score Overview</span>
                   <span className="ml-auto text-[9px] text-white/75 font-semibold">
-                    (Opening + Offered + ObjectionHandling + PrepaidPitch + UpsellingEfforts + OfferUrgency) ÷ 6
+                    (Opening + Offered + ObjectionHandling + PrepaidPitch + UpsellingEfforts + RewardPoint*) ÷ 6 · *from Sep 24, 2026
                   </span>
                 </div>
                 <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
@@ -5080,16 +5262,17 @@ export default function ProcessQualityDashboard() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
                       {PARAM_LABELS.map(({ key, label }) => {
-                        const pct = gncCQDetails?.paramPassRate[key] ?? 0;
-                        const color = pct >= 85 ? '#22b990' : pct >= 60 ? '#eea12b' : '#e8607d';
+                        const pct = gncCQDetails?.paramPassRate[key];
+                        const hasData = pct != null;
+                        const color = !hasData ? '#94A3B8' : pct >= 85 ? '#22b990' : pct >= 60 ? '#eea12b' : '#e8607d';
                         return (
                           <div key={key}>
                             <div className="flex items-center justify-between mb-1">
                               <span className="text-[11px] font-semibold text-slate-700">{label}</span>
-                              <span className="text-[11px] font-black" style={{ color }}>{pct}%</span>
+                              <span className="text-[11px] font-black" style={{ color }}>{hasData ? `${pct}%` : '—'}</span>
                             </div>
                             <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
-                              <div className="h-full rounded-full" style={{ width: `${Math.min(100, pct)}%`, background: color }} />
+                              <div className="h-full rounded-full" style={{ width: hasData ? `${Math.min(100, pct)}%` : '0%', background: color }} />
                             </div>
                           </div>
                         );
@@ -5099,7 +5282,7 @@ export default function ProcessQualityDashboard() {
                 </div>
               </div>
 
-              <CQDateWiseTrendChart data={gncCQDateWise} loading={gncCQDateWiseLoading} color="#D97706" />
+              <CQDateWiseTrendChart data={gncCQDateWise} loading={gncCQDateWiseLoading} color="#D97706" filename="gnc-date-wise-cq-score.csv" />
 
               {/* Agent-wise Parameters Score */}
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
@@ -5117,7 +5300,8 @@ export default function ProcessQualityDashboard() {
                       return {
                         Agent: a.agentName, Calls: a.callCount,
                         Opening: `${a.opening}%`, Offered: `${a.offered}%`, 'Objection Handling': `${a.objectionHandling}%`,
-                        'Prepaid Pitch': `${a.prepaidPitch}%`, 'Upselling Efforts': `${a.upsellingEfforts}%`, 'Offer Urgency': `${a.offerUrgency}%`,
+                        'Prepaid Pitch': `${a.prepaidPitch}%`, 'Upselling Efforts': `${a.upsellingEfforts}%`,
+                        'Reward Point': a.rewardPoint != null ? `${a.rewardPoint}%` : '',
                         'Overall CQ %': `${a.overallScore}%`,
                         'Weakest Area': weak.min < 100 ? `${weak.labels.join(', ')} (${weak.min}%)` : '',
                       };
@@ -5160,12 +5344,13 @@ export default function ProcessQualityDashboard() {
                             <td className="px-3 py-2.5 text-right text-slate-500 tabular-nums border-b border-slate-100">{a.callCount}</td>
                             {PARAM_LABELS.map(({ key }) => {
                               const pct = a[key];
-                              const c = heatColor(pct);
+                              const hasData = pct != null;
+                              const c = hasData ? heatColor(pct) : { text: '#94A3B8', bg: 'rgba(148,163,184,0.14)' };
                               return (
                                 <td key={key} className="px-2 py-2 text-center border-b border-slate-100">
                                   <span className="inline-block min-w-[46px] px-1.5 py-0.5 rounded-md text-[10.5px] font-bold tabular-nums"
                                     style={{ color: c.text, backgroundColor: c.bg }}>
-                                    {pct}%
+                                    {hasData ? `${pct}%` : '—'}
                                   </span>
                                 </td>
                               );

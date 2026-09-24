@@ -832,7 +832,7 @@ export async function getSaleDoneCalls(filters: QualityFilters): Promise<SaleDon
     WHERE cd.MobileNo IS NOT NULL AND cd.MobileNo != ''
       AND cd.CustomerObjectionCategory IS NOT NULL AND cd.CustomerObjectionCategory != ''
       AND COALESCE(cd.SaleDone, 0) = 1
-      AND cd.CallDate BETWEEN ? AND ? ${cf}${campF}${campF}
+      AND cd.CallDate BETWEEN ? AND ? ${cf}${campF}
     ORDER BY cd.CallDate DESC
     LIMIT 500
   `, params);
@@ -3613,22 +3613,49 @@ export async function getHousingOwnerCQScoreDetails(filters: QualityFilters): Pr
 }
 
 // ─── Bellavita CQ Score (Opening/Offered/ObjectionHandling/PrepaidPitch/UpsellingEfforts/
-// OfferUrgency) ─────────────────────────────────────────
-// Per explicit instruction: sum these 6 as 0/1 flags and divide by 6, unweighted. PrepaidPitch
+// OfferUrgency/Acknowledgement) ─────────────────────────────────────────
+// Per explicit instruction: sum these as 0/1 flags and divide by the count, unweighted. PrepaidPitch
 // stores free-text pitch excerpts for this client rather than a bare 0/1 flag — reusing the same
 // "blank/None/0 → 0, anything else → 1" convention call-master.service.ts already applies
-// generically to these exact columns (obFlagCase), here applied uniformly across all 6 so any of
-// them being free text (not just PrepaidPitch) still scores correctly.
-const BELLAVITA_CQ_PARAMS = ['Opening', 'Offered', 'ObjectionHandling', 'PrepaidPitch', 'UpsellingEfforts', 'OfferUrgency'] as const;
+// generically to these exact columns (obFlagCase), here applied uniformly across all of them so any
+// being free text (not just PrepaidPitch) still scores correctly.
+// Acknowledgement is displayed/exported as "Bellacash" for this client specifically (see PARAM
+// label mapping below and exportSelectExpr's header override) — same underlying CallDetails column
+// as every other client, just this client's own name for what it represents.
+const BELLAVITA_CQ_PARAMS = ['Opening', 'Offered', 'ObjectionHandling', 'PrepaidPitch', 'UpsellingEfforts', 'OfferUrgency', 'Acknowledgement'] as const;
 
 function bellavitaFlagCase(alias: string, col: string): string {
   const c = `${alias}.${col}`;
   return `(CASE WHEN ${c} IS NULL OR TRIM(${c}) = '' OR LOWER(TRIM(${c})) IN ('none','na','n/a','null','0') THEN 0 ELSE 1 END)`;
 }
 
+// Bellacash (Bellavita) / Reward Point (GNC) went live as a SCORED CQ parameter on this date — per
+// explicit instruction, calls before it must not count it at all (not even as a fail), even though
+// the underlying Acknowledgement column already carries data further back from unrelated earlier
+// use. A fixed calendar date, not "today" — a rolling CURDATE() cutover would silently un-count
+// yesterday's calls the moment the clock ticks past midnight, which is never the intent of "start
+// counting this from today."
+const ACKNOWLEDGEMENT_PARAM_START_DATE = '2026-09-24';
+
+// Same 0/1 flag as bellavitaFlagCase, but NULL (not 0) for any row before
+// ACKNOWLEDGEMENT_PARAM_START_DATE, so AVG() silently excludes those rows from a rate calculation
+// instead of counting them as a fail — used only for the Acknowledgement/Bellacash/Reward Point
+// column specifically, never the other CQ parameters.
+function dateGatedFlagCase(alias: string, col: string, dateCol: string): string {
+  return `(CASE WHEN ${alias}.${dateCol} >= '${ACKNOWLEDGEMENT_PARAM_START_DATE}' THEN ${bellavitaFlagCase(alias, col)} ELSE NULL END)`;
+}
+
 function bellavitaCQExpr(alias = 'cd'): string {
-  const flagSum = BELLAVITA_CQ_PARAMS.map(c => bellavitaFlagCase(alias, c)).join(' + ');
-  return `((${flagSum}) / 6)`;
+  // Acknowledgement/Bellacash is excluded from BOTH the numerator and the divisor for calls before
+  // its start date — a call from before the cutover is still scored out of 6 (its original, real
+  // formula), not out of 7 with an automatic miss for a parameter that didn't apply to it yet.
+  const coreParams = BELLAVITA_CQ_PARAMS.filter(c => c !== 'Acknowledgement');
+  const coreSum = coreParams.map(c => bellavitaFlagCase(alias, c)).join(' + ');
+  const ackFlag = bellavitaFlagCase(alias, 'Acknowledgement');
+  return `(CASE WHEN ${alias}.CallDate >= '${ACKNOWLEDGEMENT_PARAM_START_DATE}'
+    THEN ((${coreSum}) + ${ackFlag}) / ${BELLAVITA_CQ_PARAMS.length}
+    ELSE (${coreSum}) / ${coreParams.length}
+  END)`;
 }
 
 // Same gate as Housing Owner's: a call where the agent never logged Offered (or has no MobileNo)
@@ -3700,6 +3727,9 @@ export interface BellavitaCQParamSummary {
   prepaidPitch: number;
   upsellingEfforts: number;
   offerUrgency: number;
+  // null = no applicable data — the whole selected range (or this agent's calls in it) falls before
+  // ACKNOWLEDGEMENT_PARAM_START_DATE, so there is nothing to average, not a 0% rate.
+  bellacash: number | null;
 }
 export interface BellavitaAgentParamRow extends BellavitaCQParamSummary {
   agentId: string;
@@ -3724,16 +3754,16 @@ export async function getBellavitaCQScoreDetails(filters: QualityFilters): Promi
   const params = [startDate, endDate, ...campParams];
   const perCallScore = bellavitaCQExpr('cd');
   const rateExprs = BELLAVITA_CQ_PARAMS
-    .map(c => `ROUND(AVG(${bellavitaFlagCase('cd', c)}) * 100, 1) AS ${c.toLowerCase()}_rate`)
+    .map(c => `ROUND(AVG(${c === 'Acknowledgement' ? dateGatedFlagCase('cd', c, 'CallDate') : bellavitaFlagCase('cd', c)}) * 100, 1) AS ${c.toLowerCase()}_rate`)
     .join(',\n      ');
 
-  const [summaryRow] = await querySource<{ total_calls: number } & Record<string, number>>(`
+  const [summaryRow] = await querySource<{ total_calls: number } & Record<string, number | null>>(`
     SELECT COUNT(*) AS total_calls, ${rateExprs}
     FROM db_external.CallDetails cd FORCE INDEX (Index_3)
     WHERE ${baseWhere}
   `, params);
 
-  const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; overall_score: number | null } & Record<string, number>>(`
+  const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; overall_score: number | null } & Record<string, number | null>>(`
     SELECT
       cd.AgentName AS agent_id,
       COALESCE(am.AgentName, cd.AgentName) AS agent_name,
@@ -3757,6 +3787,7 @@ export async function getBellavitaCQScoreDetails(filters: QualityFilters): Promi
       prepaidPitch: Number(summaryRow?.prepaidpitch_rate ?? 0),
       upsellingEfforts: Number(summaryRow?.upsellingefforts_rate ?? 0),
       offerUrgency: Number(summaryRow?.offerurgency_rate ?? 0),
+      bellacash: summaryRow?.acknowledgement_rate != null ? Number(summaryRow.acknowledgement_rate) : null,
     },
     byAgent: agentRows.map(r => ({
       agentId: String(r.agent_id),
@@ -3768,23 +3799,23 @@ export async function getBellavitaCQScoreDetails(filters: QualityFilters): Promi
       prepaidPitch: Number(r.prepaidpitch_rate ?? 0),
       upsellingEfforts: Number(r.upsellingefforts_rate ?? 0),
       offerUrgency: Number(r.offerurgency_rate ?? 0),
+      bellacash: r.acknowledgement_rate != null ? Number(r.acknowledgement_rate) : null,
       overallScore: Number(r.overall_score ?? 0),
     })),
   };
 }
 
-// ─── Housing Premium CQ Score (Opening/Offered/ObjectionHandling/PrepaidPitch/UpsellingEfforts/
-// OfferUrgency) ─────────────────────────────────────────
-// Same 6 parameters, same formula and same "blank/None/0 → 0, anything else → 1" flag rule as
-// Bellavita's CQ Score above (reuses bellavitaFlagCase — it's generic, not Bellavita-specific) —
-// per explicit instruction, Housing Premium's Opening/ObjectionHandling/PrepaidPitch store free
-// text (visible directly in the export/raw data) rather than a bare 0/1 flag, same shape as
-// Bellavita's PrepaidPitch.
-const HOUSING_PREMIUM_CQ_PARAMS = ['Opening', 'Offered', 'ObjectionHandling', 'PrepaidPitch', 'UpsellingEfforts', 'OfferUrgency'] as const;
+// ─── Housing Premium CQ Score (Opening/Offered/ObjectionHandling/UpsellingEfforts/OfferUrgency) ──
+// PrepaidPitch deliberately excluded — per explicit instruction, removed from Housing Premium's
+// scoring entirely. Same "blank/None/0 → 0, anything else → 1" flag rule as Bellavita's CQ Score
+// above (reuses bellavitaFlagCase — it's generic, not Bellavita-specific) — per earlier explicit
+// instruction, Housing Premium's Opening/ObjectionHandling store free text (visible directly in the
+// export/raw data) rather than a bare 0/1 flag, same shape as Bellavita's PrepaidPitch used to.
+const HOUSING_PREMIUM_CQ_PARAMS = ['Opening', 'Offered', 'ObjectionHandling', 'UpsellingEfforts', 'OfferUrgency'] as const;
 
 function housingPremiumCQExpr(alias = 'cd'): string {
   const flagSum = HOUSING_PREMIUM_CQ_PARAMS.map(c => bellavitaFlagCase(alias, c)).join(' + ');
-  return `((${flagSum}) / 6)`;
+  return `((${flagSum}) / ${HOUSING_PREMIUM_CQ_PARAMS.length})`;
 }
 
 const HOUSING_PREMIUM_CQ_VALID_CALL_CLAUSE = `
@@ -3850,7 +3881,7 @@ export interface HousingPremiumCQParamSummary {
   opening: number;
   offered: number;
   objectionHandling: number;
-  prepaidPitch: number;
+  // prepaidPitch removed: excluded from Housing Premium's CQ Score per explicit instruction.
   upsellingEfforts: number;
   offerUrgency: number;
 }
@@ -3907,7 +3938,6 @@ export async function getHousingPremiumCQScoreDetails(filters: QualityFilters): 
       opening: Number(summaryRow?.opening_rate ?? 0),
       offered: Number(summaryRow?.offered_rate ?? 0),
       objectionHandling: Number(summaryRow?.objectionhandling_rate ?? 0),
-      prepaidPitch: Number(summaryRow?.prepaidpitch_rate ?? 0),
       upsellingEfforts: Number(summaryRow?.upsellingefforts_rate ?? 0),
       offerUrgency: Number(summaryRow?.offerurgency_rate ?? 0),
     },
@@ -3918,7 +3948,6 @@ export async function getHousingPremiumCQScoreDetails(filters: QualityFilters): 
       opening: Number(r.opening_rate ?? 0),
       offered: Number(r.offered_rate ?? 0),
       objectionHandling: Number(r.objectionhandling_rate ?? 0),
-      prepaidPitch: Number(r.prepaidpitch_rate ?? 0),
       upsellingEfforts: Number(r.upsellingefforts_rate ?? 0),
       offerUrgency: Number(r.offerurgency_rate ?? 0),
       overallScore: Number(r.overall_score ?? 0),
@@ -3926,14 +3955,28 @@ export async function getHousingPremiumCQScoreDetails(filters: QualityFilters): 
   };
 }
 
-// ─── GNC CQ Score (Opening/Offered/ObjectionHandling/PrepaidPitch/UpsellingEfforts/OfferUrgency) ─
-// Same 6 parameters, same formula and same "blank/None/0 → 0, anything else → 1" flag rule as
+// ─── GNC CQ Score (Opening/Offered/ObjectionHandling/PrepaidPitch/UpsellingEfforts/OfferUrgency/
+// Acknowledgement) ─
+// Same parameters, same formula and same "blank/None/0 → 0, anything else → 1" flag rule as
 // Bellavita/Housing Premium above (reuses bellavitaFlagCase — it's generic, not Bellavita-specific).
-const GNC_CQ_PARAMS = ['Opening', 'Offered', 'ObjectionHandling', 'PrepaidPitch', 'UpsellingEfforts', 'OfferUrgency'] as const;
+// Acknowledgement is displayed/exported as "Reward Point" for this client — same underlying
+// CallDetails column Bellavita calls "Bellacash", just this client's own name for it.
+// OfferUrgency deliberately excluded for GNC — per explicit instruction, it and Offered represent
+// the same thing for this client's process (confirmed the two columns diverge on ~16% of calls,
+// i.e. it's inconsistent data entry rather than a meaningfully distinct parameter, not a case of
+// them being trivially identical) — Offered alone is the parameter that matters here.
+const GNC_CQ_PARAMS = ['Opening', 'Offered', 'ObjectionHandling', 'PrepaidPitch', 'UpsellingEfforts', 'Acknowledgement'] as const;
 
 function gncCQExpr(alias = 'cd'): string {
-  const flagSum = GNC_CQ_PARAMS.map(c => bellavitaFlagCase(alias, c)).join(' + ');
-  return `((${flagSum}) / 6)`;
+  // Same date-gated treatment as Bellavita's Acknowledgement/Bellacash — see
+  // ACKNOWLEDGEMENT_PARAM_START_DATE above. Excluded from both numerator and divisor before it.
+  const coreParams = GNC_CQ_PARAMS.filter(c => c !== 'Acknowledgement');
+  const coreSum = coreParams.map(c => bellavitaFlagCase(alias, c)).join(' + ');
+  const ackFlag = bellavitaFlagCase(alias, 'Acknowledgement');
+  return `(CASE WHEN ${alias}.CallDate >= '${ACKNOWLEDGEMENT_PARAM_START_DATE}'
+    THEN ((${coreSum}) + ${ackFlag}) / ${GNC_CQ_PARAMS.length}
+    ELSE (${coreSum}) / ${coreParams.length}
+  END)`;
 }
 
 const GNC_CQ_VALID_CALL_CLAUSE = `
@@ -4001,7 +4044,9 @@ export interface GncCQParamSummary {
   objectionHandling: number;
   prepaidPitch: number;
   upsellingEfforts: number;
-  offerUrgency: number;
+  // offerUrgency removed: explicitly the same thing as `offered` for this client's process.
+  // null = no applicable data — see BellavitaCQParamSummary.bellacash for why.
+  rewardPoint: number | null;
 }
 export interface GncAgentParamRow extends GncCQParamSummary {
   agentId: string;
@@ -4026,16 +4071,16 @@ export async function getGncCQScoreDetails(filters: QualityFilters): Promise<Gnc
   const params = [startDate, endDate, ...campParams];
   const perCallScore = gncCQExpr('cd');
   const rateExprs = GNC_CQ_PARAMS
-    .map(c => `ROUND(AVG(${bellavitaFlagCase('cd', c)}) * 100, 1) AS ${c.toLowerCase()}_rate`)
+    .map(c => `ROUND(AVG(${c === 'Acknowledgement' ? dateGatedFlagCase('cd', c, 'CallDate') : bellavitaFlagCase('cd', c)}) * 100, 1) AS ${c.toLowerCase()}_rate`)
     .join(',\n      ');
 
-  const [summaryRow] = await querySource<{ total_calls: number } & Record<string, number>>(`
+  const [summaryRow] = await querySource<{ total_calls: number } & Record<string, number | null>>(`
     SELECT COUNT(*) AS total_calls, ${rateExprs}
     FROM db_external.CallDetails cd FORCE INDEX (Index_3)
     WHERE ${baseWhere}
   `, params);
 
-  const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; overall_score: number | null } & Record<string, number>>(`
+  const agentRows = await querySource<{ agent_id: string; agent_name: string | null; call_count: number; overall_score: number | null } & Record<string, number | null>>(`
     SELECT
       cd.AgentName AS agent_id,
       COALESCE(am.AgentName, cd.AgentName) AS agent_name,
@@ -4058,7 +4103,7 @@ export async function getGncCQScoreDetails(filters: QualityFilters): Promise<Gnc
       objectionHandling: Number(summaryRow?.objectionhandling_rate ?? 0),
       prepaidPitch: Number(summaryRow?.prepaidpitch_rate ?? 0),
       upsellingEfforts: Number(summaryRow?.upsellingefforts_rate ?? 0),
-      offerUrgency: Number(summaryRow?.offerurgency_rate ?? 0),
+      rewardPoint: summaryRow?.acknowledgement_rate != null ? Number(summaryRow.acknowledgement_rate) : null,
     },
     byAgent: agentRows.map(r => ({
       agentId: String(r.agent_id),
@@ -4069,7 +4114,7 @@ export async function getGncCQScoreDetails(filters: QualityFilters): Promise<Gnc
       objectionHandling: Number(r.objectionhandling_rate ?? 0),
       prepaidPitch: Number(r.prepaidpitch_rate ?? 0),
       upsellingEfforts: Number(r.upsellingefforts_rate ?? 0),
-      offerUrgency: Number(r.offerurgency_rate ?? 0),
+      rewardPoint: r.acknowledgement_rate != null ? Number(r.acknowledgement_rate) : null,
       overallScore: Number(r.overall_score ?? 0),
     })),
   };
@@ -4172,26 +4217,114 @@ function exportSelectExpr(col: string, tableAlias: string): string {
       ELSE NULL
     END) AS CQScore`;
   }
+  if (col === 'BellavitaPrepaidFatal') {
+    // Per explicit instruction: a Bellavita Outbound call where PrepaidPitch was never delivered
+    // (blank/None — the same "not done" convention as bellavitaFlagCase's 0 case) is a fatal call.
+    // 1 = fatal (PrepaidPitch missing), 0 = not fatal (PrepaidPitch present). Not a real CallDetails
+    // column — a virtual export column, only meaningful for this client's required-columns export.
+    return `(1 - ${bellavitaFlagCase(tableAlias, 'PrepaidPitch')}) AS BellavitaPrepaidFatal`;
+  }
   return `${tableAlias}.${col}`;
 }
 
+export interface ExportColumn { header: string; col: string; }
+
+// Bellavita (375) "required columns" export — a trimmed-out version of the full export for the
+// second Export button. AOI here means Area for Improvement → AreaForImprovement, Transcript →
+// TranscribeText. The rest share their name with the CallDetails column. CQScore is derived.
+const BELLAVITA_REQUIRED_EXPORT_COLUMNS: ExportColumn[] = [
+  { header: 'CallDate',           col: 'CallDate' },
+  { header: 'AgentName',          col: 'AgentName' },
+  { header: 'MobileNo',           col: 'MobileNo' },
+  { header: 'Opening',            col: 'Opening' },
+  { header: 'Offered',            col: 'Offered' },
+  { header: 'ObjectionHandling',  col: 'ObjectionHandling' },
+  { header: 'PrepaidPitch',       col: 'PrepaidPitch' },
+  { header: 'UpsellingEfforts',   col: 'UpsellingEfforts' },
+  { header: 'OfferUrgency',       col: 'OfferUrgency' },
+  { header: 'Bellacash',          col: 'Acknowledgement' },
+  { header: 'CQScore',            col: 'CQScore' },
+  // Per explicit instruction: Call_Closing replaced with a computed Fatal flag — PrepaidPitch
+  // missing (blank/None, same convention as the CQ score's own pass/fail rule) makes the call
+  // fatal. See exportSelectExpr's 'BellavitaPrepaidFatal' case for the actual 0/1 logic.
+  { header: 'Fatal',              col: 'BellavitaPrepaidFatal' },
+  { header: 'Transcript',         col: 'TranscribeText' },
+  { header: 'AOI',                col: 'AreaForImprovement' },
+];
+
+// GNC's own required-columns list — was previously (bug) always falling back to Bellavita's list
+// above regardless of which client asked, which meant a GNC "required" export showed a spurious
+// "OfferUrgency" column GNC's own CQ formula doesn't use, and mislabeled Acknowledgement as
+// "Bellacash" instead of "Reward Point". Mirrors GNC's real 6-parameter formula exactly.
+const GNC_REQUIRED_EXPORT_COLUMNS: ExportColumn[] = [
+  { header: 'CallDate',           col: 'CallDate' },
+  { header: 'AgentName',          col: 'AgentName' },
+  { header: 'MobileNo',           col: 'MobileNo' },
+  { header: 'Opening',            col: 'Opening' },
+  { header: 'Offered',            col: 'Offered' },
+  { header: 'ObjectionHandling',  col: 'ObjectionHandling' },
+  { header: 'PrepaidPitch',       col: 'PrepaidPitch' },
+  { header: 'UpsellingEfforts',   col: 'UpsellingEfforts' },
+  { header: 'Reward Point',       col: 'Acknowledgement' },
+  { header: 'CQScore',            col: 'CQScore' },
+  { header: 'Call_Closing',       col: 'Call_Closing' },
+  { header: 'Transcript',         col: 'TranscribeText' },
+  { header: 'AOI',                col: 'AreaForImprovement' },
+];
+
+// "Required columns" mode is only meaningfully defined for Bellavita (375) and GNC (409) — each has
+// its own column list above, matching its own CQ formula. Requested for any other client (or an
+// unrestricted/multi-client export), it silently falls back to the full export instead of showing
+// one client's column set mislabeled on a different client's data — that was the actual bug this
+// replaced (every client's "required" export used to show Bellavita's list, header names and all).
 export async function streamOutboundExportCsv(
-  res: Response, startDate: string, endDate: string, clientIds: number[] | null,
+  res: Response, startDate: string, endDate: string, clientIds: number[] | null, mode?: 'required',
 ): Promise<void> {
-  const fname = `outbound-export-${startDate.slice(0, 10)}_to_${endDate.slice(0, 10)}.csv`;
+  const singleClientId = clientIds?.length === 1 ? clientIds[0] : null;
+  const requiredCols = singleClientId === 375 ? BELLAVITA_REQUIRED_EXPORT_COLUMNS
+    : singleClientId === 409 ? GNC_REQUIRED_EXPORT_COLUMNS
+    : null;
+  const isRequired = mode === 'required' && requiredCols !== null;
+  // "Acknowledgement" is the same CallDetails column for every client, but Bellavita and GNC each
+  // have their own name for what it represents on their CQ Score page (Bellacash / Reward Point
+  // respectively) — only rename the export header when the export is scoped to exactly one of
+  // those two clients; an unrestricted/multi-client export keeps the raw column name since there's
+  // no single correct rename for a CSV spanning other clients too.
+  const acknowledgementHeader = singleClientId === 375 ? 'Bellacash' : singleClientId === 409 ? 'Reward Point' : 'Acknowledgement';
+  const cols: ExportColumn[] = isRequired && requiredCols
+    ? requiredCols
+    : CALL_DETAILS_EXPORT_COLUMNS.map(c => ({ header: c === 'Acknowledgement' ? acknowledgementHeader : c, col: c }));
+  const fname = `outbound${isRequired ? '-required' : ''}-export-${startDate.slice(0, 10)}_to_${endDate.slice(0, 10)}.csv`;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
   // UTF-8 BOM — without it, Excel misdetects the encoding and garbles the Hindi/Hinglish text that
   // shows up throughout TranscribeText and the other free-text columns (what looked like "wrong"
   // transcript content was actually a mojibake rendering issue, not bad data).
   res.write(Buffer.from([0xEF, 0xBB, 0xBF]));
-  res.write(CALL_DETAILS_EXPORT_COLUMNS.join(',') + '\n');
+  res.write(cols.map(c => c.header).join(',') + '\n');
 
   // clientIds === null → unrestricted (super_admin); [] → no accessible clients at all → empty export
   const clientFilter = clientIds !== null
     ? (clientIds.length ? ` AND cd.client_id IN (${clientIds.map(() => '?').join(',')})` : ' AND 1 = 0')
     : '';
   const clientParams: number[] = clientIds ?? [];
+
+  // Skip rows whose computed CQ Score is 0 (every scored param was blank/"none", so the call
+  // effectively failed every checklist item) — using whichever client's real formula applies here,
+  // not always Bellavita's (that was the same bug as the column-list one above).
+  const scoreFilter = isRequired ? ` AND ${singleClientId === 409 ? gncCQExpr('cd') : bellavitaCQExpr('cd')} > 0` : '';
+
+  // The keyset-pagination cursor below reads rows[...].id every batch — but BELLAVITA_REQUIRED_
+  // EXPORT_COLUMNS/GNC_REQUIRED_EXPORT_COLUMNS (unlike the full CALL_DETAILS_EXPORT_COLUMNS list)
+  // don't include 'id' as a visible column, so without this the SELECT never actually returned it:
+  // rows[...].id was always undefined, lastId became NaN, and any "required" export over one 2000-
+  // row batch would silently loop on (or drop past) the same first batch forever. Only add it when
+  // `cols` doesn't already select it itself (the full export already does).
+  const needsIdForPagination = !cols.some(c => c.col === 'id');
+  const selectList = [
+    ...(needsIdForPagination ? ['cd.id'] : []),
+    ...cols.map(c => exportSelectExpr(c.col, 'cd')),
+  ].join(', ');
 
   const BATCH = 2000;
   let lastId = 0;
@@ -4204,17 +4337,17 @@ export async function streamOutboundExportCsv(
     // first batch, so the export silently returns just the header row. Forcing the CallDate
     // index turns it into a cheap index-range scan (~33K rows examined) instead.
     const rows = await querySource<Record<string, unknown>>(`
-      SELECT ${CALL_DETAILS_EXPORT_COLUMNS.map(c => exportSelectExpr(c, 'cd')).join(', ')}
+      SELECT ${selectList}
       FROM db_external.CallDetails cd FORCE INDEX (Index_3)
       LEFT JOIN db_masmis.AgentMaster am ON am.MasId = cd.AgentName COLLATE utf8mb4_unicode_ci
-      WHERE cd.id > ? AND cd.CallDate BETWEEN ? AND ? ${clientFilter}
+      WHERE cd.id > ? AND cd.CallDate BETWEEN ? AND ? ${clientFilter}${scoreFilter}
       ORDER BY cd.id ASC
       LIMIT ${BATCH}
     `, [lastId, startDate, endDate, ...clientParams]);
 
     if (rows.length === 0) break;
     for (const r of rows) {
-      res.write(CALL_DETAILS_EXPORT_COLUMNS.map(c => csvEscape(r[c])).join(',') + '\n');
+      res.write(cols.map(c => csvEscape(r[c.col])).join(',') + '\n');
     }
     lastId = Number(rows[rows.length - 1].id);
     if (rows.length < BATCH) break;

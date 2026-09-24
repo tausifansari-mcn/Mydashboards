@@ -1043,7 +1043,7 @@ export async function uploadBellavitaRepeatAllocation(rows: BellavitaRepeatAlloc
 // ─── Repeat Allocation ──────────────────────────────────────────────────────
 // Bellavita "Repeat Allocation" = bvo_order_export rows for a picked date, kept only where the
 // customer's phone (shipping_phone_2) was actually called (matched in bvo_Repeat_cdr on
-// PhoneNumber), and only the ones not already sitting in bvo_Repeat_allocation from an earlier run
+// PhoneNumber), and only the ones not already sitting in bvo_repeat_allocation from an earlier run
 // — a phone gets allocated exactly once, ever (enforced by the table's own unique key too). The
 // "latest" subquery collapses bvo_order_export down to one row per phone for the picked date, since
 // a repeat customer can have more than one order-export row on the same day.
@@ -1079,13 +1079,13 @@ export async function createBellavitaRepeatAllocation(
       JOIN (${ORDER_EXPORT_LATEST_FOR_DATE}) latest
         ON latest.shipping_phone_2 = oe.shipping_phone_2 AND latest.max_id = oe.id
       INNER JOIN db_masmis.bvo_Repeat_cdr cdr ON cdr.PhoneNumber = oe.shipping_phone_2
-      INNER JOIN db_masmis.bvo_Repeat_allocation existing ON existing.phone_number = oe.shipping_phone_2
+      INNER JOIN db_masmis.bvo_repeat_allocation existing ON existing.phone_number = oe.shipping_phone_2
     ) t
   `, [orderDateDMY]);
   const alreadyAllocated = Number(alreadyRow?.c ?? 0);
 
   const [result] = await getMasmisPool().query(`
-    INSERT IGNORE INTO db_masmis.bvo_Repeat_allocation (
+    INSERT IGNORE INTO db_masmis.bvo_repeat_allocation (
       phone_number, name, email, financial_status, total, discount_code, created_at_raw,
       lineitem_name, shipping_name, shipping_zip, tags, shipping_city, shipping_province_name,
       order_date, call_status, agent, created_by, RawDate
@@ -1098,7 +1098,7 @@ export async function createBellavitaRepeatAllocation(
     JOIN (${ORDER_EXPORT_LATEST_FOR_DATE}) latest
       ON latest.shipping_phone_2 = oe.shipping_phone_2 AND latest.max_id = oe.id
     INNER JOIN db_masmis.bvo_Repeat_cdr cdr ON cdr.PhoneNumber = oe.shipping_phone_2
-    LEFT JOIN db_masmis.bvo_Repeat_allocation existing ON existing.phone_number = oe.shipping_phone_2
+    LEFT JOIN db_masmis.bvo_repeat_allocation existing ON existing.phone_number = oe.shipping_phone_2
     WHERE existing.id IS NULL
   `, [createdBy, rawDateISO, orderDateDMY]);
   const inserted = (result as mysql.ResultSetHeader).affectedRows;
@@ -1167,7 +1167,7 @@ export async function streamBellavitaRepeatAllocationCsv(res: Response, startDat
   for (;;) {
     const rows = await queryMasmis<Record<string, unknown>>(`
       SELECT ${selectCols}
-      FROM db_masmis.bvo_Repeat_allocation
+      FROM db_masmis.bvo_repeat_allocation
       WHERE id > ? AND RawDate BETWEEN ? AND ?
       ORDER BY id ASC
       LIMIT ${BATCH}

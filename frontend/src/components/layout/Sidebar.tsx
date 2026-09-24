@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, Building2, LogOut,
   ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck,
   PhoneCall, Phone, ChevronDown, BarChart3, Package, X, CalendarClock,
-  UploadCloud, Activity, Bot,
+  UploadCloud, Activity, Bot, FileSearch,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -21,6 +21,7 @@ const BASE_LINKS = [
   { to: '/sales',     icon: Package,         labelAdmin: 'Sales',    labelClient: 'Sales',    requireSlug: 'sales' },
   { to: '/quality',   icon: BarChart3,       labelAdmin: 'AI Quality', labelClient: 'AI Quality', requireSlug: 'quality' },
   { to: '/ai-quality-copilot', icon: Bot, labelAdmin: 'CAM BOT', labelClient: 'CAM BOT', requireSlug: 'ai-quality-copilot' },
+  { to: '/call-audit', icon: FileSearch, labelAdmin: 'Call Audit Instant', labelClient: 'Call Audit Instant', requireSlug: 'call-audit' },
 ];
 
 const TASK_SCHEDULER_LINK = { to: '/admin/task-scheduler', icon: CalendarClock, label: 'Task Scheduler' };
