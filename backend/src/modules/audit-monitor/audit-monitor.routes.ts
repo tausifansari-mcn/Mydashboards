@@ -6,7 +6,7 @@ import * as ctrl from './audit-monitor.controller';
 
 const router = Router();
 
-router.use(verifyToken, injectTenant, requireRole('super_admin', 'admin', 'manager', 'qa'));
+router.use(verifyToken, injectTenant, requireRole('super_admin', 'client_admin', 'manager', 'qa'));
 
 router.get('/overview',    ctrl.getOverview);
 router.get('/timeline',    ctrl.getTimeline);

@@ -924,16 +924,109 @@ function MSBranchCard({ accent, icon, title, contributionPct, script, fallback, 
   );
 }
 
-function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSaleDoneClick, onCallEndClick, onStageCallEndClick }: {
+// A single normalized shape both the Bellavita ('categories') and generic ('objections') branch
+// lists get mapped into, so the small-branch grouping below works identically for every process
+// instead of needing separate logic per data shape.
+interface MSBranchItem {
+  key: string; title: string; icon: string; contributionPct: number;
+  callEnd: number; saleDone: number; convPct: number;
+  script: React.ReactNode; fallback: React.ReactNode | null;
+  onMetricClick: () => void; onCallEndClick: () => void;
+}
+
+// Below this contribution share, a branch isn't worth its own card — it clutters the tree without
+// being big enough to act on individually. Reuses the same 5% floor the "Focus Area" flag already
+// uses elsewhere in this file, rather than inventing a second threshold. Works for any process/
+// client because it only looks at contribution share, never the category name itself — no
+// hand-maintained "these categories mean the same thing" map to keep in sync as new processes or
+// admin-configured objection categories get added.
+const MS_MINOR_BRANCH_THRESHOLD = 5;
+
+function splitMajorMinorBranches(items: MSBranchItem[]): { major: MSBranchItem[]; minor: MSBranchItem[] } {
+  const major = items.filter(i => i.contributionPct >= MS_MINOR_BRANCH_THRESHOLD);
+  const minor = items.filter(i => i.contributionPct < MS_MINOR_BRANCH_THRESHOLD);
+  // Not worth a separate "Other Reasons" card for a single small branch — just show it plainly.
+  if (minor.length === 1) { major.push(minor[0]); minor.length = 0; }
+  return { major, minor };
+}
+
+// Collapsed-by-default summary card standing in for every branch too small to earn its own spot —
+// shows their combined share/outcomes up front, and clicking it expands into the individual
+// MSBranchCards underneath (same card component the major branches use, just nested here).
+function MSOtherBranchesCard({ items, delay, grown, onOpen }: { items: MSBranchItem[]; delay: number; grown: boolean; onOpen: () => void }) {
+  const accent = MS_COLORS.neutral;
+  // Highest-contribution reasons first, both in this preview list and in the popup it opens —
+  // the ones worth a manager's attention should be the first thing they see, not buried in
+  // whatever order the source data happened to return.
+  const sorted = [...items].sort((a, b) => b.contributionPct - a.contributionPct);
+  const totalContribution = items.reduce((s, i) => s + i.contributionPct, 0);
+  const totalCallEnd = items.reduce((s, i) => s + i.callEnd, 0);
+  const totalSaleDone = items.reduce((s, i) => s + i.saleDone, 0);
+  const totalOutcomes = totalCallEnd + totalSaleDone;
+  const combinedConvPct = totalOutcomes > 0 ? Math.round((totalSaleDone / totalOutcomes) * 1000) / 10 : 0;
+
+  return (
+    <div className="flex flex-col items-center transition-all ease-out"
+      style={{ opacity: grown ? 1 : 0, transform: grown ? 'translateY(0)' : 'translateY(12px)', transitionDuration: '500ms', transitionDelay: `${delay}ms` }}>
+      <MSLine orientation="v" size={18} />
+      <button onClick={onOpen}
+        className={`relative w-full rounded-[20px] px-4 py-3 text-center transition-all duration-300 hover:-translate-y-0.5 ${MS_GLASS}`}
+        style={{ background: `linear-gradient(135deg, ${accent}1c, ${accent}08)`, boxShadow: `0 4px 16px -6px ${accent}40` }}>
+        <div className="flex items-center justify-center gap-1.5">
+          <span className="text-sm leading-none">📂</span>
+          <p className="text-[11px] font-bold leading-tight" style={{ color: accent }}>Other Reasons ({items.length})</p>
+        </div>
+        <p className="text-[10px] text-slate-500 mt-0.5">({totalContribution.toFixed(1)}%) Contribution</p>
+      </button>
+      <MSLine orientation="v" size={14} />
+      <button onClick={onOpen}
+        className="w-full rounded-[20px] px-3.5 py-3 text-[10px] text-slate-700 leading-relaxed text-left hover:bg-white/60 transition-colors"
+        style={{ background: 'rgba(255,255,255,0.85)', minHeight: 90 }}>
+        <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
+          Click to view all {items.length} <ChevronDown size={11} className="-rotate-90" />
+        </p>
+        <ul className="space-y-0.5">
+          {sorted.slice(0, 5).map(it => (
+            <li key={it.key} className="flex items-center justify-between gap-2">
+              <span className="truncate">{it.icon} {it.title}</span>
+              <span className="text-slate-400 shrink-0">{it.contributionPct}%</span>
+            </li>
+          ))}
+          {sorted.length > 5 && <li className="text-slate-400 italic">+{sorted.length - 5} more…</li>}
+        </ul>
+      </button>
+      <MSLine orientation="v" size={14} />
+      <MSFanBar count={2} />
+      <div className="w-full flex gap-3">
+        <div className="flex-1 flex flex-col items-center">
+          <MSLine orientation="v" size={12} />
+          <MSMetricPill bg={MS_CALLEND_GRADIENT} icon="📞">
+            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Call End</p>
+            <p className="text-sm font-black tabular-nums text-white leading-none">{totalCallEnd.toLocaleString()}</p>
+          </MSMetricPill>
+        </div>
+        <div className="flex-1 flex flex-col items-center">
+          <MSLine orientation="v" size={12} />
+          <MSMetricPill bg={pctGradient(combinedConvPct, 15, 5)} icon="💰">
+            <p className="text-[8px] font-bold uppercase tracking-widest text-white/70 leading-none mb-1">Sale Done</p>
+            <p className="text-sm font-black tabular-nums text-white leading-none">{totalSaleDone.toLocaleString()} ({combinedConvPct}%)</p>
+          </MSMetricPill>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSaleDoneClick, onCallEndClick, onStageCallEndClick, onOpenOtherReasons }: {
   ms: BellavitaMagicalScriptData;
   productModalOpen: boolean;
   onToggleProductModal: (open: boolean) => void;
   onSaleDoneClick: (category: string) => void;
   onCallEndClick: (category: string) => void;
   onStageCallEndClick: (stage: 'op' | 'csp' | 'offer') => void;
+  onOpenOtherReasons: (items: MSBranchItem[]) => void;
 }) {
   const [grown, setGrown] = useState(false);
-  const [showAllCategories, setShowAllCategories] = useState(false);
   useEffect(() => {
     setGrown(false);
     const t = setTimeout(() => setGrown(true), 60);
@@ -1043,54 +1136,48 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
 
           {/* ── Branches out of Magical Offer into the top objection categories ── */}
           {ms.categories.length > 0 && (() => {
-            const visibleCategories = showAllCategories ? ms.categories : ms.categories.slice(0, 4);
-            const hasMore = ms.categories.length > 4;
-            // Cards are ranked by call volume (unchanged), but the weakest-converting one among them
-            // is the one worth coaching against — flag it explicitly rather than relying on someone
-            // to spot the lowest number while scanning left to right. Floored at 5% contribution so
-            // a near-zero-volume category doesn't win the flag on a single unlucky call.
-            const flagWorthy = visibleCategories.filter(c => c.contribution_pct >= 5);
-            const focusCategory = flagWorthy.length > 0
-              ? flagWorthy.reduce((a, b) => (b.conv_pct < a.conv_pct ? b : a))
-              : null;
+            const items: MSBranchItem[] = ms.categories.map(cat => ({
+              key: cat.category, title: cat.category, icon: categoryIcon(cat.category),
+              contributionPct: cat.contribution_pct, callEnd: cat.call_end, saleDone: cat.sale_done, convPct: cat.conv_pct,
+              script: cat.script ? <span style={{ whiteSpace: 'pre-line' }}>{cat.script}</span> : null,
+              fallback: cat.topContext ? (
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Most common pitch in calls</p>
+                  <span style={{ whiteSpace: 'pre-line' }}>{cat.topContext}</span>
+                  {cat.contexts.length > 1 && (
+                    <p className="text-[9px] text-slate-400 mt-1.5">+{cat.contexts.length - 1} other variation{cat.contexts.length > 2 ? 's' : ''} seen</p>
+                  )}
+                </div>
+              ) : null,
+              onMetricClick: () => onSaleDoneClick(cat.category),
+              onCallEndClick: () => onCallEndClick(cat.category),
+            }));
+            const { major, minor } = splitMajorMinorBranches(items);
+            // Cards are ranked by call volume (unchanged), but the weakest-converting one among the
+            // major branches is the one worth coaching against — flag it explicitly rather than
+            // relying on someone to spot the lowest number while scanning left to right. Only
+            // considers major branches since a minor one is collapsed out of sight by default.
+            const focusItem = major.length > 0 ? major.reduce((a, b) => (b.convPct < a.convPct ? b : a)) : null;
+            const cardCount = major.length + (minor.length > 0 ? 1 : 0);
             return (
               <div className="mt-2">
                 <div className="flex justify-center"><MSLine orientation="v" size={22} /></div>
-                {!showAllCategories && <MSFanBar count={visibleCategories.length} />}
-                <div className={showAllCategories
-                  ? 'grid gap-4 mt-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'
-                  : 'grid gap-4 mt-0'}
-                  style={showAllCategories ? undefined : { gridTemplateColumns: `repeat(${visibleCategories.length}, minmax(0, 1fr))` }}>
-                  {visibleCategories.map((cat, i) => (
-                    <MSBranchCard key={cat.category} delay={450 + i * 100} grown={grown}
-                      accent={pctColor(cat.conv_pct, 15, 5)} icon={categoryIcon(cat.category)}
-                      title={cat.category} contributionPct={cat.contribution_pct}
-                      flagLabel={focusCategory?.category === cat.category ? 'Focus Area' : undefined}
-                      script={cat.script ? <span style={{ whiteSpace: 'pre-line' }}>{cat.script}</span> : null}
-                      fallback={cat.topContext ? (
-                        <div>
-                          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Most common pitch in calls</p>
-                          <span style={{ whiteSpace: 'pre-line' }}>{cat.topContext}</span>
-                          {cat.contexts.length > 1 && (
-                            <p className="text-[9px] text-slate-400 mt-1.5">+{cat.contexts.length - 1} other variation{cat.contexts.length > 2 ? 's' : ''} seen</p>
-                          )}
-                        </div>
-                      ) : null}
-                      metrics={{ callEnd: cat.call_end, saleDone: cat.sale_done, convPct: cat.conv_pct }}
-                      onMetricClick={() => onSaleDoneClick(cat.category)}
-                      onCallEndClick={() => onCallEndClick(cat.category)} />
+                <MSFanBar count={cardCount} />
+                <div className="grid gap-4 mt-0" style={{ gridTemplateColumns: `repeat(${cardCount}, minmax(0, 1fr))` }}>
+                  {major.map((it, i) => (
+                    <MSBranchCard key={it.key} delay={450 + i * 100} grown={grown}
+                      accent={pctColor(it.convPct, 15, 5)} icon={it.icon}
+                      title={it.title} contributionPct={it.contributionPct}
+                      flagLabel={focusItem?.key === it.key ? 'Focus Area' : undefined}
+                      script={it.script} fallback={it.fallback}
+                      metrics={{ callEnd: it.callEnd, saleDone: it.saleDone, convPct: it.convPct }}
+                      onMetricClick={it.onMetricClick} onCallEndClick={it.onCallEndClick} />
                   ))}
+                  {minor.length > 0 && (
+                    <MSOtherBranchesCard items={minor} delay={450 + major.length * 100} grown={grown}
+                      onOpen={() => onOpenOtherReasons(minor)} />
+                  )}
                 </div>
-                {hasMore && (
-                  <div className="flex justify-center mt-4">
-                    <button onClick={() => setShowAllCategories(v => !v)}
-                      className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[11px] font-bold border transition-all"
-                      style={{ color: MS_COLORS.primary, borderColor: `${MS_COLORS.primary}40`, background: `${MS_COLORS.primary}08` }}>
-                      <ChevronDown size={13} className="transition-transform duration-300" style={{ transform: showAllCategories ? 'rotate(180deg)' : 'none' }} />
-                      {showAllCategories ? 'Show top 4 only' : `Expand — show all ${ms.categories.length} categories`}
-                    </button>
-                  </div>
-                )}
               </div>
             );
           })()}
@@ -1136,11 +1223,12 @@ function BellavitaMagicalFlow({ ms, productModalOpen, onToggleProductModal, onSa
 
 // ─── Every other outbound process: DB-configured OP → CSP → Offer flow + objection scripts,
 // rendered through the same tree/connector style as Bellavita's flow above. ───────────────────────
-function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick, onCallEndClick, onStageCallEndClick }: {
+function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick, onCallEndClick, onStageCallEndClick, onOpenOtherReasons }: {
   ms: GenericMagicalScriptData; canEdit: boolean; onOpenEditor: () => void;
   onSaleDoneClick: (category: string) => void;
   onCallEndClick: (category: string) => void;
   onStageCallEndClick: (stage: 'op' | 'csp' | 'offer') => void;
+  onOpenOtherReasons: (items: MSBranchItem[]) => void;
 }) {
   const CARD_ACCS = ['#1D4ED8', '#7C3AED', '#0891B2', '#D97706'];
   const [grown, setGrown] = useState(false);
@@ -1215,23 +1303,38 @@ function GenericMagicalFlow({ ms, canEdit, onOpenEditor, onSaleDoneClick, onCall
           ))}
 
           {/* ── Branches out of the flow into the objection-handling scripts ── */}
-          {ms.objections.length > 0 && (
-            <div className="mt-2">
-              <div className="flex justify-center"><MSLine orientation="v" size={22} /></div>
-              <MSFanBar count={ms.objections.length} />
-              <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${ms.objections.length}, minmax(0, 1fr))` }}>
-                {ms.objections.map((obj, i) => (
-                  <MSBranchCard key={i} delay={450 + i * 100} grown={grown}
-                    accent={CARD_ACCS[i % CARD_ACCS.length]} icon={categoryIcon(obj.category ?? obj.title)}
-                    title={obj.title} contributionPct={obj.contribution}
-                    script={obj.script ? <span style={{ whiteSpace: 'pre-line' }}>{obj.script}</span> : null}
-                    metrics={{ callEnd: obj.total - obj.sales, saleDone: obj.sales, convPct: obj.conv_pct }}
-                    onMetricClick={() => onSaleDoneClick(obj.category ?? obj.title)}
-                    onCallEndClick={() => onCallEndClick(obj.category ?? obj.title)} />
-                ))}
+          {ms.objections.length > 0 && (() => {
+            const items: MSBranchItem[] = ms.objections.map((obj, i) => ({
+              key: String(i), title: obj.title, icon: categoryIcon(obj.category ?? obj.title),
+              contributionPct: obj.contribution, callEnd: obj.total - obj.sales, saleDone: obj.sales, convPct: obj.conv_pct,
+              script: obj.script ? <span style={{ whiteSpace: 'pre-line' }}>{obj.script}</span> : null,
+              fallback: null,
+              onMetricClick: () => onSaleDoneClick(obj.category ?? obj.title),
+              onCallEndClick: () => onCallEndClick(obj.category ?? obj.title),
+            }));
+            const { major, minor } = splitMajorMinorBranches(items);
+            const cardCount = major.length + (minor.length > 0 ? 1 : 0);
+            return (
+              <div className="mt-2">
+                <div className="flex justify-center"><MSLine orientation="v" size={22} /></div>
+                <MSFanBar count={cardCount} />
+                <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${cardCount}, minmax(0, 1fr))` }}>
+                  {major.map((it, i) => (
+                    <MSBranchCard key={it.key} delay={450 + i * 100} grown={grown}
+                      accent={CARD_ACCS[i % CARD_ACCS.length]} icon={it.icon}
+                      title={it.title} contributionPct={it.contributionPct}
+                      script={it.script} fallback={it.fallback}
+                      metrics={{ callEnd: it.callEnd, saleDone: it.saleDone, convPct: it.convPct }}
+                      onMetricClick={it.onMetricClick} onCallEndClick={it.onCallEndClick} />
+                  ))}
+                  {minor.length > 0 && (
+                    <MSOtherBranchesCard items={minor} delay={450 + major.length * 100} grown={grown}
+                      onOpen={() => onOpenOtherReasons(minor)} />
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     </>
@@ -1948,6 +2051,7 @@ export default function ProcessQualityDashboard() {
   const [chartDetail, setChartDetail] = useState<ChartDetail | null>(null);
   const showDetail = (key: string) => setChartDetail(CHART_DETAILS[key] ?? null);
   const [pqDrillModal, setPQDrillModal] = useState<{ title: string; accent: string; rows: Record<string,unknown>[]; columns: { key: string; label: string }[] } | null>(null);
+  const [otherReasonsModal, setOtherReasonsModal] = useState<MSBranchItem[] | null>(null);
 
   return (
     <div className="min-h-screen text-slate-900 flex flex-col">
@@ -4189,6 +4293,29 @@ export default function ProcessQualityDashboard() {
           </PQDrillModal>
         )}
 
+        {/* ── "Other Reasons" popup — the small branches an MSOtherBranchesCard collapsed out of the
+             tree, shown here as full cards (script text, Call End/Sale Done) instead of squeezed
+             into that card's own narrow column. Highest-contribution ones first. ────────────────── */}
+        {otherReasonsModal && (() => {
+          const sorted = [...otherReasonsModal].sort((a, b) => b.contributionPct - a.contributionPct);
+          return (
+            <PQDrillModal title={`Other Reasons (${sorted.length})`} accent={MS_COLORS.neutral} onClose={() => setOtherReasonsModal(null)}>
+              <div className="overflow-auto" style={{ maxHeight: '65vh' }}>
+                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 p-1">
+                  {sorted.map(it => (
+                    <MSBranchCard key={it.key} delay={0} grown={true}
+                      accent={pctColor(it.convPct, 15, 5)} icon={it.icon}
+                      title={it.title} contributionPct={it.contributionPct}
+                      script={it.script} fallback={it.fallback}
+                      metrics={{ callEnd: it.callEnd, saleDone: it.saleDone, convPct: it.convPct }}
+                      onMetricClick={it.onMetricClick} onCallEndClick={it.onCallEndClick} />
+                  ))}
+                </div>
+              </div>
+            </PQDrillModal>
+          );
+        })()}
+
         {/* ── Missed Opportunity Category Drill-down Modal ─────────────────── */}
         {moCategoryDrill?.open && (
           <PQDrillModal title={`Missed Opportunity — ${moCategoryDrill.category}`} accent="#A78BFA" onClose={() => setMoCategoryDrill(null)}>
@@ -4271,12 +4398,14 @@ export default function ProcessQualityDashboard() {
                 <BellavitaMagicalFlow ms={magicalScript} productModalOpen={bellaProductModal} onToggleProductModal={setBellaProductModal}
                   onSaleDoneClick={(category) => openCategorySaleDoneDrill(category, 'bellavita')}
                   onCallEndClick={(category) => openCategoryCallEndDrill(category, 'bellavita')}
-                  onStageCallEndClick={(stage) => openStageCallEndDrill(stage, 'bellavita')} />
+                  onStageCallEndClick={(stage) => openStageCallEndDrill(stage, 'bellavita')}
+                  onOpenOtherReasons={setOtherReasonsModal} />
               ) : (
                 <GenericMagicalFlow ms={magicalScript} canEdit={canEditScripts} onOpenEditor={openScriptEditor}
                   onSaleDoneClick={(category) => openCategorySaleDoneDrill(category, 'generic')}
                   onCallEndClick={(category) => openCategoryCallEndDrill(category, 'generic')}
-                  onStageCallEndClick={(stage) => openStageCallEndDrill(stage, 'generic')} />
+                  onStageCallEndClick={(stage) => openStageCallEndDrill(stage, 'generic')}
+                  onOpenOtherReasons={setOtherReasonsModal} />
               )}
             </div>
           </div>

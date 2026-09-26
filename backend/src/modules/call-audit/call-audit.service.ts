@@ -178,3 +178,40 @@ export async function runBulkAudits(userId: number, userEmail: string, requests:
 export async function getAudit(id: number, userId: number, isSuperAdmin: boolean) {
   return repo.getAudit(id, userId, isSuperAdmin);
 }
+
+export async function getUploadLimits() {
+  return repo.getUploadLimits();
+}
+
+// Total call-audit runs already logged today, for the admin settings UI to show "42 of 100 used
+// today" next to the limit input rather than the number alone. masId is irrelevant here, so pass a
+// value that will never match a real one (empty string) to only read the totalToday count.
+export async function getTodayTotalUsage(): Promise<number> {
+  const usage = await repo.getTodayUsage('');
+  return usage.totalToday;
+}
+
+export async function updateUploadLimits(maxPerAgentPerDay: number | null, maxTotalPerDay: number | null, updatedByName: string) {
+  await repo.setUploadLimits(maxPerAgentPerDay, maxTotalPerDay, updatedByName);
+  return repo.getUploadLimits();
+}
+
+// Super admins are exempt (they're the ones who set the policy and may need to push exceptions
+// through); every other uploader granted 'call-audit' access is checked against both the per-agent
+// and the system-wide daily cap before any Deepgram/AI spend happens for their request.
+export async function checkUploadQuota(masId: string, requestedCount: number, isSuperAdmin: boolean): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (isSuperAdmin) return { ok: true };
+  const limits = await repo.getUploadLimits();
+  if (limits.maxPerAgentPerDay === null && limits.maxTotalPerDay === null) return { ok: true };
+
+  const usage = await repo.getTodayUsage(masId);
+  if (limits.maxTotalPerDay !== null && usage.totalToday + requestedCount > limits.maxTotalPerDay) {
+    const remaining = Math.max(0, limits.maxTotalPerDay - usage.totalToday);
+    return { ok: false, message: `Daily upload limit reached — ${limits.maxTotalPerDay} recordings/day allowed system-wide, ${usage.totalToday} already run today (${remaining} remaining). Try again tomorrow or ask a Super Admin to raise the limit.` };
+  }
+  if (limits.maxPerAgentPerDay !== null && usage.agentToday + requestedCount > limits.maxPerAgentPerDay) {
+    const remaining = Math.max(0, limits.maxPerAgentPerDay - usage.agentToday);
+    return { ok: false, message: `Daily limit reached for this agent — ${limits.maxPerAgentPerDay} recordings/day allowed per agent, ${usage.agentToday} already run today for ${masId} (${remaining} remaining). Try again tomorrow or ask a Super Admin to raise the limit.` };
+  }
+  return { ok: true };
+}

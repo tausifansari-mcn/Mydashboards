@@ -8,6 +8,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useProcessStore } from '@/store/processStore';
 import { useUIStore } from '@/store/uiStore';
 import FloatingChatBot from '@/features/ai-bot/FloatingChatBot';
+import AuditHealthAlert from './AuditHealthAlert';
 
 export default function AppShell() {
   const location = useLocation();
@@ -101,6 +102,7 @@ export default function AppShell() {
       </div>
 
       <FloatingChatBot />
+      <AuditHealthAlert />
     </div>
   );
 }

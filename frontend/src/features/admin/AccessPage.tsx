@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, ShieldCheck, ShieldOff, Loader2, GitBranch, LayoutDashboard, TrendingUp, Upload, ChevronLeft, PanelLeftClose, PanelLeftOpen, UploadCloud, AlertTriangle } from 'lucide-react';
+import { Search, ShieldCheck, ShieldOff, Loader2, GitBranch, LayoutDashboard, TrendingUp, Upload, ChevronLeft, PanelLeftClose, PanelLeftOpen, UploadCloud, AlertTriangle, Gauge, Save } from 'lucide-react';
 import api from '@/lib/axios';
 import { User, Dashboard, PaginatedResponse } from '@/types';
 
+interface UploadLimits { maxPerAgentPerDay: number | null; maxTotalPerDay: number | null; totalToday: number; updatedByName: string | null; updatedAt: string | null }
 interface AccessRow   { dashboard: Dashboard; can_export: boolean }
 interface ProcessItem { id: number; process_name: string; lob: string; dialdesk_client_id: number; client_id: number; is_active: boolean; client?: { name: string } }
 interface MappingItem { process: ProcessItem }
@@ -46,6 +47,50 @@ export default function AccessPage() {
   const [procSaving,    setProcSaving]    = useState<number | null>(null);
   const [brandSaving,   setBrandSaving]   = useState<string | null>(null);
   const [uploaderSaving, setUploaderSaving] = useState<string | null>(null);
+
+  // ── Call Audit upload limits — global (system-wide) caps, not tied to any selected user, so this
+  // loads once on mount and lives outside the per-user detail panel below.
+  const [uploadLimits, setUploadLimits] = useState<UploadLimits | null>(null);
+  const [limitPerAgentInput, setLimitPerAgentInput] = useState('');
+  const [limitTotalInput, setLimitTotalInput] = useState('');
+  const [limitsSaving, setLimitsSaving] = useState(false);
+  const [limitsSaved, setLimitsSaved] = useState(false);
+  const [limitsError, setLimitsError] = useState('');
+
+  const loadUploadLimits = () => {
+    api.get<{ success: boolean; data: UploadLimits }>('/call-audit/upload-limits')
+      .then(r => {
+        const d = r.data.data;
+        setUploadLimits(d);
+        setLimitPerAgentInput(d.maxPerAgentPerDay === null ? '' : String(d.maxPerAgentPerDay));
+        setLimitTotalInput(d.maxTotalPerDay === null ? '' : String(d.maxTotalPerDay));
+      })
+      .catch(() => {});
+  };
+
+  const saveUploadLimits = async () => {
+    setLimitsSaving(true);
+    setLimitsError('');
+    setLimitsSaved(false);
+    try {
+      const r = await api.put<{ success: boolean; data: UploadLimits; message?: string }>('/call-audit/upload-limits', {
+        maxPerAgentPerDay: limitPerAgentInput.trim() === '' ? null : Number(limitPerAgentInput),
+        maxTotalPerDay: limitTotalInput.trim() === '' ? null : Number(limitTotalInput),
+      });
+      setUploadLimits(r.data.data);
+      setLimitsSaved(true);
+      setTimeout(() => setLimitsSaved(false), 2500);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setLimitsError(msg || 'Failed to save limits');
+    } finally {
+      setLimitsSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    loadUploadLimits();
+  }, []);
 
   useEffect(() => {
     // Independent per-request error handling — previously one Promise.all with no catch at all
@@ -170,7 +215,49 @@ export default function AccessPage() {
   const activeDashes  = access.length;
 
   return (
-    <div className="flex h-full gap-0 overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* ── Call Audit Upload Limits — global system-wide caps, independent of any selected user.
+           Super Admin can raise/lower these any time; non-admin uploaders are checked against them
+           on every audit run (Super Admins themselves are exempt). ── */}
+      <div className="flex-shrink-0 border-b border-slate-200 bg-white px-4 sm:px-6 py-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Gauge className="h-4 w-4 text-indigo-600" />
+          <h3 className="text-sm font-bold text-slate-800">Call Audit Upload Limits</h3>
+          <span className="text-[10px] text-slate-400">
+            Controls how many recordings non-admin uploaders can run per day — Super Admins are unaffected.
+          </span>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-[10px] font-semibold text-slate-500 mb-1">Max per agent / day</label>
+            <input type="number" min={0} placeholder="Unlimited" value={limitPerAgentInput}
+              onChange={e => setLimitPerAgentInput(e.target.value)}
+              className="w-32 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-400" />
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-slate-500 mb-1">
+              Max total / day {uploadLimits ? <span className="text-slate-400">({uploadLimits.totalToday} used today)</span> : null}
+            </label>
+            <input type="number" min={0} placeholder="Unlimited" value={limitTotalInput}
+              onChange={e => setLimitTotalInput(e.target.value)}
+              className="w-32 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-400" />
+          </div>
+          <button onClick={saveUploadLimits} disabled={limitsSaving}
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-semibold px-3.5 py-2 transition-colors">
+            {limitsSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            Save Limits
+          </button>
+          {limitsSaved && <span className="text-xs font-semibold text-emerald-600">✓ Saved</span>}
+          {limitsError && <span className="text-xs font-semibold text-red-600">{limitsError}</span>}
+          {uploadLimits?.updatedByName && (
+            <span className="text-[10px] text-slate-400 ml-auto">
+              Last updated by {uploadLimits.updatedByName}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-1 gap-0 overflow-hidden">
       {/* ── User list panel — full-width on mobile when shown, fixed-width sidebar on desktop.
            No `md:flex` override here on purpose: showUserList must control visibility at every
            breakpoint so the desktop collapse toggle actually does something, not just mobile. ── */}
@@ -530,6 +617,7 @@ export default function AccessPage() {
             </div>
           </>
         )}
+      </div>
       </div>
     </div>
   );

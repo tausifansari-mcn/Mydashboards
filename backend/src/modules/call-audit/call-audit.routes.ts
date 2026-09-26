@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { verifyToken } from '../../middleware/verifyToken';
 import { injectTenant } from '../../middleware/injectTenant';
 import { requireDashboardAccess } from '../../middleware/requireDashboardAccess';
+import { requireRole } from '../../middleware/requireRole';
 import * as ctrl from './call-audit.controller';
 
 const router = Router();
@@ -20,6 +21,8 @@ router.use(verifyToken, injectTenant, requireDashboardAccess('call-audit'));
 router.post('/run', auditLimiter, ctrl.run);
 router.post('/run-bulk', auditLimiter, ctrl.runBulk);
 router.get('/history', ctrl.history);
+router.get('/upload-limits', ctrl.getUploadLimits);
+router.put('/upload-limits', requireRole('super_admin'), ctrl.updateUploadLimits);
 router.get('/:id', ctrl.getOne);
 
 export default router;

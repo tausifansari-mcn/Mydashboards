@@ -56,6 +56,9 @@ export async function runBulk(req: Request, res: Response) {
     const baseError = validateBody({ ...body, recordingUrl: body.recordingUrl ?? body.recordingUrls[0] });
     if (baseError) { res.status(400).json({ success: false, message: baseError }); return; }
 
+    const quota = await svc.checkUploadQuota(body.masId!.trim(), body.recordingUrls.length, req.user?.role === 'super_admin');
+    if (!quota.ok) { res.status(429).json({ success: false, message: quota.message }); return; }
+
     const urls = body.recordingUrls.map(u => u.trim()).filter(Boolean);
     const requests: CallAuditRequest[] = [];
     for (const url of urls) {
@@ -88,6 +91,9 @@ export async function run(req: Request, res: Response) {
     const error = validateBody(body);
     if (error) { res.status(400).json({ success: false, message: error }); return; }
 
+    const quota = await svc.checkUploadQuota(body.masId!.trim(), 1, req.user?.role === 'super_admin');
+    if (!quota.ok) { res.status(429).json({ success: false, message: quota.message }); return; }
+
     const auditReq: CallAuditRequest = {
       recordingUrl: body.recordingUrl!.trim(),
       processName: body.processName!.trim(),
@@ -117,6 +123,40 @@ export async function history(req: Request, res: Response) {
   } catch (err) {
     console.error('call-audit history error:', err);
     res.status(500).json({ success: false, message: 'Failed to load audit history' });
+  }
+}
+
+export async function getUploadLimits(req: Request, res: Response) {
+  try {
+    const [limits, usage] = await Promise.all([svc.getUploadLimits(), svc.getTodayTotalUsage()]);
+    res.json({ success: true, data: { ...limits, totalToday: usage } });
+  } catch (err) {
+    console.error('call-audit getUploadLimits error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load upload limits' });
+  }
+}
+
+export async function updateUploadLimits(req: Request, res: Response) {
+  try {
+    const body = req.body as { maxPerAgentPerDay?: number | null; maxTotalPerDay?: number | null };
+    const normalize = (v: unknown): string | null => {
+      if (v === null || v === undefined || v === '') return null;
+      return typeof v === 'number' ? String(v) : v as string;
+    };
+    const parseLimit = (v: unknown): number | null => {
+      const s = normalize(v);
+      if (s === null) return null;
+      const n = Number(s);
+      if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) throw new Error('Limits must be a whole number ≥ 0, or blank for unlimited');
+      return n;
+    };
+    const maxPerAgentPerDay = parseLimit(body.maxPerAgentPerDay);
+    const maxTotalPerDay = parseLimit(body.maxTotalPerDay);
+    const updatedByName = req.user?.email ?? 'Unknown';
+    const data = await svc.updateUploadLimits(maxPerAgentPerDay, maxTotalPerDay, updatedByName);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err instanceof Error ? err.message : 'Failed to update upload limits' });
   }
 }
 
