@@ -408,6 +408,17 @@ export async function getBandDetail(req: Request, res: Response) {
   }
 }
 
+export async function getAgentAuditBandDateWise(req: Request, res: Response) {
+  try {
+    const agentId = (req.query.agentId as string) || '';
+    if (!agentId) { res.status(400).json({ message: 'agentId is required' }); return; }
+    const data = await svc.getAgentAuditBandDateWise({ ...parseFilters(req), agentId });
+    res.json({ data });
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
 export async function updateAgentMaster(req: Request, res: Response) {
   try {
     const masId = req.params.masId;

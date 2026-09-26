@@ -2870,6 +2870,37 @@ export const against = (terms: string[]) => {
 };
 export const stripStar = (k: string) => k.endsWith('*') ? k.slice(0, -1) : k;
 
+// Same as against(), but excludes a match immediately followed by a negation word — Hindi's
+// verb-final structure means reassurance reads as "<accusation phrase> nahi <verb>" ("fake product
+// nahi aayega" = "won't be fake", "fraud company nahi hai" = "is not a fraud company"), so the
+// negation trails the very phrase that would otherwise flag it. Verified live: MySQL 8's REGEXP_LIKE
+// (ICU regex) supports lookahead, so this is a real exclusion, not just documentation.
+// Transcripts code-switch scripts as well as languages — the same negation can show up as
+// Romanized Hindi ("nahi") or Devanagari ("नहीं") depending on which the transcription service
+// picked for that segment, so both forms need to be listed for the lookahead to actually catch it.
+export const againstUnlessNegated = (terms: string[], negations: string[] = ['nahi', 'nahin', 'na hi', 'not', 'never', 'नहीं', 'नहि', 'ना']) => {
+  // Allow up to 2 filler words ("to", "bhi", "hi" / "तो", "भी", "ही") between the accused phrase and
+  // the negation — "fake product to nahi hai" ("it's surely not fake") would otherwise slip past a
+  // lookahead that only checks the very next word. The filler class excludes .?! so the window can't
+  // bridge into a later, unrelated sentence and wrongly cancel a genuine, non-negated earlier mention
+  // (seen live: "...fake product hai bas. Nahi ma'am fake product nahi hai" — without this, the first,
+  // genuine "fake product" got excluded by the second sentence's unrelated negation).
+  const negLookahead = `(?!\\\\s+([^.?!\\\\s]+\\\\s+){0,2}(${negations.map(esc).join('|')}))`;
+  const parts = terms.map(t => {
+    const stem = t.endsWith('*');
+    const body = esc(stem ? t.slice(0, -1) : t);
+    const boundary = stem ? `\\\\b${body}` : `\\\\b${body}\\\\b`;
+    return `${boundary}${negLookahead}`;
+  });
+  return `REGEXP_LIKE(LOWER(cd.TranscribeText), '(${parts.join('|')})')`;
+};
+
+// Bump whenever LEGAL/SOCIAL/FRAUD/REFUND/CANCELLATION_KEYWORDS change meaning enough that already-
+// cached rows in outbound_call_insights would be misclassified under the new rules. initOutboundInsightsTables()
+// compares this against the stored value and, on a mismatch, rewinds the catch-up cursor to reclassify
+// the full history instead of only new calls going forward.
+const OUTBOUND_INSIGHTS_KEYWORD_VERSION = 5;
+
 // ── Legal / Social / Financial escalation, Refund & Cancellation intent — each an independent
 // flag (a call can be both "Frustration" AND "Legal Escalation" at once), surfaced as their own
 // headline cards / Critical Signal chips instead of being folded together under one "Threat" bucket.
@@ -2882,24 +2913,71 @@ const LEGAL_ESCALATION_KEYWORDS = [
   'cyber cell', 'cyber crime',
   'sue', 'lawsuit', 'consumer protection', 'ipc', 'national consumer helpline',
 ];
-const OUTBOUND_LEGAL_COND = against(LEGAL_ESCALATION_KEYWORDS);
+export const OUTBOUND_LEGAL_COND = against(LEGAL_ESCALATION_KEYWORDS);
 
+// Bare platform/brand names ('facebook', 'instagram', 'social media', 'viral', ...) were removed
+// after sampling live matches: on outbound (Housing/property) calls, agents routinely pitch their
+// OWN "social media marketing" service ("we advertise your property on Instagram, Facebook,
+// Google") — that isn't a customer escalation threat, but the bare keywords matched it every time
+// and inflated this card ~150-350 hits per client. Only kept phrases that carry the customer's own
+// escalation INTENT (a verb like karunga/dalunga/dunga attached to the platform), which never
+// fires on an agent's sales pitch.
 const SOCIAL_ESCALATION_KEYWORDS = [
-  'social media', 'facebook', 'instagram', 'twitter', 'youtube', 'linkedin',
-  'google review', 'negative review', '1 star review', 'viral',
-  'post karunga', 'tweet', 'reel', 'complaint online',
-  'social media par dalunga', 'viral kar dunga', 'facebook par dalunga',
-  'instagram par dalunga', 'youtube par video banaunga', 'review dunga',
+  'post karunga', 'post kar dunga', 'social media par dalunga', 'social media par daalunga',
+  'social media par post karunga', 'social media pe daal dunga',
+  'viral kar dunga', 'viral kar doonga', 'viral kar dunga isko',
+  'facebook par dalunga', 'facebook par post karunga', 'facebook pe daal dunga',
+  'instagram par dalunga', 'instagram par post karunga', 'instagram pe daal dunga',
+  'youtube par video banaunga', 'youtube pe daal dunga', 'twitter par complaint',
+  'tweet karunga', 'complaint online karunga', 'sab jagah post karunga',
+  'review dunga', 'negative review dunga', 'negative review doonga',
+  '1 star review dunga', '1 star doonga', 'badnaam kar dunga', 'company ko badnaam karunga',
+  // Expansion pass: additional intent-bearing phrasings, each checked against ~8,000 recent real
+  // calls first — none produced a false-positive match (most had zero hits at all, meaning they
+  // add coverage for rarer phrasings without adding noise from agents' own marketing pitches).
+  'main post karunga', 'main daal dunga', 'video bana ke dalunga', 'video banake daal dunga',
+  'online badnaam karunga', 'internet par daal dunga', 'whatsapp group mein daal dunga',
+  'whatsapp par bhejunga', 'twitter par post karunga', 'twitter pe daal dunga',
+  'linkedin par post karunga', 'youtube par upload karunga', 'social media pe viral kar dunga',
+  'main viral kar dunga', 'photo daal dunga', 'screenshot daal dunga', 'story lagaunga',
+  'reel banaunga', 'video viral kar dunga',
+  'i will post this on facebook', 'i will make this viral', 'i will post online',
+  'i will share this on social media', 'going to post this online', 'i will put this on instagram',
+  'i will tweet about this', 'i will write a bad review', 'will give a negative review',
+  'will give 1 star', 'will complain on social media', 'will make a video about this',
 ];
-const OUTBOUND_SOCIAL_COND = against(SOCIAL_ESCALATION_KEYWORDS);
+export const OUTBOUND_SOCIAL_COND = against(SOCIAL_ESCALATION_KEYWORDS);
 
+// Same issue for fraud: agents constantly REASSURE customers nothing is fraudulent ("no fraud
+// here", "application fake nahi hoti", "koi fraud nahi hai") — the bare words 'fraud'/'fake'/
+// 'scam'/'cheat'/'dhokha' matched that reassurance just as readily as a genuine accusation, since
+// REGEXP_LIKE has no negation handling. Kept only phrases where the customer is actually making the
+// allegation (an accusatory verb/possessive attached to the word), which reassurance phrasing
+// doesn't produce.
 const FRAUD_KEYWORDS = [
-  'fraud', 'financial fraud', 'scam', 'fake', 'cheat', 'cheated', 'cheating', 'dhokha',
-  'loot', 'money lost', 'upi fraud', 'bank fraud', 'credit card fraud', 'debit card fraud',
-  'payment fraud', 'cyber fraud', 'otp fraud', 'fraud hai', 'fraud kar rahe ho', 'dhokha diya',
-  'fake company', 'fake product', 'paisa le liya',
+  'fraud hai', 'yeh fraud hai', 'ye fraud hai', 'fraud kar rahe ho', 'fraud kar rahe hain',
+  'fraud company', 'aap fraud', 'financial fraud', 'scam hai', 'yeh scam hai', 'ye scam hai',
+  'scam kar rahe ho', 'fake company', 'fake product', 'aap fake', 'aap log fake',
+  'cheat kiya', 'cheated me', 'you cheated', 'cheating the public', 'aap cheat', 'mujhe cheat kiya',
+  'dhokha diya', 'dhokha kar rahe ho', 'dhoka de rahe ho', 'money lost', 'paisa le liya',
+  'paisa loot liya', 'paisa doob gaya', 'upi fraud', 'bank fraud', 'credit card fraud',
+  'debit card fraud', 'payment fraud', 'cyber fraud', 'otp fraud',
+  // Expansion pass: each checked against ~8,000 recent real calls first (via the negation-guarded
+  // condition below) — zero false positives; 'i got scammed' additionally caught a genuine real
+  // case ("I recently got scammed on housing.com... I got scammed") the original list missed.
+  'yeh company fraud hai', 'aap logo ne fraud kiya', 'humare saath fraud hua',
+  'mere saath fraud hua hai', 'mere saath dhokha hua', 'humare saath dhokha hua',
+  'aapne humein cheat kiya', 'hum se paisa loot liya', 'humara paisa doob gaya',
+  'ye sab fraud hai', 'yeh fraud scheme hai', 'ye scheme fraud hai', 'aap sab fraud ho',
+  'sab fraud hai yahan', 'website fraud hai', 'yeh website fraud hai', 'order fraud nikla',
+  'fake order nikla', 'nakli product', 'nakli company', 'yeh nakli hai', 'nakli cheez',
+  'nakli item', 'nakli maal',
+  'this is a fraud', 'this is a scam', 'you guys are scamming me', 'you are cheating me',
+  'i have been cheated', 'i got scammed', 'i was scammed', 'this is fraudulent',
+  'you people are frauds', 'this company is a fraud', 'my money was stolen',
+  'they stole my money', 'i lost my money',
 ];
-const OUTBOUND_SCAM_COND = against(FRAUD_KEYWORDS);
+export const OUTBOUND_SCAM_COND = againstUnlessNegated(FRAUD_KEYWORDS);
 
 const REFUND_KEYWORDS = [
   'refund', 'return money', 'money back', 'refund my payment', 'return my amount',
@@ -3090,22 +3168,79 @@ export async function initOutboundInsightsTables(): Promise<void> {
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS db_masmis.outbound_insights_cursor (
         id TINYINT PRIMARY KEY DEFAULT 1,
-        last_call_id INT NOT NULL DEFAULT 0
+        last_call_id INT NOT NULL DEFAULT 0,
+        keyword_version INT NOT NULL DEFAULT 1
       )
     `);
-    const [cursorRows] = await pool.execute(`SELECT last_call_id FROM db_masmis.outbound_insights_cursor WHERE id = 1`);
+    const [cursorCols] = await pool.execute(`
+      SELECT COLUMN_NAME FROM information_schema.columns
+      WHERE TABLE_SCHEMA = 'db_masmis' AND TABLE_NAME = 'outbound_insights_cursor' AND COLUMN_NAME = 'keyword_version'
+    `);
+    if ((cursorCols as any[]).length === 0) {
+      await pool.execute(`ALTER TABLE db_masmis.outbound_insights_cursor ADD COLUMN keyword_version INT NOT NULL DEFAULT 1`);
+    }
+    const [cursorRows] = await pool.execute(`SELECT last_call_id, keyword_version FROM db_masmis.outbound_insights_cursor WHERE id = 1`);
     // Seed ~30 days back so recent (dashboard-relevant) data backfills first, instead of
     // starting the catch-up from the oldest row in a 400K+ row table.
     const seedRows = await querySource<{ minId: number }>(
       `SELECT COALESCE(MIN(id), 0) AS minId FROM db_external.CallDetails WHERE CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
     );
     const seedId = Math.max(0, Number(seedRows[0]?.minId ?? 0) - 1);
-    if ((cursorRows as any[]).length === 0) {
-      await pool.execute(`INSERT INTO db_masmis.outbound_insights_cursor (id, last_call_id) VALUES (1, ?)`, [seedId]);
+    const existingCursor = (cursorRows as { last_call_id: number; keyword_version: number }[])[0];
+    if (!existingCursor) {
+      await pool.execute(
+        `INSERT INTO db_masmis.outbound_insights_cursor (id, last_call_id, keyword_version) VALUES (1, ?, ?)`,
+        [seedId, OUTBOUND_INSIGHTS_KEYWORD_VERSION],
+      );
     } else if (migrated) {
       // Rewind so the catch-up job reclassifies the whole cached window under the new keyword
       // lists — otherwise previously-cached rows would keep stale classifications forever.
-      await pool.execute(`UPDATE db_masmis.outbound_insights_cursor SET last_call_id = ? WHERE id = 1`, [seedId]);
+      await pool.execute(
+        `UPDATE db_masmis.outbound_insights_cursor SET last_call_id = ?, keyword_version = ? WHERE id = 1`,
+        [seedId, OUTBOUND_INSIGHTS_KEYWORD_VERSION],
+      );
+    } else if (existingCursor.keyword_version < OUTBOUND_INSIGHTS_KEYWORD_VERSION) {
+      // A keyword-list tightening, not a schema change. New phrases are always strict substrings
+      // of what the old, broader keywords matched (e.g. 'facebook par dalunga' still contains the
+      // old bare 'facebook'), so narrowing can only ever turn a 1 into a 0, never the reverse —
+      // rewinding the cursor to rescan the whole CallDetails table from call_id 0 for that (tried
+      // first) timed out at the 20s query deadline, since a full unindexed REGEXP scan from the
+      // very start of a 400K+ row table is exactly what the 30-day seed above exists to avoid.
+      // Instead, directly re-evaluate only the rows already flagged — a tiny, primary-key-joined
+      // UPDATE instead of a full table scan.
+      // A cross-schema JOIN UPDATE here (db_masmis.outbound_call_insights JOIN db_external.CallDetails)
+      // was tried first and measured taking several minutes even on ~2,200 rows — the query planner
+      // has no way to know the WHERE clause narrows i down to a small set, so it isn't reliably driven
+      // from the small side. Fetching the flagged call_ids first and re-checking them by primary key,
+      // in small chunks, is the same shape as the incremental catch-up batch below and is proven fast.
+      const [flaggedRows] = await pool.execute(
+        `SELECT call_id FROM db_masmis.outbound_call_insights WHERE legal_flag = 1 OR social_flag = 1 OR scam_flag = 1`
+      );
+      const flaggedIds = (flaggedRows as { call_id: number }[]).map(r => r.call_id);
+      const legalCondBare = OUTBOUND_LEGAL_COND.replace(/cd\./g, '');
+      const socialCondBare = OUTBOUND_SOCIAL_COND.replace(/cd\./g, '');
+      const scamCondBare = OUTBOUND_SCAM_COND.replace(/cd\./g, '');
+      for (let i = 0; i < flaggedIds.length; i += 300) {
+        const idsChunk = flaggedIds.slice(i, i + 300);
+        const placeholders = idsChunk.map(() => '?').join(',');
+        const recheckRows = await querySource<{ id: number; legal: number; social: number; scam: number }>(
+          `SELECT id, ${legalCondBare} AS legal, ${socialCondBare} AS social, ${scamCondBare} AS scam
+           FROM db_external.CallDetails WHERE id IN (${placeholders})`,
+          idsChunk,
+        );
+        for (const r of recheckRows) {
+          await pool.execute(
+            `UPDATE db_masmis.outbound_call_insights SET legal_flag = ?, social_flag = ?, scam_flag = ?, computed_at = NOW() WHERE call_id = ?`,
+            [r.legal, r.social, r.scam, r.id],
+          );
+        }
+      }
+      const [maxRow] = await pool.execute(`SELECT COALESCE(MAX(call_id), 0) AS mx FROM db_masmis.outbound_call_insights`);
+      const cachedMaxId = Number((maxRow as { mx: number }[])[0]?.mx ?? 0);
+      await pool.execute(
+        `UPDATE db_masmis.outbound_insights_cursor SET last_call_id = ?, keyword_version = ? WHERE id = 1`,
+        [Math.max(existingCursor.last_call_id, cachedMaxId), OUTBOUND_INSIGHTS_KEYWORD_VERSION],
+      );
     }
   } catch (err) {
     console.error('[quality] initOutboundInsightsTables warning:', (err as Error).message);

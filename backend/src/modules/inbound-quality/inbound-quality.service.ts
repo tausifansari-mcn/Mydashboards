@@ -3677,6 +3677,54 @@ export async function getAgentAuditBandSummary(filters: InboundQualityFilters): 
   }));
 }
 
+// Same shape as AgentAuditBandRow but one row per call_date instead of one row per agent — the
+// Agent Audit Summary table's row-click drill-down, so a manager can see whether an agent's score
+// is steady or swung day to day within the selected range.
+export interface AgentAuditBandDateRow extends AgentAuditBandRow {
+  call_date: string;
+}
+
+export async function getAgentAuditBandDateWise(
+  filters: InboundQualityFilters & { agentId: string }
+): Promise<AgentAuditBandDateRow[]> {
+  const { startDate, endDate, clientId, agentId } = filters;
+  const params: (string | number)[] = [startDate, endDate, agentId];
+  let extra = '';
+  if (clientId) { extra += ' AND q.ClientId = ?'; params.push(clientId); }
+
+  const rows = await querySource<{
+    call_date: string; audit_count: number; cq_score: number | null;
+    fatal_count: number; fatal_pct: number | null;
+    tq_count: number; mq_count: number; bq_count: number;
+  }>(`
+    SELECT
+      DATE(q.CallDate)                                                                              AS call_date,
+      COUNT(*)                                                                                       AS audit_count,
+      ROUND(AVG(CASE WHEN ${noFatalCheckSql('q')} THEN ${CQ_SCORE_SQL} END) * 100, 1)                AS cq_score,
+      SUM(CASE WHEN ${fatalCheckSql('q')}  THEN 1 ELSE 0 END)                                        AS fatal_count,
+      ROUND(SUM(CASE WHEN ${fatalCheckSql('q')} THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0), 1)      AS fatal_pct,
+      SUM(CASE WHEN q.quality_percentage >= 80 THEN 1 ELSE 0 END)                                    AS tq_count,
+      SUM(CASE WHEN q.quality_percentage >= 60 AND q.quality_percentage < 80 THEN 1 ELSE 0 END)      AS mq_count,
+      SUM(CASE WHEN q.quality_percentage >  0  AND q.quality_percentage < 60 THEN 1 ELSE 0 END)      AS bq_count
+    FROM db_audit.call_quality_assessment q
+    WHERE q.CallDate BETWEEN ? AND ? AND TRIM(q.User) = ? ${extra}
+    GROUP BY DATE(q.CallDate)
+    ORDER BY call_date ASC
+  `, params);
+
+  return rows.map(r => ({
+    call_date:   String(r.call_date),
+    agent:       agentId,
+    audit_count: Number(r.audit_count) || 0,
+    cq_score:    parseFloat(String(r.cq_score ?? 0)) || 0,
+    fatal_count: Number(r.fatal_count) || 0,
+    fatal_pct:   parseFloat(String(r.fatal_pct ?? 0)) || 0,
+    tq_count:    Number(r.tq_count) || 0,
+    mq_count:    Number(r.mq_count) || 0,
+    bq_count:    Number(r.bq_count) || 0,
+  }));
+}
+
 // ─── Raw Data Export ──────────────────────────────────────────────────────────
 
 export interface RawDataRow {

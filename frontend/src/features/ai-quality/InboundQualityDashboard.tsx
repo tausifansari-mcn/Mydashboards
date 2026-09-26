@@ -2508,6 +2508,48 @@ export default function InboundQualityDashboard() {
     }
   };
 
+  // Date-wise drill-down for the Agent Audit Summary table — same columns as that table, one row
+  // per call_date, so a manager can see whether an agent's score/fatal rate is steady or swung day
+  // to day within the selected range, instead of only seeing the range-wide total.
+  const openAgentAuditDateWise = async (agentId: string, agentDisplayName: string, accent: string) => {
+    const cols = [
+      { key: 'Date',           label: 'Date' },
+      { key: 'Audit Count',    label: 'Audit Count' },
+      { key: 'CQ Score%',      label: 'CQ Score%' },
+      { key: 'Stack Ranking',  label: 'Stack Ranking' },
+      { key: 'Fatal Count',    label: 'Fatal Count' },
+      { key: 'Fatal%',         label: 'Fatal%' },
+      { key: 'TQ',             label: 'TQ' },
+      { key: 'MQ',             label: 'MQ' },
+      { key: 'BQ',             label: 'BQ' },
+    ];
+    const title = `${agentDisplayName} — Date Wise`;
+    setDrillModal({ title, accent, rows: [], columns: cols });
+    setDrillLoading(true);
+    try {
+      const q = `clientId=${clientId}&startDate=${sd}&endDate=${ed}&agentId=${encodeURIComponent(agentId)}`;
+      const { data } = await api.get<{ data: {
+        call_date: string; audit_count: number; cq_score: number; fatal_count: number;
+        fatal_pct: number; tq_count: number; mq_count: number; bq_count: number;
+      }[] }>(`/inbound-quality/agent-audit-band-datewise?${q}`);
+      setDrillModal({ title, accent, columns: cols, rows: data.data.map(r => ({
+        Date:            r.call_date,
+        'Audit Count':   r.audit_count,
+        'CQ Score%':     `${r.cq_score}%`,
+        'Stack Ranking': r.cq_score >= 90 ? 'TQ' : r.cq_score >= 80 ? 'MQ' : 'BQ',
+        'Fatal Count':   r.fatal_count || '—',
+        'Fatal%':        r.fatal_pct > 0 ? `${r.fatal_pct}%` : '—',
+        TQ:              r.tq_count,
+        MQ:              r.mq_count,
+        BQ:              r.bq_count,
+      })) });
+    } catch {
+      setDrillModal(prev => prev ? { ...prev, rows: [] } : null);
+    } finally {
+      setDrillLoading(false);
+    }
+  };
+
   const fetchKPIs = useCallback(() => {
     setLoading(true);
     api.get<{ data: InboundProcessKPIs }>(
@@ -3721,8 +3763,8 @@ export default function InboundQualityDashboard() {
                         {agentAuditBand.map((r, i) => (
                           <tr key={r.agent}
                             className="border-b border-slate-200 hover:bg-slate-100 transition-colors cursor-pointer"
-                            title={`Click to drill into ${resolveAgent(r.agent)}'s band detail`}
-                            onClick={() => openBandDetail('no_fatal', `${resolveAgent(r.agent)} — Band Detail`, r.cq_score >= 90 ? '#22C55E' : r.cq_score >= 80 ? '#F59E0B' : '#EF4444', r.agent)}>
+                            title={`Click to see ${resolveAgent(r.agent)}'s date-wise breakdown`}
+                            onClick={() => openAgentAuditDateWise(r.agent, resolveAgent(r.agent), r.cq_score >= 90 ? '#22C55E' : r.cq_score >= 80 ? '#F59E0B' : '#EF4444')}>
                             <td className="py-2 px-3 text-slate-400 text-center">{i + 1}</td>
                             <td className="py-2 px-3 font-medium text-slate-900 whitespace-nowrap">{agentTag(r.agent)}</td>
                             <td className="py-2 px-3 text-right text-slate-700">{r.audit_count.toLocaleString()}</td>

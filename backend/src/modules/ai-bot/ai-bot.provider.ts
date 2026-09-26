@@ -49,7 +49,10 @@ const ANTHROPIC_TOOLS = TOOL_DEFS.map(t => ({ name: t.name, description: t.descr
 const OPENAI_TOOLS = TOOL_DEFS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
 
 class AnthropicProvider implements AIProvider {
-  constructor(private apiKey: string, public model: string) {}
+  // baseUrl lets this point at an Anthropic-Messages-API-compatible proxy (e.g. a reseller/gateway
+  // that fronts Claude under its own domain and key format) instead of api.anthropic.com directly —
+  // defaults to the real endpoint so existing 'anthropic' configs are unaffected.
+  constructor(private apiKey: string, public model: string, private baseUrl: string = 'https://api.anthropic.com') {}
   readonly enabled = true;
 
   async chat(system: string, messages: AIMessage[], opts?: ChatOptions): Promise<ProviderTurn> {
@@ -66,9 +69,14 @@ class AnthropicProvider implements AIProvider {
       return { role: 'user', content: m.text ?? '' };
     });
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch(`${this.baseUrl.replace(/\/+$/, '')}/v1/messages`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
+      // 'accept-encoding: identity' works around a real proxy bug seen live on at least one
+      // Anthropic-compatible reseller: it compresses the response because Node's fetch advertises
+      // gzip support, but never sends back a Content-Encoding header, so the client has no way to
+      // know to decompress it and gets raw compressed bytes where JSON was expected. Forcing
+      // identity tells it not to compress at all — harmless against api.anthropic.com too.
+      headers: { 'content-type': 'application/json', 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01', 'accept-encoding': 'identity' },
       body: JSON.stringify({
         model: this.model, max_tokens: opts?.maxTokens ?? 1500, system, messages: wireMessages,
         ...(opts?.includeTools === false ? {} : { tools: ANTHROPIC_TOOLS }),
@@ -164,7 +172,7 @@ export function buildProvider(cfg: ProviderConfig): AIProvider {
     return new OpenAICompatibleProvider(cfg.apiKey, cfg.model || 'gpt-4o-mini', cfg.baseUrl);
   }
   const resolvedModel = cfg.model || process.env.AI_MODEL || 'claude-haiku-4-5-20251001';
-  return new AnthropicProvider(cfg.apiKey, resolvedModel);
+  return cfg.baseUrl ? new AnthropicProvider(cfg.apiKey, resolvedModel, cfg.baseUrl) : new AnthropicProvider(cfg.apiKey, resolvedModel);
 }
 
 let cached: AIProvider | null = null;

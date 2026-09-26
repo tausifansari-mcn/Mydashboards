@@ -52,6 +52,7 @@ router.get('/week-wise-quality',         ctrl.getWeekWiseQuality);
 router.get('/day-wise-quality',         ctrl.getDayWiseQuality);
 router.get('/repeat-analysis',          ctrl.getRepeatAnalysis);
 router.get('/agent-audit-band',         ctrl.getAgentAuditBandSummary);
+router.get('/agent-audit-band-datewise', ctrl.getAgentAuditBandDateWise);
 router.get('/band-detail',              ctrl.getBandDetail);
 router.get('/agent-master',             ctrl.getAgentMaster);
 router.patch('/agent-master/:masId',    ctrl.updateAgentMaster);
