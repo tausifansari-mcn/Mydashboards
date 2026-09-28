@@ -21,5 +21,7 @@ router.put('/:id/sale-uploader-brands', ctrl.setSaleUploaderBrands);
 router.get('/callrec/processes',        ctrl.getCallRecProcessCatalog);
 router.get('/:id/callrec-processes',    ctrl.getCallRecProcesses);
 router.put('/:id/callrec-processes',    ctrl.setCallRecProcesses);
+router.get('/:id/callrec-upload-processes', ctrl.getCallRecUploadProcesses);
+router.put('/:id/callrec-upload-processes', ctrl.setCallRecUploadProcesses);
 
 export default router;

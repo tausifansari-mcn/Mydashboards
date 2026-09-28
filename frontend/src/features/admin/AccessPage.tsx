@@ -23,6 +23,17 @@ const SALE_BRANDS = [
   { key: 'aw',        label: 'AW',        desc: 'AW sales dashboard & data uploader',        color: '#0F172A', bg: '#E0E7FF' },
 ];
 
+// Matches CALL_REC_PROCESS_KEYS in backend/src/modules/call-rec-upload/call-rec-upload.service.ts —
+// the 5 upload types on the native Call Rec Upload page (distinct from the CallRecProcess catalog
+// above, which belongs to the separate external Call Rec UI app).
+const CALL_REC_UPLOAD_PROCESSES = [
+  { key: 'housingOwner',   label: 'Housing Owner' },
+  { key: 'housingPremium', label: 'Housing Premium' },
+  { key: 'lpFeedback',     label: 'LP Feedback' },
+  { key: 'lpRegional',     label: 'LP Regional' },
+  { key: 'lpNonRegional',  label: 'LP Non Regional' },
+];
+
 export default function AccessPage() {
   const [users,      setUsers]      = useState<User[]>([]);
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
@@ -36,6 +47,8 @@ export default function AccessPage() {
   const [callRecCatalogError, setCallRecCatalogError] = useState('');
   const [userCallRecProcs, setUserCallRecProcs] = useState<number[]>([]);
   const [callRecSaving, setCallRecSaving] = useState<number | null>(null);
+  const [userUploadProcs, setUserUploadProcs] = useState<string[]>([]);
+  const [uploadProcSaving, setUploadProcSaving] = useState<string | null>(null);
   const [search,        setSearch]        = useState('');
   const [tab,           setTab]           = useState<'dashboards' | 'processes'>('dashboards');
   // Mobile: only one of the two panels is visible at a time. Desktop always shows both
@@ -116,18 +129,20 @@ export default function AccessPage() {
     if (window.innerWidth < 768) setShowUserList(false);
     setLoading(true);
     try {
-      const [dashRes, procRes, brandRes, uploaderRes, callRecRes] = await Promise.allSettled([
+      const [dashRes, procRes, brandRes, uploaderRes, callRecRes, uploadProcRes] = await Promise.allSettled([
         api.get<AccessRow[]>(`/dashboards/user/${user.id}/access`),
         api.get<MappingItem[]>(`/processes/user/${user.id}`),
         api.get<string[]>(`/users/${user.id}/sale-brands`),
         api.get<string[]>(`/users/${user.id}/sale-uploader-brands`),
         api.get<number[]>(`/users/${user.id}/callrec-processes`),
+        api.get<string[]>(`/users/${user.id}/callrec-upload-processes`),
       ]);
       setAccess(dashRes.status === 'fulfilled' ? dashRes.value.data : []);
       setUserProcs(procRes.status === 'fulfilled' ? procRes.value.data.map((m) => m.process.id) : []);
       setSaleBrands(brandRes.status === 'fulfilled' ? brandRes.value.data : []);
       setUploaderBrands(uploaderRes.status === 'fulfilled' ? uploaderRes.value.data : []);
       setUserCallRecProcs(callRecRes.status === 'fulfilled' ? callRecRes.value.data : []);
+      setUserUploadProcs(uploadProcRes.status === 'fulfilled' ? uploadProcRes.value.data : []);
     } finally { setLoading(false); }
   };
 
@@ -193,6 +208,24 @@ export default function AccessPage() {
     } catch {
       // leave state as-is on failure so the toggle doesn't silently claim success
     } finally { setCallRecSaving(null); }
+  };
+
+  // This one gates the native Call Rec Upload page built into this app (CallRecUploadPage.tsx) —
+  // separate and unrelated to toggleCallRecProcess above, which manages the external Call Rec UI
+  // app instead. Without a grant here, a user with 'call-rec' dashboard access sees zero upload
+  // cards, not all five.
+  const toggleUploadProcess = async (procKey: string) => {
+    if (!selectedUser) return;
+    setUploadProcSaving(procKey);
+    try {
+      const next = userUploadProcs.includes(procKey)
+        ? userUploadProcs.filter((k) => k !== procKey)
+        : [...userUploadProcs, procKey];
+      await api.put(`/users/${selectedUser.id}/callrec-upload-processes`, { processIds: next });
+      setUserUploadProcs(next);
+    } catch {
+      // leave state as-is on failure so the toggle doesn't silently claim success
+    } finally { setUploadProcSaving(null); }
   };
 
   const toggleUploaderBrand = async (brandKey: string) => {
@@ -530,11 +563,14 @@ export default function AccessPage() {
                     </div>
                   </div>
 
-                  {/* ── Call Rec UI Processes — separate app, real integration ── */}
+                  {/* ── Call Rec Upload — Process Access — this is the one that actually controls the
+                       native "Call Rec Upload" page in the sidebar. Without a grant here, a user
+                       with just the "Call Rec UI" dashboard toggle sees zero upload cards, not all
+                       five — this is what makes upload access per-process instead of all-or-nothing. ── */}
                   <div>
                     <div className="flex items-center gap-2 mb-3">
-                      <UploadCloud className="h-4 w-4 text-orange-600" />
-                      <h3 className="text-sm font-bold text-slate-800">Call Rec UI Processes</h3>
+                      <UploadCloud className="h-4 w-4 text-teal-600" />
+                      <h3 className="text-sm font-bold text-slate-800">Call Rec Upload — Process Access</h3>
                       {!hasCallRecAccess && (
                         <span className="ml-1 text-[10px] font-semibold bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full">
                           Requires Call Rec UI dashboard access
@@ -542,8 +578,63 @@ export default function AccessPage() {
                       )}
                     </div>
                     <p className="text-xs text-slate-500 mb-4">
-                      Grants this person a real account in Call Rec UI (a separate app) and controls which
-                      processes/campaigns they can upload data for there.
+                      Controls which of the 5 upload types this user can use on the Call Rec Upload page. Nothing
+                      is granted by default — pick exactly which processes they should be able to upload for.
+                      {!hasCallRecAccess && ' Grant "Call Rec UI" in the Dashboard Access tab first.'}
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {CALL_REC_UPLOAD_PROCESSES.map((proc) => {
+                        const disabled = !hasCallRecAccess;
+                        const granted = userUploadProcs.includes(proc.key);
+                        return (
+                          <motion.div key={proc.key} whileHover={disabled ? {} : { y: -2 }}
+                            className={`rounded-xl border bg-white p-4 shadow-sm transition-all ${
+                              disabled ? 'opacity-50 cursor-not-allowed' :
+                              granted ? 'border-teal-300' : 'border-slate-200'
+                            }`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="font-semibold text-slate-800">{proc.label}</p>
+                              <button
+                                onClick={() => !disabled && toggleUploadProcess(proc.key)}
+                                disabled={disabled || uploadProcSaving === proc.key}
+                                className={`rounded-lg p-2 shrink-0 transition-colors ${
+                                  disabled ? 'bg-slate-100 text-slate-300 cursor-not-allowed' :
+                                  granted
+                                    ? 'bg-teal-100 text-teal-700 hover:bg-red-50 hover:text-red-600'
+                                    : 'bg-slate-100 text-slate-400 hover:bg-teal-100 hover:text-teal-700'
+                                }`}>
+                                {uploadProcSaving === proc.key
+                                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                                  : granted ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
+                              </button>
+                            </div>
+                            <div className={`mt-3 text-xs font-semibold ${granted && !disabled ? 'text-teal-700' : 'text-slate-400'}`}>
+                              {granted && !disabled ? '✓ Upload access granted' : 'No access'}
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* ── Call Rec UI Processes — a SEPARATE, older external app (own server, own login) that
+                       used to be embedded here via an iframe. Toggling these has no effect on the native
+                       Call Rec Upload page above — only on that other app, if anyone still logs into it
+                       directly. Kept for that reason, but it is not what controls uploads inside this app. ── */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <UploadCloud className="h-4 w-4 text-orange-600" />
+                      <h3 className="text-sm font-bold text-slate-800">Call Rec UI Processes <span className="font-normal text-slate-400">(separate external app)</span></h3>
+                      {!hasCallRecAccess && (
+                        <span className="ml-1 text-[10px] font-semibold bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full">
+                          Requires Call Rec UI dashboard access
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Grants this person a real account in a separate, standalone Call Rec UI app and controls which
+                      processes/campaigns they can upload data for there. This does <b>not</b> affect the Call Rec Upload
+                      page inside this app — see &quot;Process Access&quot; above for that.
                       {!hasCallRecAccess && ' Grant "Call Rec UI" in the Dashboard Access tab first.'}
                     </p>
                     {callRecCatalogError ? (

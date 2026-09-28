@@ -5,6 +5,9 @@ import { querySource } from '../../lib/sourceDb';
 import {
   getCallRecProcessCatalog, getCallRecUserProcessIds, setCallRecUserProcessIds,
 } from '../../lib/callRecClient';
+import {
+  getUserCallRecProcessAccess, setUserCallRecProcessAccess,
+} from '../call-rec-upload/call-rec-upload.service';
 
 const ENSURE_SALE_BRAND_TABLE = `
   CREATE TABLE IF NOT EXISTS shivamgiri.md_sale_brand_access (
@@ -84,6 +87,17 @@ export async function setUserCallRecProcesses(userId: number, processIds: number
   const user = await prisma.md_users.findUnique({ where: { id: userId }, select: { email: true, name: true } });
   if (!user) throw new Error('User not found');
   await setCallRecUserProcessIds(user.email, user.name, processIds);
+}
+
+// ─── Call Rec Upload process access — this app's own native upload page (see call-rec-upload
+// module), unrelated to the separate external app the two functions above manage. ─────────────────
+
+export async function getUserCallRecUploadProcesses(userId: number): Promise<string[]> {
+  return getUserCallRecProcessAccess(userId);
+}
+
+export async function setUserCallRecUploadProcesses(userId: number, processIds: string[]): Promise<void> {
+  await setUserCallRecProcessAccess(userId, processIds);
 }
 
 function generateTempPassword(): string {

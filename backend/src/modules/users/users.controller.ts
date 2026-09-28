@@ -160,3 +160,25 @@ export async function setCallRecProcesses(req: Request, res: Response): Promise<
     res.status(502).json({ message: err instanceof Error ? err.message : 'Call Rec UI is unreachable' });
   }
 }
+
+// Separate from getCallRecProcesses/setCallRecProcesses above, which manage access in the old
+// standalone Call Rec UI app — this manages access to this app's own native Call Rec Upload page
+// (the one that replaced that app's iframe), stored locally rather than proxied anywhere.
+export async function getCallRecUploadProcesses(req: Request, res: Response): Promise<void> {
+  try {
+    const processes = await svc.getUserCallRecUploadProcesses(Number(req.params.id));
+    res.json(processes);
+  } catch (err: unknown) {
+    res.status(500).json({ message: err instanceof Error ? err.message : 'Failed to load upload process access' });
+  }
+}
+
+export async function setCallRecUploadProcesses(req: Request, res: Response): Promise<void> {
+  try {
+    const { processIds } = z.object({ processIds: z.array(z.string()) }).parse(req.body);
+    await svc.setUserCallRecUploadProcesses(Number(req.params.id), processIds);
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    res.status(400).json({ message: err instanceof Error ? err.message : 'Failed to update upload process access' });
+  }
+}

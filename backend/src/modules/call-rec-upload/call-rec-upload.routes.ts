@@ -1,9 +1,28 @@
-import { Router } from 'express';
+import { Request, Response, NextFunction, Router } from 'express';
 import multer from 'multer';
 import { verifyToken } from '../../middleware/verifyToken';
 import { injectTenant } from '../../middleware/injectTenant';
 import { requireDashboardAccess } from '../../middleware/requireDashboardAccess';
+import { requireRole } from '../../middleware/requireRole';
 import * as ctrl from './call-rec-upload.controller';
+import { hasCallRecProcessAccess, CallRecProcessKey } from './call-rec-upload.service';
+
+// Having 'call-rec' dashboard access only means "can see the Call Rec Upload page" — it no longer
+// implies "can upload for every process type" now that per-process grants exist. super_admin always
+// passes, matching requireDashboardAccess's own convention elsewhere.
+function requireCallRecProcess(processKey: CallRecProcessKey) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!req.user) { res.status(401).json({ success: false, message: 'Unauthorized' }); return; }
+      if (req.user.role === 'super_admin') { next(); return; }
+      const ok = await hasCallRecProcessAccess(req.user.id, processKey);
+      if (!ok) { res.status(403).json({ success: false, message: 'You do not have upload access for this process — ask a Super Admin to grant it.' }); return; }
+      next();
+    } catch {
+      res.status(500).json({ success: false, message: 'Failed to verify process access' });
+    }
+  };
+}
 
 const ALLOWED_UPLOAD_MIMES = new Set([
   'application/vnd.ms-excel',
@@ -29,11 +48,15 @@ const router = Router();
 // this replaces the iframe that page used to embed, so access stays exactly as before.
 router.use(verifyToken, injectTenant, requireDashboardAccess('call-rec'));
 
-router.post('/upload-housing-owner',     upload.single('file'), ctrl.uploadHousingOwner);
-router.post('/upload-housing-premium',   upload.single('file'), ctrl.uploadHousingPremium);
-router.post('/upload-lp-feedback',       upload.single('file'), ctrl.uploadLPFeedback);
-router.post('/upload-lp-regional',       upload.single('file'), ctrl.uploadLPRegional);
-router.post('/upload-lp-non-regional',   upload.single('file'), ctrl.uploadLPNonRegional);
+router.get('/my-processes', ctrl.getMyProcesses);
+router.get('/upload-limits', ctrl.getUploadLimits);
+router.put('/upload-limits/:processKey', requireRole('super_admin'), ctrl.setUploadLimit);
+
+router.post('/upload-housing-owner',     requireCallRecProcess('housingOwner'),   upload.single('file'), ctrl.uploadHousingOwner);
+router.post('/upload-housing-premium',   requireCallRecProcess('housingPremium'), upload.single('file'), ctrl.uploadHousingPremium);
+router.post('/upload-lp-feedback',       requireCallRecProcess('lpFeedback'),     upload.single('file'), ctrl.uploadLPFeedback);
+router.post('/upload-lp-regional',       requireCallRecProcess('lpRegional'),     upload.single('file'), ctrl.uploadLPRegional);
+router.post('/upload-lp-non-regional',   requireCallRecProcess('lpNonRegional'),  upload.single('file'), ctrl.uploadLPNonRegional);
 
 router.get('/upload-logs',            ctrl.getCallRecUploadLogs);
 router.delete('/upload-log/:batchId', ctrl.deleteCallRecUploadLog);

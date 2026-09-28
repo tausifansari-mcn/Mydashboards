@@ -1,6 +1,7 @@
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
 import PrivateRoute from './PrivateRoute';
+import RequireInboundAccess from './RequireInboundAccess';
 import AppShell from '@/components/layout/AppShell';
 import PageLoader from '@/components/ui/PageLoader';
 
@@ -48,8 +49,13 @@ const router = createBrowserRouter(
             { path: '/quality',                        element: wrap(AIQualityDashboard) },
             { path: '/quality/inbound/:clientId',      element: wrap(InboundQualityDashboard) },
             { path: '/quality/:clientId',              element: wrap(ProcessQualityDashboard) },
-            { path: '/inbound',             element: wrap(InboundDashboard) },
-            { path: '/inbound/:projectKey', element: wrap(InboundProjectDashboard) },
+            {
+              element: <RequireInboundAccess />,
+              children: [
+                { path: '/inbound',             element: wrap(InboundDashboard) },
+                { path: '/inbound/:projectKey', element: wrap(InboundProjectDashboard) },
+              ],
+            },
             { path: '/admin/task-scheduler', element: wrap(TaskSchedulerPage) },
             { path: '/monitoring/audit',     element: wrap(AuditMonitorPage) },
             { path: '/callrec',              element: wrap(CallRecUploadPage) },

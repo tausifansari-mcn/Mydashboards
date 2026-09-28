@@ -1,6 +1,162 @@
 import * as XLSX from 'xlsx';
 import type mysql from 'mysql2';
 import { getMasmisPool } from '../../lib/masmisDb';
+import { querySource } from '../../lib/sourceDb';
+
+// ─── Per-process upload access ──────────────────────────────────────────────
+// Granting the 'call-rec' dashboard slug alone used to mean "can upload for all five process
+// types" — no finer control existed for this native page (the old per-process toggle on the
+// Access page talks to a different, separate external app on port 5050 and has no effect here).
+// This table is what actually gates each of the 5 upload endpoints below, in shivamgiri like every
+// other access-control table in this backend (e.g. md_dashboard_access), rather than db_masmis
+// where the uploaded data itself lives.
+export const CALL_REC_PROCESS_KEYS = ['housingOwner', 'housingPremium', 'lpFeedback', 'lpRegional', 'lpNonRegional'] as const;
+export type CallRecProcessKey = typeof CALL_REC_PROCESS_KEYS[number];
+
+let accessTableEnsured = false;
+async function ensureCallRecAccessTable(): Promise<void> {
+  if (accessTableEnsured) return;
+  await querySource(`
+    CREATE TABLE IF NOT EXISTS shivamgiri.md_call_rec_upload_access (
+      user_id INT NOT NULL,
+      process_key VARCHAR(30) NOT NULL,
+      granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, process_key)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `, []);
+  accessTableEnsured = true;
+}
+
+export async function getUserCallRecProcessAccess(userId: number): Promise<CallRecProcessKey[]> {
+  await ensureCallRecAccessTable();
+  const rows = await querySource<{ process_key: string }>(
+    'SELECT process_key FROM shivamgiri.md_call_rec_upload_access WHERE user_id = ?',
+    [userId],
+  );
+  return rows.map(r => r.process_key as CallRecProcessKey);
+}
+
+export async function setUserCallRecProcessAccess(userId: number, processKeys: string[]): Promise<void> {
+  await ensureCallRecAccessTable();
+  const valid = processKeys.filter((k): k is CallRecProcessKey => (CALL_REC_PROCESS_KEYS as readonly string[]).includes(k));
+  await querySource('DELETE FROM shivamgiri.md_call_rec_upload_access WHERE user_id = ?', [userId]);
+  if (valid.length > 0) {
+    const placeholders = valid.map(() => '(?, ?)').join(', ');
+    await querySource(
+      `INSERT INTO shivamgiri.md_call_rec_upload_access (user_id, process_key) VALUES ${placeholders}`,
+      valid.flatMap(k => [userId, k]),
+    );
+  }
+}
+
+export async function hasCallRecProcessAccess(userId: number, processKey: CallRecProcessKey): Promise<boolean> {
+  await ensureCallRecAccessTable();
+  const rows = await querySource<{ cnt: number }>(
+    'SELECT COUNT(*) AS cnt FROM shivamgiri.md_call_rec_upload_access WHERE user_id = ? AND process_key = ?',
+    [userId, processKey],
+  );
+  return Number(rows[0]?.cnt ?? 0) > 0;
+}
+
+// ─── Per-process upload limits ───────────────────────────────────────────────
+// Same idea as Call Audit's upload limits (backend/src/modules/call-audit), but rows-per-day rather
+// than per-agent — a Call Rec Upload is a single file dumping many rows at once, not one action per
+// agent, so "rows accepted today" is the meaningful unit here instead. One limit per process (not
+// one shared number) since Super Admin may reasonably want, say, Housing Owner capped tighter than
+// LP Regional. NULL means unlimited — the default, so turning this on never silently blocks anyone
+// until a Super Admin sets a number for that specific process.
+const PROCESS_TABLE: Record<CallRecProcessKey, string> = {
+  housingOwner: 'CR_housing_owner',
+  housingPremium: 'CR_housing_premium',
+  lpFeedback: 'CR_lp_feedback',
+  lpRegional: 'CR_lp_regional',
+  lpNonRegional: 'CR_lp_non_regional',
+};
+
+let uploadLimitsTableEnsured = false;
+async function ensureUploadLimitsTable(): Promise<void> {
+  if (uploadLimitsTableEnsured) return;
+  await querySource(`
+    CREATE TABLE IF NOT EXISTS shivamgiri.md_call_rec_upload_limits (
+      process_key VARCHAR(30) PRIMARY KEY,
+      max_rows_per_day INT NULL,
+      updated_by_name VARCHAR(100),
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `, []);
+  uploadLimitsTableEnsured = true;
+}
+
+export interface CallRecUploadLimit {
+  processKey: CallRecProcessKey;
+  maxRowsPerDay: number | null;
+  uploadedToday: number;
+  updatedByName: string | null;
+  updatedAt: string | null;
+}
+
+export async function getCallRecUploadLimits(): Promise<CallRecUploadLimit[]> {
+  await ensureUploadLimitsTable();
+  const [limitRows, usageRows] = await Promise.all([
+    querySource<{ process_key: string; max_rows_per_day: number | null; updated_by_name: string | null; updated_at: string | null }>(
+      'SELECT process_key, max_rows_per_day, updated_by_name, updated_at FROM shivamgiri.md_call_rec_upload_limits',
+    ),
+    getMasmisPool().execute(
+      `SELECT table_name, COALESCE(SUM(row_count), 0) AS uploaded_today
+       FROM db_masmis.upload_log
+       WHERE table_name IN (?, ?, ?, ?, ?) AND DATE(uploaded_at) = CURDATE()
+       GROUP BY table_name`,
+      Object.values(PROCESS_TABLE),
+    ).then(([rows]) => rows as { table_name: string; uploaded_today: number }[]),
+  ]);
+  const limitByKey = new Map(limitRows.map(r => [r.process_key, r]));
+  const usageByTable = new Map(usageRows.map(r => [r.table_name, Number(r.uploaded_today)]));
+  return CALL_REC_PROCESS_KEYS.map(key => {
+    const limit = limitByKey.get(key);
+    return {
+      processKey: key,
+      maxRowsPerDay: limit?.max_rows_per_day ?? null,
+      uploadedToday: usageByTable.get(PROCESS_TABLE[key]) ?? 0,
+      updatedByName: limit?.updated_by_name ?? null,
+      updatedAt: limit?.updated_at ?? null,
+    };
+  });
+}
+
+export async function setCallRecUploadLimit(processKey: CallRecProcessKey, maxRowsPerDay: number | null, updatedByName: string): Promise<void> {
+  await ensureUploadLimitsTable();
+  await querySource(`
+    INSERT INTO shivamgiri.md_call_rec_upload_limits (process_key, max_rows_per_day, updated_by_name)
+    VALUES (?, ?, ?)
+    ON DUPLICATE KEY UPDATE max_rows_per_day = VALUES(max_rows_per_day), updated_by_name = VALUES(updated_by_name)
+  `, [processKey, maxRowsPerDay, updatedByName]);
+}
+
+// Checked once at the start of each upload request, before the file is even parsed — cheap, and
+// avoids spending time parsing a large Excel file only to reject it afterward. This means the cap
+// is a "stop accepting new uploads once today's total already meets the limit" gate rather than a
+// hard per-row ceiling: a single file can still push the day's total past the limit if it was
+// accepted while under it, the same tradeoff Call Audit's quota makes for a bulk request.
+export async function checkCallRecUploadQuota(processKey: CallRecProcessKey, isSuperAdmin: boolean): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (isSuperAdmin) return { ok: true };
+  await ensureUploadLimitsTable();
+  const rows = await querySource<{ max_rows_per_day: number | null }>(
+    'SELECT max_rows_per_day FROM shivamgiri.md_call_rec_upload_limits WHERE process_key = ?',
+    [processKey],
+  );
+  const maxRowsPerDay = rows[0]?.max_rows_per_day ?? null;
+  if (maxRowsPerDay === null) return { ok: true };
+
+  const [usageRows] = await getMasmisPool().execute(
+    `SELECT COALESCE(SUM(row_count), 0) AS uploaded_today FROM db_masmis.upload_log WHERE table_name = ? AND DATE(uploaded_at) = CURDATE()`,
+    [PROCESS_TABLE[processKey]],
+  );
+  const uploadedToday = Number((usageRows as { uploaded_today: number }[])[0]?.uploaded_today ?? 0);
+  if (uploadedToday >= maxRowsPerDay) {
+    return { ok: false, message: `Daily upload limit reached for this process — ${maxRowsPerDay} rows/day allowed, ${uploadedToday} already uploaded today. Try again tomorrow or ask a Super Admin to raise the limit.` };
+  }
+  return { ok: true };
+}
 
 // Ports the 5 Excel uploaders that used to live in the standalone "Call Rec UI" app (a separate
 // Node/Sequelize server on port 5050, embedded here via a now-removed iframe) directly into this

@@ -31,6 +31,7 @@ interface ProcessStore {
   canAccessInboundClient: (clientId: number | string) => boolean;
   canAccessOutboundClient: (clientId: number | string) => boolean;
   canAccessInboundSlug: (slug: string) => boolean;
+  hasAnyInboundAccess: () => boolean;
 }
 
 export const useProcessStore = create<ProcessStore>((set, get) => ({
@@ -71,5 +72,16 @@ export const useProcessStore = create<ProcessStore>((set, get) => ({
     return processes.some(
       (p) => p.dialdesk_client_id === clientId && (p.lob === 'Inbound' || p.lob === 'IB/OB'),
     );
+  },
+
+  // Same "does this person have at least one inbound project" check the sidebar uses to decide
+  // whether to even show the Inbound nav item (there it's inboundProjects.length > 0) — used by
+  // RequireInboundAccess to redirect away from /inbound instead of rendering a page that just
+  // 403s on every request when someone lands there directly (a stale link, browser back, etc.)
+  // rather than via a sidebar click.
+  hasAnyInboundAccess: () => {
+    const { isSuperAdmin, processes } = get();
+    if (isSuperAdmin) return true;
+    return processes.some((p) => p.lob === 'Inbound' || p.lob === 'IB/OB');
   },
 }));
