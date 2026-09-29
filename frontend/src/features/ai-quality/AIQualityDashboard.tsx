@@ -130,11 +130,13 @@ export default function AIQualityDashboard() {
   const [ibEnd,   setIbEnd]   = useState(defaultEnd);
   const [ibClients, setIbClients] = useState<InboundClientSummary[]>([]);
   const [ibLoading, setIbLoading] = useState(false);
+  const [ibError, setIbError]     = useState(false);
 
   const [startDate, setStartDate] = useState(defaultStart);
   const [endDate, setEndDate]     = useState(defaultEnd);
   const [clients, setClients]     = useState<ClientKPISummary[]>([]);
   const [loading, setLoading]     = useState(true);
+  const [obError, setObError]     = useState(false);
 
   const ibSd = ibStart.replace('T', ' ');
   const ibEd = ibEnd.replace('T', ' ');
@@ -166,19 +168,27 @@ export default function AIQualityDashboard() {
     }
   };
 
+  // This query has been measured taking 14+ seconds on its own on the shared DB server this app
+  // runs against (it's shared with other, unrelated, currently-heavily-loaded applications) — under
+  // real concurrent page-load conditions it can exceed the backend's 20s hard query timeout and
+  // fail outright. Silently swallowing that error here previously left the page showing "No inbound
+  // audit data for this period" — indistinguishable from there genuinely being no data — instead of
+  // telling the user the load actually failed and a retry might just work.
   const fetchInboundClients = useCallback(() => {
     setIbLoading(true);
+    setIbError(false);
     api.get<{ data: InboundClientSummary[] }>(`/inbound-quality/clients?startDate=${ibSd}&endDate=${ibEd}`)
       .then(r => setIbClients(r.data?.data ?? []))
-      .catch(() => {})
+      .catch(() => setIbError(true))
       .finally(() => setIbLoading(false));
   }, [ibSd, ibEd]);
 
   const fetchOutboundClients = useCallback(() => {
     setLoading(true);
+    setObError(false);
     api.get<{ data: ClientKPISummary[] }>(`/quality/clients-summary?startDate=${sd}&endDate=${ed}`)
       .then(r => setClients(r.data?.data ?? []))
-      .catch(() => {})
+      .catch(() => setObError(true))
       .finally(() => setLoading(false));
   }, [sd, ed]);
 
@@ -290,6 +300,17 @@ export default function AIQualityDashboard() {
                   </div>
                 ))}
               </div>
+            ) : ibError ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-3">
+                <div className="p-4 rounded-xl bg-red-50">
+                  <Building2 size={28} className="text-red-300" />
+                </div>
+                <p className="text-red-500 font-medium text-sm">Couldn't load inbound data — the database is slow or unreachable right now</p>
+                <button onClick={fetchInboundClients}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-700 underline">
+                  Try again
+                </button>
+              </div>
             ) : ibClients.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 gap-3">
                 <div className="p-4 rounded-xl bg-slate-100">
@@ -387,6 +408,24 @@ export default function AIQualityDashboard() {
                     </div>
                   </div>
                 ))}
+              </div>
+            ) : obError ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-3">
+                <div className="p-4 rounded-xl bg-red-50">
+                  <Building2 size={28} className="text-red-300" />
+                </div>
+                <p className="text-red-500 font-medium text-sm">Couldn't load outbound data — the database is slow or unreachable right now</p>
+                <button onClick={fetchOutboundClients}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-700 underline">
+                  Try again
+                </button>
+              </div>
+            ) : clients.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-3">
+                <div className="p-4 rounded-xl bg-slate-100">
+                  <Building2 size={28} className="text-slate-300" />
+                </div>
+                <p className="text-slate-400 font-medium text-sm">No outbound audit data for this period</p>
               </div>
             ) : (
               <div className="flex flex-col gap-2.5 w-full">

@@ -49,9 +49,15 @@ async function buildFilters(req: Request): Promise<svc.MonitorFilters> {
   };
 }
 
-// The overview fans out to two full-table window scans, and an auto-refreshing monitoring page
-// would otherwise hammer the shared pool. A short TTL keeps it near-live without that cost.
-const CACHE_TTL_MS = 90_000;
+// The overview fans out to two full-table window scans — measured live at 12+ seconds on this
+// shared MySQL server (it's shared with several other unrelated applications, not just VICIdial).
+// A 90s TTL was fine while only the dedicated Audit Monitor page called this, but AuditHealthAlert
+// (frontend/src/components/layout/AuditHealthAlert.tsx) now calls it on every privileged user's
+// page load site-wide, so a 90s window meant a fresh 12s query roughly every 90s as long as any
+// privileged user was active anywhere in the app. 10 minutes matches that alert's own re-check
+// interval, so this cache absorbs it — anyone using the "Live" auto-refresh on the Audit Monitor
+// page itself still forces a genuine refresh (passes refresh=1, which bypasses this cache entirely).
+const CACHE_TTL_MS = 10 * 60_000;
 const cache = new Map<string, { at: number; data: svc.MonitorOverview }>();
 
 export async function getOverview(req: Request, res: Response) {
