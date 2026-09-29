@@ -3536,7 +3536,7 @@ export async function getOutboundCallTranscript(callId: number): Promise<Outboun
 // Streamed in keyset-paginated batches (not one big query) so memory stays bounded and the
 // browser starts receiving bytes immediately, regardless of how many rows match the date range.
 const CALL_DETAILS_EXPORT_COLUMNS = [
-  'id', 'client_id', 'campaign_id', 'length_in_sec', 'start_epoch', 'end_epoch', 'CallDate', 'LeadID', 'AgentName', 'MobileNo',
+  'id', 'client_id', 'campaign_id', 'length_in_sec', 'start_epoch', 'end_epoch', 'CallDate', 'LeadID', 'AgentName', 'AgentMasId', 'MobileNo',
   'CompetitorName', 'Opening', 'Offered', 'ObjectionHandling', 'PrepaidPitch', 'UpsellingEfforts', 'OfferUrgency',
   'SensitiveWordUsed', 'SensitiveWordContext', 'AreaForImprovement', 'TranscribeText', 'TopNegativeWordsByAgent',
   'TopNegativeWordsByCustomer', 'LengthSec', 'StartTime', 'EndTime', 'CallDisposition', 'OpeningRejected', 'OfferingRejected',
@@ -4352,6 +4352,14 @@ function exportSelectExpr(col: string, tableAlias: string): string {
       ELSE NULL
     END) AS CQScore`;
   }
+  if (col === 'AgentMasId') {
+    // The 'AgentName' case above resolves to the friendly name from AgentMaster when one exists,
+    // which means the raw MAS ID only ever showed up in the export for the handful of agents with
+    // NO AgentMaster mapping (their fallback value) — every agent who DOES have a name on file had
+    // their MAS ID fully hidden. This exposes the raw value directly and unconditionally, so MAS ID
+    // is always present in the export regardless of whether a friendly name is also resolved.
+    return `${tableAlias}.AgentName AS AgentMasId`;
+  }
   if (col === 'BellavitaPrepaidFatal') {
     // Per explicit instruction: a Bellavita Outbound call where PrepaidPitch was never delivered
     // (blank/None — the same "not done" convention as bellavitaFlagCase's 0 case) is a fatal call.
@@ -4370,6 +4378,7 @@ export interface ExportColumn { header: string; col: string; }
 const BELLAVITA_REQUIRED_EXPORT_COLUMNS: ExportColumn[] = [
   { header: 'CallDate',           col: 'CallDate' },
   { header: 'AgentName',          col: 'AgentName' },
+  { header: 'MAS ID',             col: 'AgentMasId' },
   { header: 'MobileNo',           col: 'MobileNo' },
   { header: 'Opening',            col: 'Opening' },
   { header: 'Offered',            col: 'Offered' },
@@ -4394,6 +4403,7 @@ const BELLAVITA_REQUIRED_EXPORT_COLUMNS: ExportColumn[] = [
 const GNC_REQUIRED_EXPORT_COLUMNS: ExportColumn[] = [
   { header: 'CallDate',           col: 'CallDate' },
   { header: 'AgentName',          col: 'AgentName' },
+  { header: 'MAS ID',             col: 'AgentMasId' },
   { header: 'MobileNo',           col: 'MobileNo' },
   { header: 'Opening',            col: 'Opening' },
   { header: 'Offered',            col: 'Offered' },
@@ -4428,7 +4438,7 @@ export async function streamOutboundExportCsv(
   const acknowledgementHeader = singleClientId === 375 ? 'Bellacash' : singleClientId === 409 ? 'Reward Point' : 'Acknowledgement';
   const cols: ExportColumn[] = isRequired && requiredCols
     ? requiredCols
-    : CALL_DETAILS_EXPORT_COLUMNS.map(c => ({ header: c === 'Acknowledgement' ? acknowledgementHeader : c, col: c }));
+    : CALL_DETAILS_EXPORT_COLUMNS.map(c => ({ header: c === 'Acknowledgement' ? acknowledgementHeader : c === 'AgentMasId' ? 'MAS ID' : c, col: c }));
   const fname = `outbound${isRequired ? '-required' : ''}-export-${startDate.slice(0, 10)}_to_${endDate.slice(0, 10)}.csv`;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
