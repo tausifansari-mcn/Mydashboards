@@ -5,11 +5,17 @@ import * as bvComplianceSvc from './bellavitaCompliance.service';
 import { resolveUserScope } from '../call-master/call-master.service';
 import { getCaseActions as getCaseActionsFromLib, upsertCaseAction, type CaseActionFeature } from '../../lib/caseActions';
 
-function parseDateRange(req: Request): svc.QualityFilters {
+function defaultDateRange(): { startDate: string; endDate: string } {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  const defaultStart = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01 00:00`;
-  const defaultEnd   = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} 23:59`;
+  return {
+    startDate: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01 00:00`,
+    endDate:   `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} 23:59`,
+  };
+}
+
+function parseDateRange(req: Request): svc.QualityFilters {
+  const { startDate: defaultStart, endDate: defaultEnd } = defaultDateRange();
   const agentIdsRaw = req.query.agentIds as string | undefined;
   const agentIds = agentIdsRaw ? agentIdsRaw.split(',').map(s => s.trim()).filter(Boolean) : undefined;
   return {
@@ -503,14 +509,69 @@ export async function getObjectionAnalysis(req: Request, res: Response) {
   }
 }
 
+// Full-table, no-clientId-filter aggregate across every outbound client — the same result for
+// every caller asking about the same date range (any per-client scoping happens client-side after
+// the fetch, not in this query), which makes it a safe, effective cache candidate. Added after this
+// query was measured genuinely failing — not just slow, actually exceeding the 20s hard timeout —
+// on the shared MySQL server this app runs against (also used by other, unrelated, heavily-loaded
+// applications). Caching means only the first request after the TTL expires pays that cost; every
+// other concurrent/near-concurrent request (any user, any tab) gets the same cached answer instantly
+// instead of each independently risking its own timeout.
+const CLIENTS_SUMMARY_CACHE_TTL_MS = 5 * 60_000;
+const clientsSummaryCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof svc.getClientsSummary>> }>();
+
+// Keyed by DATE only, not the full startDate/endDate strings — the frontend always sends the exact
+// current timestamp as endDate (e.g. "2026-09-29 17:23", down to the minute the page happened to
+// load), which is a different string on every single request. Keying by the full string meant this
+// cache could never actually be hit by real traffic: the background warmup job's key never matched
+// any real request's key, so every request kept hitting the live query regardless. Truncating to the
+// date means "today, any time" all share one entry — a few minutes of "missing" recent calls in an
+// aggregate CQ/conversion summary is an acceptable tradeoff for not risking a 20s timeout.
+function clientsSummaryCacheKey(startDate: string, endDate: string): string {
+  return `${startDate.slice(0, 10)}|${endDate.slice(0, 10)}`;
+}
+
 export async function getClientsSummary(req: Request, res: Response) {
+  const filters = parseDateRange(req);
+  const key = clientsSummaryCacheKey(filters.startDate, filters.endDate);
   try {
-    const filters = parseDateRange(req);
+    const hit = clientsSummaryCache.get(key);
+    if (hit && Date.now() - hit.at < CLIENTS_SUMMARY_CACHE_TTL_MS) {
+      res.json({ data: hit.data, cached: true });
+      return;
+    }
     const data = await svc.getClientsSummary(filters);
-    res.json({ data });
+    clientsSummaryCache.set(key, { at: Date.now(), data });
+    if (clientsSummaryCache.size > 50) clientsSummaryCache.delete(clientsSummaryCache.keys().next().value as string);
+    res.json({ data, cached: false });
   } catch (err: unknown) {
+    // A cached-but-stale entry is far more useful to show than an error banner when the DB is the
+    // one struggling right now — fall back to it instead of failing outright if we have one at all,
+    // even past its normal TTL.
+    const stale = clientsSummaryCache.get(key);
+    if (stale) { res.json({ data: stale.data, cached: true, stale: true }); return; }
     const msg = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ message: msg });
+  }
+}
+
+// Proactively keeps the cache above warm for the one date range that matters most — "this month to
+// today", what the AI Quality landing page requests by default and what the overwhelming majority
+// of visits actually use. Run on a timer (see startDashboardSummaryWarmup in app.ts) well inside the
+// TTL, so a real visitor's request almost never has to wait on — or risk failing — a live query at
+// all; it just reads whatever this background refresh last managed to compute, even if that attempt
+// itself happened to hit a bad moment on the shared DB server (the request handler above already
+// falls back to a stale entry rather than erroring, so a single missed refresh doesn't lose it).
+export async function warmClientsSummaryCache(): Promise<void> {
+  try {
+    // Computes its own precise "now" for the actual query (so the data itself is as fresh as any
+    // real request would get), but stores it under the date-only key so any real request for
+    // "today" — regardless of the exact minute it was sent — finds this entry.
+    const { startDate, endDate } = defaultDateRange();
+    const data = await svc.getClientsSummary({ startDate, endDate });
+    clientsSummaryCache.set(clientsSummaryCacheKey(startDate, endDate), { at: Date.now(), data });
+  } catch (err) {
+    console.error('[warmup] clients-summary cache refresh failed:', err instanceof Error ? err.message : err);
   }
 }
 

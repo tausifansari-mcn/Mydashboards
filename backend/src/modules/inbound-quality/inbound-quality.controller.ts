@@ -3,11 +3,17 @@ import * as svc from './inbound-quality.service';
 import { resolveUserScope } from '../call-master/call-master.service';
 import { getCaseActions as getCaseActionsFromLib, upsertCaseAction, type CaseActionFeature } from '../../lib/caseActions';
 
-function parseFilters(req: Request): svc.InboundQualityFilters {
+function defaultDateRange(): { startDate: string; endDate: string } {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  const defaultStart = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01 00:00:00`;
-  const defaultEnd   = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} 23:59:59`;
+  return {
+    startDate: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01 00:00:00`,
+    endDate:   `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} 23:59:59`,
+  };
+}
+
+function parseFilters(req: Request): svc.InboundQualityFilters {
+  const { startDate: defaultStart, endDate: defaultEnd } = defaultDateRange();
   return {
     startDate: (req.query.startDate as string) || defaultStart,
     endDate:   (req.query.endDate   as string) || defaultEnd,
@@ -15,12 +21,55 @@ function parseFilters(req: Request): svc.InboundQualityFilters {
   };
 }
 
+// Same reasoning as quality.controller.ts's getClientsSummary cache: this is a full-table aggregate
+// with no clientId filter in the SQL (per-client scoping happens client-side after the fetch), so
+// the same result serves every caller asking about the same date range. Added after this query was
+// measured taking 14+ seconds on the shared MySQL server this app runs against — under real
+// concurrent load that risks crossing the 20s hard query timeout the same way the outbound version
+// of this page actually did. Falls back to a stale cached entry rather than erroring outright if the
+// DB is struggling badly enough that even a fresh attempt fails.
+const INBOUND_CLIENTS_CACHE_TTL_MS = 5 * 60_000;
+const inboundClientsCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof svc.getInboundClients>> }>();
+
+// Date-only key: real requests from the frontend always carry the exact current timestamp as
+// endDate (down to the minute), which would otherwise miss this cache almost every time — and,
+// critically, never match the fixed end-of-day key the background warmup job below computes. Since
+// no call data can have a future timestamp, "up to right now" and "up to end of today" return the
+// same rows anyway, so collapsing both to the date is safe.
+function inboundClientsCacheKey(startDate: string, endDate: string): string {
+  return `${startDate.slice(0, 10)}|${endDate.slice(0, 10)}`;
+}
+
 export async function getInboundClients(req: Request, res: Response) {
+  const filters = parseFilters(req);
+  const key = inboundClientsCacheKey(filters.startDate, filters.endDate);
   try {
-    const data = await svc.getInboundClients(parseFilters(req));
-    res.json({ data });
+    const hit = inboundClientsCache.get(key);
+    if (hit && Date.now() - hit.at < INBOUND_CLIENTS_CACHE_TTL_MS) {
+      res.json({ data: hit.data, cached: true });
+      return;
+    }
+    const data = await svc.getInboundClients(filters);
+    inboundClientsCache.set(key, { at: Date.now(), data });
+    if (inboundClientsCache.size > 50) inboundClientsCache.delete(inboundClientsCache.keys().next().value as string);
+    res.json({ data, cached: false });
   } catch (err: unknown) {
+    const stale = inboundClientsCache.get(key);
+    if (stale) { res.json({ data: stale.data, cached: true, stale: true }); return; }
     res.status(500).json({ message: err instanceof Error ? err.message : 'Unknown error' });
+  }
+}
+
+// See quality.controller.ts's warmClientsSummaryCache — same idea, kept in sync by
+// startDashboardSummaryWarmup (app.ts) so a real visitor's request almost never has to wait on, or
+// risk failing, a live query for the one date range ("this month to today") that matters most.
+export async function warmInboundClientsCache(): Promise<void> {
+  try {
+    const { startDate, endDate } = defaultDateRange();
+    const data = await svc.getInboundClients({ startDate, endDate });
+    inboundClientsCache.set(inboundClientsCacheKey(startDate, endDate), { at: Date.now(), data });
+  } catch (err) {
+    console.error('[warmup] inbound-clients cache refresh failed:', err instanceof Error ? err.message : err);
   }
 }
 

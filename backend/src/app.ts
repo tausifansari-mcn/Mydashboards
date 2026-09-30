@@ -24,9 +24,11 @@ import {
   initMagicalScriptCacheTables, startMagicalScriptCacheJob,
   initOutboundDashboardCacheTables, startOutboundDashboardCacheJob,
 } from './modules/quality/quality.service';
+import { warmClientsSummaryCache } from './modules/quality/quality.controller';
 import { initHousingOwnerComplianceTables, startHousingOwnerComplianceJob } from './modules/quality/housingOwnerCompliance.service';
 import { initBellavitaComplianceTables } from './modules/quality/bellavitaCompliance.service';
 import inboundQualityRoutes from './modules/inbound-quality/inbound-quality.routes';
+import { warmInboundClientsCache } from './modules/inbound-quality/inbound-quality.controller';
 import auditMonitorRoutes from './modules/audit-monitor/audit-monitor.routes';
 import { initVideoPhraseCache, startVideoPhraseJob } from './modules/inbound-quality/inbound-quality.service';
 import taskSchedulerRoutes from './modules/task-scheduler/task-scheduler.routes';
@@ -97,6 +99,21 @@ const server = app.listen(PORT, () => {
   initVideoPhraseCache()
     .then(() => startVideoPhraseJob())
     .catch(err => logger.error('[startup] initVideoPhraseCache failed:', err.message));
+
+  // Keeps the AI Quality landing page's "this month to today" summary (both Inbound and Outbound
+  // tabs) pre-computed and cached, so a real visitor's request almost never has to wait on — or
+  // risk failing — a live query against the shared DB server this app runs on (also used by other,
+  // unrelated, sometimes heavily-loaded applications; these two specific queries have been measured
+  // both taking 14+ seconds and outright failing at the 20s hard timeout). Runs every 4 minutes,
+  // just inside the 5-minute cache TTL in each controller, so the cache is refreshed before it ever
+  // has a chance to go fully stale under normal conditions.
+  const warmDashboardSummaries = () => {
+    warmClientsSummaryCache().catch(() => {});
+    warmInboundClientsCache().catch(() => {});
+  };
+  warmDashboardSummaries();
+  const dashboardSummaryTimer = setInterval(warmDashboardSummaries, 4 * 60_000);
+  if (typeof dashboardSummaryTimer.unref === 'function') dashboardSummaryTimer.unref();
 });
 
 // Without this, PM2's restart/stop signal kills the process before the OS has released the

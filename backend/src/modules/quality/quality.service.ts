@@ -3581,13 +3581,24 @@ const HOUSING_OWNER_VALID_CALL_CLAUSE = `
 `;
 
 // SoftSkill is blank on a portion of otherwise-gradable Housing Owner calls (same upstream data
-// gap as Opening — see HOUSING_OWNER_VALID_CALL_CLAUSE above). Per explicit instruction, a blank
-// SoftSkill should count as a pass (1), not a fail — unlike Opening/Offered/OfferUrgency/Product,
-// which stay "blank counts as 0" (the general convention used everywhere else in this file).
+// gap as Opening — see HOUSING_OWNER_VALID_CALL_CLAUSE above). For calls before
+// SOFT_SKILL_BLANK_AS_FAIL_START_DATE, a blank SoftSkill counted as a pass (1) per an earlier
+// explicit instruction. Per updated instruction, calls from that date onward flip this: a blank
+// SoftSkill now counts as a fail (0), and any non-blank value (not just literal 1) counts as a
+// pass (1). A fixed calendar date, not "today", so calls already reported before the change don't
+// silently get rescored the next time this file is touched.
+const SOFT_SKILL_BLANK_AS_FAIL_START_DATE = '2026-09-28';
+
 function housingOwnerFlagPassExpr(alias: string, col: string): string {
   const p = alias ? `${alias}.` : '';
   if (col === 'SoftSkill') {
-    return `CASE WHEN (${p}SoftSkill IS NULL OR TRIM(${p}SoftSkill) = '') THEN 1 WHEN ${p}SoftSkill = 1 THEN 1 ELSE 0 END`;
+    const isBlank = `(${p}SoftSkill IS NULL OR TRIM(${p}SoftSkill) = '')`;
+    return `CASE
+      WHEN ${p}CallDate >= '${SOFT_SKILL_BLANK_AS_FAIL_START_DATE}' THEN CASE WHEN ${isBlank} THEN 0 ELSE 1 END
+      WHEN ${isBlank} THEN 1
+      WHEN ${p}SoftSkill = 1 THEN 1
+      ELSE 0
+    END`;
   }
   return `IF(${p}${col}=1,1,0)`;
 }
@@ -4336,10 +4347,14 @@ function exportSelectExpr(col: string, tableAlias: string): string {
     END) AS AgentName`;
   }
   if (col === 'SoftSkill') {
-    // Displayed/exported value follows the same "blank counts as 1" rule as the CQ Score formula
-    // for Housing Owner (see housingOwnerFlagPassExpr above) — other clients' raw value is untouched.
+    // Displayed/exported value follows the same date-gated rule as the CQ Score formula for
+    // Housing Owner (see housingOwnerFlagPassExpr/SOFT_SKILL_BLANK_AS_FAIL_START_DATE above) —
+    // other clients' raw value is untouched.
+    const isBlank = `(${tableAlias}.SoftSkill IS NULL OR TRIM(${tableAlias}.SoftSkill) = '')`;
     return `(CASE
-      WHEN ${tableAlias}.client_id = ${HOUSING_OWNER_CLIENT_ID} AND (${tableAlias}.SoftSkill IS NULL OR TRIM(${tableAlias}.SoftSkill) = '') THEN 1
+      WHEN ${tableAlias}.client_id = ${HOUSING_OWNER_CLIENT_ID} AND ${tableAlias}.CallDate >= '${SOFT_SKILL_BLANK_AS_FAIL_START_DATE}'
+        THEN (CASE WHEN ${isBlank} THEN 0 ELSE 1 END)
+      WHEN ${tableAlias}.client_id = ${HOUSING_OWNER_CLIENT_ID} AND ${isBlank} THEN 1
       ELSE ${tableAlias}.SoftSkill
     END) AS SoftSkill`;
   }
