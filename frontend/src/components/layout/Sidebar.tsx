@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, Building2, LogOut,
   ChevronLeft, ChevronRight, User, ClipboardList, GitBranch, ShieldCheck,
   PhoneCall, Phone, ChevronDown, BarChart3, Package, X, CalendarClock,
-  UploadCloud, Activity, Bot, FileSearch,
+  UploadCloud, Activity, Bot, FileSearch, Landmark,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -35,6 +35,10 @@ const CALL_REC_LINK = { to: '/callrec', icon: UploadCloud, label: 'Call Rec UI' 
 // Health of the AI audit pipeline itself — which processes are still being graded and which
 // have quietly stopped. Granted via the 'audit-monitor' dashboard, same as the two links above.
 const AUDIT_MONITOR_LINK = { to: '/monitoring/audit', icon: Activity, label: 'AI Audit Monitor' };
+
+// SBI Collection dashboard — a standalone, super_admin-only analytics page over its own imported
+// dataset (db_masmis.sbi_quality), not part of the generic per-client AI Quality flow.
+const SBI_COLLECTION_LINK = { to: '/sbi-collection', icon: Landmark, label: 'SBI Collection' };
 
 const ALL_INBOUND_PROJECTS = [
   { to: '/inbound/gnc',          slug: 'gnc',          icon: '🛒', label: 'GNC' },
@@ -181,6 +185,7 @@ export default function Sidebar() {
             {hasTaskScheduler && <SidebarLink {...TASK_SCHEDULER_LINK} expanded={desktopExpanded || isMobile} />}
             {hasCallRec && <SidebarLink {...CALL_REC_LINK} expanded={desktopExpanded || isMobile} />}
             {hasAuditMonitor && <SidebarLink {...AUDIT_MONITOR_LINK} expanded={desktopExpanded || isMobile} />}
+            {isSuperAdmin && <SidebarLink {...SBI_COLLECTION_LINK} expanded={desktopExpanded || isMobile} />}
           </SidebarSection>
         )}
 

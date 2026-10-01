@@ -34,6 +34,8 @@ import { initVideoPhraseCache, startVideoPhraseJob } from './modules/inbound-qua
 import taskSchedulerRoutes from './modules/task-scheduler/task-scheduler.routes';
 import { startTaskSchedulerJob } from './modules/task-scheduler/task-scheduler.service';
 import settingsRoutes from './modules/settings/settings.routes';
+import sbiQualityRoutes from './modules/sbi-quality/sbi-quality.routes';
+import { initSbiQualityTable } from './modules/sbi-quality/sbi-quality.service';
 import { initSmtpFromDb } from './lib/mailer';
 import { initAiSettingsFromDb } from './lib/aiSettings';
 import { initDeepgramSettingsFromDb } from './lib/deepgramSettings';
@@ -66,6 +68,7 @@ app.use('/api/inbound-quality', inboundQualityRoutes);
 app.use('/api/audit-monitor', auditMonitorRoutes);
 app.use('/api/task-scheduler', taskSchedulerRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/sbi-quality', sbiQualityRoutes);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date() }));
 
@@ -95,6 +98,7 @@ const server = app.listen(PORT, () => {
     .then(() => startHousingOwnerComplianceJob())
     .catch(err => logger.error('[startup] initHousingOwnerComplianceTables failed:', err.message));
   initBellavitaComplianceTables().catch(err => logger.error('[startup] initBellavitaComplianceTables failed:', err.message));
+  initSbiQualityTable().catch(err => logger.error('[startup] initSbiQualityTable failed:', err.message));
   startTaskSchedulerJob();
   initVideoPhraseCache()
     .then(() => startVideoPhraseJob())

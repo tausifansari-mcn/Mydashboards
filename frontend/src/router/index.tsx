@@ -26,6 +26,7 @@ const CallRecUploadPage       = lazy(() => import('@/features/callrec/CallRecUpl
 const AuditMonitorPage        = lazy(() => import('@/features/monitoring/AuditMonitorPage'));
 const AIBotPage               = lazy(() => import('@/features/ai-bot/AIBotPage'));
 const CallAuditPage           = lazy(() => import('@/features/call-audit/CallAuditPage'));
+const SbiQualityDashboard     = lazy(() => import('@/features/sbi-quality/SbiQualityDashboard'));
 
 const wrap = (C: React.ComponentType) => (
   <Suspense fallback={<PageLoader />}>
@@ -70,6 +71,7 @@ const router = createBrowserRouter(
                 { path: '/admin/processes', element: wrap(ProcessesPage) },
                 { path: '/admin/access',    element: wrap(AccessPage) },
                 { path: '/audit',           element: wrap(AuditPage) },
+                { path: '/sbi-collection',  element: wrap(SbiQualityDashboard) },
               ],
             },
           ],
