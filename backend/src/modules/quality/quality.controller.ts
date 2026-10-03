@@ -14,6 +14,23 @@ function defaultDateRange(): { startDate: string; endDate: string } {
   };
 }
 
+// "Previous month" (the whole calendar month before the current one) is the other date range the
+// AI Quality landing page's picker makes one click away — unlike "this month to date" it was never
+// pre-warmed, so picking it always meant a genuinely live, full-month, all-clients aggregate query.
+// That query has been measured taking 17-18+ seconds even when it succeeds, which is close enough to
+// the 20s hard timeout that it fails outright whenever the shared DB server is even a little busier
+// than usual (see warmClientsSummaryCache below for how this gets pre-warmed the same way).
+function previousMonthDateRange(): { startDate: string; endDate: string } {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastDay = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+  return {
+    startDate: `${prevMonth.getFullYear()}-${pad(prevMonth.getMonth() + 1)}-01 00:00`,
+    endDate:   `${prevMonth.getFullYear()}-${pad(prevMonth.getMonth() + 1)}-${pad(lastDay)} 23:59`,
+  };
+}
+
 function parseDateRange(req: Request): svc.QualityFilters {
   const { startDate: defaultStart, endDate: defaultEnd } = defaultDateRange();
   const agentIdsRaw = req.query.agentIds as string | undefined;
@@ -518,6 +535,11 @@ export async function getObjectionAnalysis(req: Request, res: Response) {
 // other concurrent/near-concurrent request (any user, any tab) gets the same cached answer instantly
 // instead of each independently risking its own timeout.
 const CLIENTS_SUMMARY_CACHE_TTL_MS = 5 * 60_000;
+// A month that has already fully ended can't gain or lose calls — unlike "this month to date",
+// which keeps accumulating, there's no reason to treat a cached answer for it as stale after just
+// 5 minutes. A generous 24h TTL (not literally infinite, in case of rare retroactive data fixes)
+// means the one-time warmup below is effectively enough for the whole day.
+const CLIENTS_SUMMARY_HISTORICAL_TTL_MS = 24 * 60 * 60_000;
 const clientsSummaryCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof svc.getClientsSummary>> }>();
 
 // Keyed by DATE only, not the full startDate/endDate strings — the frontend always sends the exact
@@ -531,12 +553,21 @@ function clientsSummaryCacheKey(startDate: string, endDate: string): string {
   return `${startDate.slice(0, 10)}|${endDate.slice(0, 10)}`;
 }
 
+// Any range that ends before the start of the current calendar month is "closed" — it can't still
+// be accumulating new calls — so it gets the long historical TTL instead of the normal 5-minute one.
+function cacheTtlFor(endDate: string): number {
+  const now = new Date();
+  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  return new Date(endDate) < startOfThisMonth ? CLIENTS_SUMMARY_HISTORICAL_TTL_MS : CLIENTS_SUMMARY_CACHE_TTL_MS;
+}
+
 export async function getClientsSummary(req: Request, res: Response) {
   const filters = parseDateRange(req);
   const key = clientsSummaryCacheKey(filters.startDate, filters.endDate);
+  const ttl = cacheTtlFor(filters.endDate);
   try {
     const hit = clientsSummaryCache.get(key);
-    if (hit && Date.now() - hit.at < CLIENTS_SUMMARY_CACHE_TTL_MS) {
+    if (hit && Date.now() - hit.at < ttl) {
       res.json({ data: hit.data, cached: true });
       return;
     }
@@ -555,9 +586,10 @@ export async function getClientsSummary(req: Request, res: Response) {
   }
 }
 
-// Proactively keeps the cache above warm for the one date range that matters most — "this month to
-// today", what the AI Quality landing page requests by default and what the overwhelming majority
-// of visits actually use. Run on a timer (see startDashboardSummaryWarmup in app.ts) well inside the
+// Proactively keeps the cache above warm for the two date ranges the AI Quality landing page's
+// picker makes a single click away: "this month to today" (the default view, refreshed every tick)
+// and "previous month" (refreshed only once per historical TTL, since that data can't change — see
+// cacheTtlFor above). Run on a timer (see startDashboardSummaryWarmup in app.ts) well inside the
 // TTL, so a real visitor's request almost never has to wait on — or risk failing — a live query at
 // all; it just reads whatever this background refresh last managed to compute, even if that attempt
 // itself happened to hit a bad moment on the shared DB server (the request handler above already
@@ -572,6 +604,21 @@ export async function warmClientsSummaryCache(): Promise<void> {
     clientsSummaryCache.set(clientsSummaryCacheKey(startDate, endDate), { at: Date.now(), data });
   } catch (err) {
     console.error('[warmup] clients-summary cache refresh failed:', err instanceof Error ? err.message : err);
+  }
+  try {
+    const { startDate, endDate } = previousMonthDateRange();
+    const key = clientsSummaryCacheKey(startDate, endDate);
+    const existing = clientsSummaryCache.get(key);
+    if (!existing || Date.now() - existing.at >= cacheTtlFor(endDate)) {
+      // A full-month, every-client aggregate has been measured taking 17-18+ seconds even when it
+      // succeeds — too close to querySource's normal 20s live-request budget to reliably finish
+      // under extra DB load. Nobody is blocked waiting on this background refresh, so give it 55s
+      // instead of racing the same clock a live request would.
+      const data = await svc.getClientsSummary({ startDate, endDate }, 55_000);
+      clientsSummaryCache.set(key, { at: Date.now(), data });
+    }
+  } catch (err) {
+    console.error('[warmup] clients-summary previous-month cache refresh failed:', err instanceof Error ? err.message : err);
   }
 }
 

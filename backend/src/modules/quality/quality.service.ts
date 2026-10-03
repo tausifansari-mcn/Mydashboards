@@ -1555,7 +1555,13 @@ export async function getAgentNPSCSAT(filters: QualityFilters): Promise<AgentNPS
   }));
 }
 
-export async function getClientsSummary(filters: QualityFilters): Promise<ClientKPISummary[]> {
+// timeoutMs: this full-table, every-client GROUP BY is the heaviest query behind the AI Quality
+// landing page — for a full calendar month it's been measured taking 17-18+ seconds even when it
+// succeeds, right at the edge of querySource's normal 20s live-request budget. The background
+// warmup job that pre-caches "previous month" (see quality.controller.ts) passes a longer timeout
+// here since nothing is blocked waiting on it, giving the query room to actually finish instead of
+// racing the same 20s clock a live request would.
+export async function getClientsSummary(filters: QualityFilters, timeoutMs?: number): Promise<ClientKPISummary[]> {
   const { startDate, endDate } = filters;
   const rows = await querySource<{
     client_id:      number;
@@ -1611,7 +1617,7 @@ export async function getClientsSummary(filters: QualityFilters): Promise<Client
       AND cd.CallDate BETWEEN ? AND ?
     GROUP BY cd.client_id, c.name
     ORDER BY client_name ASC
-  `, [startDate, endDate]);
+  `, [startDate, endDate], 3, timeoutMs);
 
   return rows.map(r => ({
     client_id:      Number(r.client_id),

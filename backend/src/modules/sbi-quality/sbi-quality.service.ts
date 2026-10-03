@@ -63,10 +63,38 @@ export async function initSbiQualityTable(): Promise<void> {
         INDEX idx_scenario (scenario)
       )
     `);
+    // Additive migration: the second call-data export added these columns. MySQL has no
+    // ADD COLUMN IF NOT EXISTS, so check information_schema first and only add what's missing.
+    const existing = await queryMasmis<{ COLUMN_NAME: string }>(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'db_masmis' AND TABLE_NAME = 'sbi_quality'`,
+    );
+    const have = new Set(existing.map(r => r.COLUMN_NAME));
+    for (const [col, def] of SBI_QUALITY_EXTRA_COLUMNS) {
+      if (!have.has(col)) await pool.execute(`ALTER TABLE db_masmis.sbi_quality ADD COLUMN ${col} ${def}`);
+    }
   } catch (err) {
     console.error('[startup] initSbiQualityTable failed:', err instanceof Error ? err.message : err);
   }
 }
+
+// Columns added by the second Call Data export (customer intent / payability / QA detail). Kept as
+// (name, SQL type) pairs so the additive migration above and the import script share one source.
+export const SBI_QUALITY_EXTRA_COLUMNS: [string, string][] = [
+  ['call_datetime', 'DATETIME NULL'],
+  ['customer_intent', 'VARCHAR(20) NULL'],
+  ['customer_validity', 'VARCHAR(40) NULL'],
+  ['genuine_payable', 'VARCHAR(5) NULL'],
+  ['non_payable_reason', 'VARCHAR(120) NULL'],
+  ['payment_status', 'VARCHAR(5) NULL'],
+  ['payment_made', 'VARCHAR(5) NULL'],
+  ['call_required', 'VARCHAR(10) NULL'],
+  ['call_priority', 'VARCHAR(200) NULL'],
+  ['recommended_next_action', 'TEXT NULL'],
+  ['qa_statement', 'VARCHAR(40) NULL'],
+  ['primary_emotion', 'VARCHAR(255) NULL'],
+  ['frustration_reason', 'TEXT NULL'],
+  ['anger_abuse_reason', 'VARCHAR(255) NULL'],
+];
 
 // Column order used both by the CREATE TABLE above and by the one-time Excel import script, so
 // the two never drift apart.
@@ -184,6 +212,10 @@ export interface SbiQualityRow {
   objection_handling: number; callback_handling: number; proper_call_closure: number;
   frustration_level: string; frustration_detected: number; customer_abusing: number;
   abusive_sentence: string | null; customer_sentiment: string; call_outcome: string;
+  call_datetime: string | null; customer_intent: string; customer_validity: string; genuine_payable: string;
+  non_payable_reason: string; payment_status: string; payment_made: string; call_required: string;
+  call_priority: string; recommended_next_action: string; qa_statement: string; primary_emotion: string;
+  frustration_reason: string; anger_abuse_reason: string | null;
 }
 
 export interface SbiQualityFilters {
@@ -482,7 +514,7 @@ export function computeQualityInsights(rows: SbiQualityRow[]) {
       const failCount = POSITIVE_PARAMS.includes(c as PositiveParam)
         ? countWhere(rows, r => Number(r[c]) !== 1)
         : countWhere(rows, r => Number(r[c]) === 1);
-      return { issue: ISSUE_LABELS[c], count: failCount };
+      return { key: c, issue: ISSUE_LABELS[c], count: failCount };
     })
     .filter(x => x.count > 0)
     .sort((a, b) => b.count - a.count)
@@ -544,4 +576,222 @@ function buildKeyInsights(rows: SbiQualityRow[]): string[] {
   ].some(c => Number(r[c as NegativeParam]) === 1));
   if (sensitiveCount > 0) insights.push(`${sensitiveCount} call(s) involved a request for OTP/PIN/CVV/password or an unauthorized payment instruction — flag for immediate compliance review.`);
   return insights;
+}
+
+// ─── Drill-down: any chart/metric click resolves to a (type, value) pair that selects the matching
+// calls from the already-fetched, already-filtered rows, then summarizes them. No extra SQL needed.
+export type DrillType =
+  | 'kpi' | 'outcome' | 'scenario' | 'agent' | 'sentiment' | 'frustration' | 'abusive'
+  | 'frustratedScenario' | 'week' | 'param' | 'agentParam' | 'compliance' | 'call'
+  | 'intent' | 'genuine' | 'payOutcome' | 'nonActionableReason' | 'neutralOutcome' | 'disposition' | 'needCall' | 'funnel' | 'qaStatement';
+
+function matchesDrill(r: SbiQualityRow, type: DrillType, value: string): boolean {
+  switch (type) {
+    case 'kpi':
+      if (value === 'ptp') return r.call_outcome === 'PTP Given';
+      if (value === 'payment') return r.call_outcome === 'Payment Done';
+      if (value === 'abusing') return Number(r.customer_abusing) === 1;
+      if (value === 'highFrustration') return r.frustration_level === 'High';
+      if (value === 'frustrationDetected') return Number(r.frustration_detected) === 1;
+      if (value === 'nonCompliant') return POSITIVE_PARAMS.some(c => Number(r[c]) !== 1) || NEGATIVE_PARAMS.some(c => Number(r[c]) === 1);
+      return true;
+    case 'outcome': return r.call_outcome === value;
+    case 'scenario': return r.scenario === value;
+    case 'agent': return r.agent_name === value;
+    case 'sentiment': return r.customer_sentiment === value;
+    case 'frustration': return r.frustration_level === value;
+    case 'abusive': return value === 'Abusive' ? Number(r.customer_abusing) === 1 : Number(r.customer_abusing) !== 1;
+    case 'frustratedScenario': return (r.frustration_level === 'High' || r.frustration_level === 'Medium') && r.scenario === value;
+    case 'week': return weekBucket(String(r.call_date)).label === value;
+    case 'param':
+      if ((POSITIVE_PARAMS as readonly string[]).includes(value)) return Number(r[value as PositiveParam]) !== 1;
+      return Number(r[value as NegativeParam]) === 1;
+    case 'agentParam': {
+      const [agent, key] = value.split('|');
+      return r.agent_name === agent && matchesDrill(r, 'param', key);
+    }
+    case 'compliance':
+      return value === 'nonCompliant'
+        ? matchesDrill(r, 'kpi', 'nonCompliant')
+        : !matchesDrill(r, 'kpi', 'nonCompliant');
+    case 'call': return r.call_id === value;
+    case 'intent': return r.customer_intent === value;
+    case 'genuine': return r.genuine_payable === value;
+    case 'payOutcome': return isGenuine(r) && payOutcomeOf(r) === value;
+    case 'nonActionableReason': return !isGenuine(r) && r.non_payable_reason === value;
+    case 'neutralOutcome': return r.customer_intent === 'Neutral' && r.call_outcome === value;
+    case 'disposition': return r.non_payable_reason === value;
+    case 'needCall': return value === 'Need to call' ? needsCall(r) : r.call_required === value;
+    case 'funnel':
+      if (value === 'total') return true;
+      if (value === 'genuine') return isGenuine(r);
+      if (value === 'positive') return isGenuine(r) && r.customer_intent === 'Positive';
+      if (value === 'ptp') return isGenuine(r) && payOutcomeOf(r) === 'PTP Given';
+      return isGenuine(r) && payOutcomeOf(r) === 'Payment Done';
+    case 'qaStatement': return r.qa_statement === value;
+  }
+}
+
+function dayKey(d: unknown): string {
+  const dt = d instanceof Date ? d : new Date(String(d));
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`;
+}
+
+export function computeDrill(rows: SbiQualityRow[], type: DrillType, value: string) {
+  const matched = rows.filter(r => matchesDrill(r, type, value));
+  const total = matched.length;
+  const dayMap = new Map<string, SbiQualityRow[]>();
+  for (const r of matched) {
+    const k = dayKey(r.call_date);
+    if (!dayMap.has(k)) dayMap.set(k, []);
+    dayMap.get(k)!.push(r);
+  }
+  const byDay = [...dayMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, dr]) => ({
+    date,
+    calls: dr.length,
+    auditScorePct: avgAuditScorePct(dr),
+    ptpGiven: countWhere(dr, r => r.call_outcome === 'PTP Given'),
+    paymentDone: countWhere(dr, r => r.call_outcome === 'Payment Done'),
+    abusive: countWhere(dr, r => Number(r.customer_abusing) === 1),
+  }));
+  const { nonCompliant, total: paramTotal } = complianceCounts(matched);
+  return {
+    total,
+    kpis: {
+      calls: total,
+      auditScorePct: avgAuditScorePct(matched),
+      avgDurationMin: avgDurationMin(matched),
+      ptpGiven: countWhere(matched, r => r.call_outcome === 'PTP Given'),
+      paymentDone: countWhere(matched, r => r.call_outcome === 'Payment Done'),
+      abusive: countWhere(matched, r => Number(r.customer_abusing) === 1),
+      nonCompliancePct: pct(nonCompliant, paramTotal),
+      uniqueCustomers: new Set(matched.map(r => r.customer_phone || r.customer_id)).size,
+    },
+    byDay,
+    breakdowns: {
+      outcome: groupCount(matched, 'call_outcome'),
+      scenario: groupCount(matched, 'scenario'),
+      agent: groupCount(matched, 'agent_name'),
+      sentiment: groupCount(matched, 'customer_sentiment'),
+      frustration: groupCount(matched, 'frustration_level'),
+    },
+    calls: matched.slice(0, 300).map(r => ({
+      callId: r.call_id,
+      date: dayKey(r.call_date),
+      agent: r.agent_name,
+      scenario: r.scenario,
+      outcome: r.call_outcome,
+      sentiment: r.customer_sentiment,
+      frustration: r.frustration_level,
+      auditScorePct: round1(auditScore(r) * 100),
+      durationMin: round1((r.duration_sec || 0) / 60),
+      abusive: Number(r.customer_abusing) === 1,
+      abusiveSentence: r.abusive_sentence ?? '',
+      failedParams: POSITIVE_PARAMS.filter(c => Number(r[c]) !== 1).map(c => POSITIVE_LABELS[c])
+        .concat(NEGATIVE_PARAMS.filter(c => Number(r[c]) === 1).map(c => NEGATIVE_LABELS[c].replace(/^No /, ''))),
+    })),
+    callsTruncated: total > 300,
+  };
+}
+
+// ─── Customer Intent slide (second call-data export) ─────────────────────────────────────────
+// Genuine = the agent reached a valid, payable customer. Non-actionable = wrong number, refusal,
+// already-paid claim, invalid PIN, etc. Payment outcome is only meaningful for genuine customers.
+function isGenuine(r: SbiQualityRow): boolean { return r.genuine_payable === 'Yes'; }
+function payOutcomeOf(r: SbiQualityRow): 'Payment Done' | 'PTP Given' | 'Pending' | 'Other' {
+  if (r.payment_status === 'Yes') return 'Payment Done';
+  if (r.non_payable_reason === 'PTP') return 'PTP Given';
+  if ((r.non_payable_reason ?? '').startsWith('Pending')) return 'Pending';
+  return 'Other';
+}
+function needsCall(r: SbiQualityRow): boolean { return r.call_required === 'High' || r.call_required === 'Medium'; }
+const QA_STATEMENTS = ['Calm / Positive', 'Concerned', 'Frustrated', 'Angry', 'Abusive'] as const;
+
+export function computeIntent(rows: SbiQualityRow[]) {
+  const total = rows.length;
+  const genuine = rows.filter(isGenuine);
+  const nonActionable = rows.filter(r => !isGenuine(r));
+  const intentN = (v: string) => countWhere(rows, r => r.customer_intent === v);
+  const paid = countWhere(rows, r => payOutcomeOf(r) === 'Payment Done');
+  const ptp = countWhere(rows, r => payOutcomeOf(r) === 'PTP Given');
+  const needCall = countWhere(rows, needsCall);
+
+  const weeks = weeklyBuckets(rows);
+  const sentimentTrendWeekly = weeks.map(w => {
+    const point: Record<string, number | string> = { label: w.label };
+    for (const s of QA_STATEMENTS) point[s] = countWhere(w.rows, r => r.qa_statement === s);
+    return point;
+  });
+
+  const agents = [...new Set(rows.map(r => r.agent_name))].map(name => {
+    const a = rows.filter(r => r.agent_name === name);
+    const g = a.filter(isGenuine).length;
+    const pd = countWhere(a, r => payOutcomeOf(r) === 'Payment Done');
+    return {
+      agentName: name,
+      totalCalls: a.length,
+      genuine: g,
+      paymentDone: pd,
+      ptpGiven: countWhere(a, r => payOutcomeOf(r) === 'PTP Given'),
+      conversionPct: pct(pd, g),
+    };
+  }).sort((x, y) => y.conversionPct - x.conversionPct || y.paymentDone - x.paymentDone).slice(0, 10);
+
+  const genuineCount = genuine.length;
+  const kpis = {
+    totalCalls: total,
+    genuineCustomers: genuineCount, genuinePct: pct(genuineCount, total),
+    nonActionable: nonActionable.length, nonActionablePct: pct(nonActionable.length, total),
+    positiveIntent: intentN('Positive'), positiveIntentPct: pct(intentN('Positive'), total),
+    neutralIntent: intentN('Neutral'), neutralIntentPct: pct(intentN('Neutral'), total),
+    negativeIntent: intentN('Negative'), negativeIntentPct: pct(intentN('Negative'), total),
+    paymentDone: paid, paymentDonePct: pct(paid, total),
+    ptpGiven: ptp, ptpGivenPct: pct(ptp, total),
+    needToCall: needCall, needToCallPct: pct(needCall, total),
+  };
+
+  const funnel = [
+    { stage: 'total', label: 'Total Calls', count: total },
+    { stage: 'genuine', label: 'Genuine Customers', count: genuineCount },
+    { stage: 'positive', label: 'Positive Intent', count: countWhere(genuine, r => r.customer_intent === 'Positive') },
+    { stage: 'ptp', label: 'PTP Given', count: countWhere(genuine, r => payOutcomeOf(r) === 'PTP Given') },
+    { stage: 'paid', label: 'Payment Done', count: countWhere(genuine, r => payOutcomeOf(r) === 'Payment Done') },
+  ].map(s => ({ ...s, pct: pct(s.count, total) }));
+
+  const pending = countWhere(genuine, r => payOutcomeOf(r) === 'Pending');
+  const insights: string[] = [];
+  insights.push(`${kpis.genuinePct}% of calls are genuine customers and actionable.`);
+  insights.push(`${kpis.positiveIntentPct}% of customers have shown positive payment intent.`);
+  insights.push(`${pct(intentN('Neutral'), total)}% of customers are neutral — mostly ${groupCount(rows.filter(r => r.customer_intent === 'Neutral'), 'call_outcome')[0]?.name ?? 'undecided'}.`);
+  insights.push(`${kpis.nonActionablePct}% of calls are non-actionable (wrong number, refusal, invalid PIN, etc.).`);
+  insights.push(`${kpis.paymentDonePct}% of customers have already made the payment.`);
+  insights.push(`${kpis.ptpGivenPct}% of customers have given a PTP, a strong conversion opportunity.`);
+  const abusive = countWhere(rows, r => Number(r.customer_abusing) === 1);
+  insights.push(`${pct(abusive, total)}% of calls were abusive, mainly around payment disputes and repeated calls.`);
+  const topAgent = agents[0];
+  if (topAgent) insights.push(`${topAgent.agentName} has the best conversion rate (${topAgent.conversionPct}%).`);
+  insights.push(`Focus on follow-up for ${pending} pending genuine customers.`);
+  insights.push(`${kpis.needToCallPct}% of calls need a follow-up call (High/Medium priority).`);
+
+  return {
+    kpis,
+    intentDistribution: ['Positive', 'Neutral', 'Negative'].map(name => ({ name, count: intentN(name) })),
+    genuineDistribution: [
+      { name: 'Genuine / Payable', count: genuineCount },
+      { name: 'Non-Actionable', count: nonActionable.length },
+    ],
+    payOutcomeDistribution: (['Payment Done', 'PTP Given', 'Pending', 'Other'] as const)
+      .map(name => ({ name, count: countWhere(genuine, r => payOutcomeOf(r) === name) }))
+      .filter(x => x.count > 0),
+    qaSentimentDistribution: QA_STATEMENTS.map(name => ({ name, count: countWhere(rows, r => r.qa_statement === name) })),
+    sentimentTrendWeekly,
+    sentimentStatements: [...QA_STATEMENTS],
+    nonActionableReasons: groupCount(nonActionable, 'non_payable_reason'),
+    neutralReasons: groupCount(rows.filter(r => r.customer_intent === 'Neutral'), 'call_outcome'),
+    disposition: groupCount(rows, 'non_payable_reason').map(d => ({ ...d, pct: pct(d.count, total) })),
+    funnel,
+    agents,
+    insights,
+  };
 }

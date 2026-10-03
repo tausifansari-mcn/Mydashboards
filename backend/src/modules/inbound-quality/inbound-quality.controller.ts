@@ -12,6 +12,20 @@ function defaultDateRange(): { startDate: string; endDate: string } {
   };
 }
 
+// Same reasoning as quality.controller.ts's previousMonthDateRange: "previous month" is one click
+// away on the same date picker but was never pre-warmed, so picking it always meant a genuinely
+// live, full-table aggregate query with no safety net.
+function previousMonthDateRange(): { startDate: string; endDate: string } {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastDay = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+  return {
+    startDate: `${prevMonth.getFullYear()}-${pad(prevMonth.getMonth() + 1)}-01 00:00:00`,
+    endDate:   `${prevMonth.getFullYear()}-${pad(prevMonth.getMonth() + 1)}-${pad(lastDay)} 23:59:59`,
+  };
+}
+
 function parseFilters(req: Request): svc.InboundQualityFilters {
   const { startDate: defaultStart, endDate: defaultEnd } = defaultDateRange();
   return {
@@ -29,6 +43,9 @@ function parseFilters(req: Request): svc.InboundQualityFilters {
 // of this page actually did. Falls back to a stale cached entry rather than erroring outright if the
 // DB is struggling badly enough that even a fresh attempt fails.
 const INBOUND_CLIENTS_CACHE_TTL_MS = 5 * 60_000;
+// A fully-ended month can't gain or lose calls, so once warmed it doesn't need re-checking every
+// 5 minutes the way "this month to date" does — see cacheTtlFor below.
+const INBOUND_CLIENTS_HISTORICAL_TTL_MS = 24 * 60 * 60_000;
 const inboundClientsCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof svc.getInboundClients>> }>();
 
 // Date-only key: real requests from the frontend always carry the exact current timestamp as
@@ -40,12 +57,21 @@ function inboundClientsCacheKey(startDate: string, endDate: string): string {
   return `${startDate.slice(0, 10)}|${endDate.slice(0, 10)}`;
 }
 
+// Any range ending before the start of the current calendar month is "closed" (can't still be
+// accumulating calls) and gets the long historical TTL instead of the normal 5-minute one.
+function cacheTtlFor(endDate: string): number {
+  const now = new Date();
+  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  return new Date(endDate) < startOfThisMonth ? INBOUND_CLIENTS_HISTORICAL_TTL_MS : INBOUND_CLIENTS_CACHE_TTL_MS;
+}
+
 export async function getInboundClients(req: Request, res: Response) {
   const filters = parseFilters(req);
   const key = inboundClientsCacheKey(filters.startDate, filters.endDate);
+  const ttl = cacheTtlFor(filters.endDate);
   try {
     const hit = inboundClientsCache.get(key);
-    if (hit && Date.now() - hit.at < INBOUND_CLIENTS_CACHE_TTL_MS) {
+    if (hit && Date.now() - hit.at < ttl) {
       res.json({ data: hit.data, cached: true });
       return;
     }
@@ -62,7 +88,8 @@ export async function getInboundClients(req: Request, res: Response) {
 
 // See quality.controller.ts's warmClientsSummaryCache — same idea, kept in sync by
 // startDashboardSummaryWarmup (app.ts) so a real visitor's request almost never has to wait on, or
-// risk failing, a live query for the one date range ("this month to today") that matters most.
+// risk failing, a live query for "this month to today" (refreshed every tick) or "previous month"
+// (refreshed only once per historical TTL, since that data can't change).
 export async function warmInboundClientsCache(): Promise<void> {
   try {
     const { startDate, endDate } = defaultDateRange();
@@ -70,6 +97,19 @@ export async function warmInboundClientsCache(): Promise<void> {
     inboundClientsCache.set(inboundClientsCacheKey(startDate, endDate), { at: Date.now(), data });
   } catch (err) {
     console.error('[warmup] inbound-clients cache refresh failed:', err instanceof Error ? err.message : err);
+  }
+  try {
+    const { startDate, endDate } = previousMonthDateRange();
+    const key = inboundClientsCacheKey(startDate, endDate);
+    const existing = inboundClientsCache.get(key);
+    if (!existing || Date.now() - existing.at >= cacheTtlFor(endDate)) {
+      // Nobody is blocked waiting on this background refresh — give it more room than a live
+      // request's normal 20s budget in case a full month ever gets as heavy as the outbound version.
+      const data = await svc.getInboundClients({ startDate, endDate }, 55_000);
+      inboundClientsCache.set(key, { at: Date.now(), data });
+    }
+  } catch (err) {
+    console.error('[warmup] inbound-clients previous-month cache refresh failed:', err instanceof Error ? err.message : err);
   }
 }
 

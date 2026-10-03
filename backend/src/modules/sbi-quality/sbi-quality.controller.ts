@@ -153,3 +153,35 @@ export async function exportCsv(req: Request, res: Response) {
     res.status(500).json({ success: false, message: 'Failed to export SBI Collection data' });
   }
 }
+
+const DRILL_TYPES: svc.DrillType[] = [
+  'intent', 'genuine', 'payOutcome', 'nonActionableReason', 'neutralOutcome', 'disposition', 'needCall', 'funnel', 'qaStatement',
+  'kpi', 'outcome', 'scenario', 'agent', 'sentiment', 'frustration', 'abusive',
+  'frustratedScenario', 'week', 'param', 'agentParam', 'compliance', 'call',
+];
+
+export async function getDrill(req: Request, res: Response) {
+  try {
+    const type = req.query.type as svc.DrillType;
+    const value = typeof req.query.value === 'string' ? req.query.value : '';
+    if (!DRILL_TYPES.includes(type) || !value) {
+      res.status(400).json({ success: false, message: 'Invalid drill selection' });
+      return;
+    }
+    const rows = await svc.fetchSbiQualityRows(parseFilters(req));
+    res.json({ success: true, data: svc.computeDrill(rows, type, value) });
+  } catch (err) {
+    console.error('sbi-quality getDrill error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load SBI drill-down' });
+  }
+}
+
+export async function getIntent(req: Request, res: Response) {
+  try {
+    const rows = await svc.fetchSbiQualityRows(parseFilters(req));
+    res.json({ success: true, data: svc.computeIntent(rows) });
+  } catch (err) {
+    console.error('sbi-quality getIntent error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load SBI customer intent' });
+  }
+}

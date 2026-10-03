@@ -28,6 +28,9 @@ const RETRYABLE = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'PROTOCOL_CONNECTI
 // batch jobs, or a slow query holding a connection) queues silently and hangs forever, taking the
 // whole HTTP request down with it and giving the caller no error to react to. This wraps every
 // query in a hard deadline so callers fail fast with a clear error instead of hanging indefinitely.
+// This is the default for a live, user-facing request — someone's actively waiting on it, so 20s is
+// already a long time. querySource's optional timeoutMs param lets a background-only caller (a
+// cache warmup job with nobody watching) ask for a longer budget instead of racing the same clock.
 const QUERY_TIMEOUT_MS = 20_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -44,10 +47,11 @@ export async function querySource<T = Record<string, unknown>>(
   sql: string,
   params: (string | number | null)[] = [],
   retries = 3,
+  timeoutMs = QUERY_TIMEOUT_MS,
 ): Promise<T[]> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const [rows] = await withTimeout(getSourcePool().execute(sql, params), QUERY_TIMEOUT_MS, sql.trim().slice(0, 100));
+      const [rows] = await withTimeout(getSourcePool().execute(sql, params), timeoutMs, sql.trim().slice(0, 100));
       return rows as T[];
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? '';

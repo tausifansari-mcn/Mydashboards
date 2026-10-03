@@ -427,7 +427,11 @@ export interface InboundClientSummary {
   fatal_count:       number;
 }
 
-export async function getInboundClients(filters: InboundQualityFilters): Promise<InboundClientSummary[]> {
+// timeoutMs: optional longer budget for the background "previous month" warmup (see
+// inbound-quality.controller.ts) — same idea as quality.service.ts's getClientsSummary, kept here
+// for resilience even though this particular query has so far stayed well under the normal 20s
+// live-request timeout.
+export async function getInboundClients(filters: InboundQualityFilters, timeoutMs?: number): Promise<InboundClientSummary[]> {
   const { startDate, endDate } = filters;
 
   const rows = await querySource<{
@@ -459,7 +463,7 @@ export async function getInboundClients(filters: InboundQualityFilters): Promise
       AND q.quality_percentage IS NOT NULL ${PER_CLIENT_QUALITY_GATE}
     GROUP BY q.ClientId, c.name
     ORDER BY client_name ASC
-  `, [startDate, endDate]);
+  `, [startDate, endDate], 3, timeoutMs);
 
   return rows.map(r => ({
     client_id:         String(r.client_id),

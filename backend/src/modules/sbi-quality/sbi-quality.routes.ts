@@ -17,5 +17,7 @@ router.get('/agent-performance',  ctrl.getAgentPerformance);
 router.get('/quality-insights',   ctrl.getQualityInsights);
 router.get('/filter-options',     ctrl.getFilterOptions);
 router.get('/export-csv',         ctrl.exportCsv);
+router.get('/drill',              ctrl.getDrill);
+router.get('/intent',             ctrl.getIntent);
 
 export default router;
